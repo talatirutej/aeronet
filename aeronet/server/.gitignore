@@ -1,31 +1,18 @@
-# Python
+@"
 __pycache__/
 *.pyc
 *.pkl
 *.pt
-*.pth
 *.ckpt
 .venv/
-*.egg-info/
-dist/
-build/
-logs/
-
-# Node
 node_modules/
 dist/
 .vite/
-
-# Data
 drivaerml_data/
-*.csv
 *.vtu
 *.vtp
-
-# Env
 .env
-*.env
-
-# OS
 .DS_Store
 Thumbs.db
+logs/
+"@ | Out-File -FilePath .gitignore -Encoding utf8
