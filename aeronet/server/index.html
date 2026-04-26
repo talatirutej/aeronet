@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AeroNet — CFD Surrogate</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+/* ── Reset & base ─────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --font:'Söhne','Inter',system-ui,-apple-system,sans-serif;
+  --bg0:#f5f4f0;
+  --bg1:#ffffff;
+  --bg2:#f1efe8;
+  --bg3:#e8e6de;
+  --border:rgba(0,0,0,0.12);
+  --border2:rgba(0,0,0,0.22);
+  --text1:#1a1a18;
+  --text2:#5f5e5a;
+  --text3:#888780;
+  --teal:#1d9e75;
+  --teal-lt:#e1f5ee;
+  --teal-dk:#0f6e56;
+  --teal-xdk:#085041;
+  --teal-txt:#085041;
+  --amber:#ba7517;
+  --amber-lt:#faeeda;
+  --amber-txt:#633806;
+  --red:#e24b4a;
+  --red-lt:#fcebeb;
+  --red-txt:#a32d2d;
+  --gray-lt:#f1efe8;
+  --gray-txt:#5f5e5a;
+  --r-sm:6px;
+  --r-md:8px;
+  --r-lg:12px;
+  --r-xl:16px;
+  --sb:244px;
+  --topbar:52px;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg0:#1a1a18;
+  --bg1:#222220;
+  --bg2:#2a2a28;
+  --bg3:#323230;
+  --border:rgba(255,255,255,0.1);
+  --border2:rgba(255,255,255,0.2);
+  --text1:#f0ede6;
+  --text2:#a8a69f;
+  --text3:#6e6c66;
+  --teal:#1d9e75;
+  --teal-lt:#04342c;
+  --teal-dk:#5dcaa5;
+  --teal-xdk:#9fe1cb;
+  --teal-txt:#9fe1cb;
+  --amber-lt:#412402;
+  --amber-txt:#fac775;
+  --red-lt:#501313;
+  --red-txt:#f09595;
+  --gray-lt:#2c2c2a;
+  --gray-txt:#b4b2a9;
+}}
+html,body{height:100%;font-family:var(--font);background:var(--bg0);color:var(--text1);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+
+/* ── Layout shell ──────────────────────────────────────── */
+#app{display:flex;height:100vh;overflow:hidden}
+
+/* ── Sidebar ───────────────────────────────────────────── */
+#sidebar{
+  width:var(--sb);min-width:var(--sb);
+  background:var(--bg1);
+  border-right:0.5px solid var(--border);
+  display:flex;flex-direction:column;
+  transition:width .2s ease,min-width .2s ease;
+  overflow:hidden;
+  position:relative;
+  z-index:10;
+}
+#sidebar.collapsed{width:52px;min-width:52px}
+
+.sb-head{
+  padding:14px 12px 12px;
+  border-bottom:0.5px solid var(--border);
+  display:flex;align-items:center;gap:10px;
+  flex-shrink:0;
+}
+.logo-mark{
+  width:30px;height:30px;border-radius:8px;
+  background:var(--teal);
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.logo-mark svg{width:16px;height:16px}
+.logo-words{flex:1;min-width:0;overflow:hidden}
+.logo-words .ln{font-size:14px;font-weight:500;color:var(--text1);white-space:nowrap}
+.logo-words .ls{font-size:11px;color:var(--text3);white-space:nowrap;margin-top:1px}
+#toggle-sb{
+  width:26px;height:26px;border-radius:var(--r-sm);
+  border:0.5px solid var(--border2);background:transparent;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;color:var(--text2);
+  transition:background .15s;
+}
+#toggle-sb:hover{background:var(--bg2)}
+#toggle-sb svg{width:14px;height:14px;transition:transform .2s}
+#sidebar.collapsed #toggle-sb svg{transform:scaleX(-1)}
+
+/* model selector */
+.sb-model{
+  padding:10px 12px;
+  border-bottom:0.5px solid var(--border);
+  flex-shrink:0;overflow:hidden;
+}
+.sb-section-label{
+  font-size:10px;color:var(--text3);
+  letter-spacing:.06em;margin-bottom:6px;
+  text-transform:uppercase;white-space:nowrap;
+}
+.model-pill{
+  display:flex;align-items:center;gap:7px;
+  padding:7px 10px;
+  border-radius:var(--r-md);
+  border:0.5px solid var(--border2);
+  background:var(--bg2);
+  cursor:pointer;
+  transition:border-color .15s,background .15s;
+}
+.model-pill:hover{border-color:var(--teal);background:var(--teal-lt)}
+.model-dot{width:7px;height:7px;border-radius:50%;background:var(--teal);flex-shrink:0}
+.model-pill-name{font-size:12px;font-weight:500;color:var(--text1);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.model-badge{
+  font-size:10px;padding:2px 6px;border-radius:4px;
+  background:var(--teal-lt);color:var(--teal-txt);
+  flex-shrink:0;font-weight:500;
+}
+
+/* nav */
+.sb-nav{padding:8px 8px 4px;flex-shrink:0;overflow:hidden}
+.nav-item{
+  display:flex;align-items:center;gap:9px;
+  padding:7px 8px;border-radius:var(--r-md);
+  cursor:pointer;margin-bottom:2px;
+  transition:background .12s;
+  white-space:nowrap;
+}
+.nav-item:hover{background:var(--bg2)}
+.nav-item.active{background:var(--bg2);border:0.5px solid var(--border2)}
+.nav-item svg{width:15px;height:15px;flex-shrink:0;color:var(--text3)}
+.nav-item.active svg{color:var(--teal)}
+.nav-label{font-size:13px;color:var(--text2);overflow:hidden}
+.nav-item.active .nav-label{color:var(--text1);font-weight:500}
+
+/* feature list */
+.sb-features{flex:1;overflow-y:auto;padding:10px 10px 6px;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+.sb-features::-webkit-scrollbar{width:3px}
+.sb-features::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.feat-group{margin-bottom:14px}
+.feat-group-title{font-size:10px;color:var(--text3);letter-spacing:.06em;margin-bottom:6px;padding:0 2px;white-space:nowrap;text-transform:uppercase}
+.feat-item{padding:4px 2px;border-radius:5px;cursor:default}
+.feat-row{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.feat-name{font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.feat-val{font-size:11px;font-weight:500;color:var(--text1);white-space:nowrap;min-width:46px;text-align:right}
+.feat-bar{height:2px;background:var(--bg3);border-radius:1px;margin-top:3px;overflow:hidden}
+.feat-fill{height:100%;border-radius:1px;background:var(--teal);transition:width .3s}
+
+/* run button */
+.sb-foot{padding:10px 10px 12px;border-top:0.5px solid var(--border);flex-shrink:0;overflow:hidden}
+.run-full{
+  width:100%;padding:9px 16px;
+  background:var(--teal);color:#fff;border:none;
+  border-radius:var(--r-md);font-size:13px;font-weight:500;
+  cursor:pointer;letter-spacing:.01em;font-family:var(--font);
+  transition:background .15s;white-space:nowrap;
+}
+.run-full:hover{background:var(--teal-dk)}
+.run-full:active{background:var(--teal-xdk);transform:scale(.99)}
+.run-icon{
+  width:100%;padding:9px 0;
+  background:var(--teal);color:#fff;border:none;
+  border-radius:var(--r-md);cursor:pointer;
+  display:none;align-items:center;justify-content:center;
+  transition:background .15s;
+}
+.run-icon:hover{background:var(--teal-dk)}
+#sidebar.collapsed .run-full{display:none}
+#sidebar.collapsed .run-icon{display:flex}
+
+/* ── Main area ─────────────────────────────────────────── */
+#main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+
+/* topbar */
+.topbar{
+  height:var(--topbar);
+  padding:0 20px;
+  background:var(--bg1);
+  border-bottom:0.5px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;
+}
+.tb-info .tb-title{font-size:14px;font-weight:500;color:var(--text1)}
+.tb-info .tb-sub{font-size:11px;color:var(--text3);margin-top:1px}
+.tab-row{display:flex;gap:3px}
+.tab-btn{
+  font-size:12px;padding:5px 12px;
+  border-radius:var(--r-md);
+  border:0.5px solid transparent;
+  cursor:pointer;color:var(--text2);
+  background:transparent;font-family:var(--font);
+  transition:background .12s,color .12s;
+}
+.tab-btn:hover{background:var(--bg2)}
+.tab-btn.active{
+  border-color:var(--border2);
+  background:var(--bg2);
+  color:var(--text1);font-weight:500;
+}
+
+/* content area */
+#content{flex:1;overflow-y:auto;padding:16px 20px;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+#content::-webkit-scrollbar{width:4px}
+#content::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ── Panels ────────────────────────────────────────────── */
+.panel{display:none;flex-direction:column;gap:14px}
+.panel.active{display:flex}
+
+/* ── Cards ─────────────────────────────────────────────── */
+.card{
+  background:var(--bg1);
+  border:0.5px solid var(--border);
+  border-radius:var(--r-lg);
+  padding:16px 18px;
+}
+.card-title{font-size:13px;font-weight:500;color:var(--text1);margin-bottom:12px}
+.card-sub{font-size:11px;color:var(--text3);margin-top:-8px;margin-bottom:12px}
+
+/* metric cards */
+.metrics-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.mcard{
+  background:var(--bg2);
+  border-radius:var(--r-lg);
+  padding:14px 15px;
+  border:0.5px solid var(--border);
+}
+.mcard-label{font-size:11px;color:var(--text3);margin-bottom:7px;letter-spacing:.01em}
+.mcard-value{font-size:26px;font-weight:500;line-height:1;color:var(--text1)}
+.mcard-value.green{color:var(--teal)}
+.mcard-value.amber{color:var(--amber)}
+.mcard-value.red{color:var(--red)}
+.mcard-sub{font-size:11px;color:var(--text3);margin-top:4px}
+.mcard-badge{
+  display:inline-block;font-size:10px;
+  padding:2px 6px;border-radius:4px;margin-top:5px;font-weight:500;
+}
+.badge-green{background:var(--teal-lt);color:var(--teal-txt)}
+.badge-amber{background:var(--amber-lt);color:var(--amber-txt)}
+.badge-red{background:var(--red-lt);color:var(--red-txt)}
+.badge-gray{background:var(--gray-lt);color:var(--gray-txt)}
+
+/* two-col layout */
+.two-col{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px}
+
+/* confidence bar */
+.conf-strip{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 16px;
+  background:var(--bg1);border:0.5px solid var(--border);
+  border-radius:var(--r-md);
+}
+.conf-label{font-size:12px;color:var(--text2);flex:1}
+.conf-track{flex:2;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.conf-fill{height:100%;border-radius:3px;background:var(--teal);transition:width .4s ease}
+.conf-val{font-size:12px;font-weight:500;color:var(--text1);min-width:36px;text-align:right}
+
+/* gauge */
+.gauge-wrap{margin-bottom:10px}
+.gauge-track{height:10px;border-radius:5px;overflow:hidden;display:flex;margin-bottom:5px}
+.gauge-seg{flex:1;height:100%}
+.gauge-pointer-row{position:relative;height:18px;margin-bottom:3px}
+.gauge-pointer{
+  position:absolute;top:0;
+  width:18px;height:18px;border-radius:50%;
+  background:var(--bg1);border:2px solid var(--teal);
+  transform:translateX(-50%);
+  transition:left .5s ease;
+}
+.gauge-labels{display:flex;justify-content:space-between;font-size:10px;color:var(--text3)}
+
+/* benchmark bars */
+.bench-list{display:flex;flex-direction:column;gap:7px;margin-top:6px}
+.bench-row{display:flex;align-items:center;gap:8px}
+.bench-name{font-size:12px;color:var(--text2);width:94px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bench-track{flex:1;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.bench-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.bench-val{font-size:11px;font-weight:500;color:var(--text1);min-width:34px;text-align:right}
+
+/* model compare */
+.model-compare{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.mcomp{padding:11px 13px;border-radius:var(--r-md);border:0.5px solid var(--border2)}
+.mcomp.best{border-color:var(--teal);background:var(--teal-lt)}
+.mcomp-name{font-size:11px;color:var(--text3);margin-bottom:3px}
+.mcomp.best .mcomp-name{color:var(--teal-txt)}
+.mcomp-cd{font-size:22px;font-weight:500;color:var(--text1)}
+.mcomp.best .mcomp-cd{color:var(--teal-dk)}
+.mcomp-r2{font-size:10px;color:var(--text3);margin-top:2px}
+
+/* ── Sweep panel ───────────────────────────────────────── */
+.sweep-ctrl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.sweep-ctrl label{font-size:12px;color:var(--text2)}
+.sweep-ctrl select{
+  font-size:12px;padding:5px 10px;
+  border-radius:var(--r-md);border:0.5px solid var(--border2);
+  background:var(--bg2);color:var(--text1);font-family:var(--font);
+  cursor:pointer;
+}
+.sweep-stat{font-size:11px;color:var(--text3);margin-left:auto}
+.sens-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.sens-name{font-size:12px;color:var(--text2);width:140px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sens-track{flex:1;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.sens-fill{height:100%;border-radius:3px;transition:width .4s}
+.sens-val{font-size:11px;font-weight:500;color:var(--text1);min-width:44px;text-align:right}
+
+/* ── Sliders panel ─────────────────────────────────────── */
+.slider-section{margin-bottom:14px}
+.slider-section-title{
+  font-size:11px;color:var(--text3);letter-spacing:.06em;
+  text-transform:uppercase;margin-bottom:10px;
+}
+.slider-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 24px}
+.sl-item{}
+.sl-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.sl-name{font-size:12px;color:var(--text2)}
+.sl-val{font-size:12px;font-weight:500;color:var(--text1)}
+input[type=range]{
+  width:100%;accent-color:var(--teal);
+  height:4px;cursor:pointer;
+}
+.slider-actions{display:flex;gap:10px;margin-top:4px}
+.btn-primary{
+  flex:1;padding:9px 0;
+  background:var(--teal);color:#fff;border:none;
+  border-radius:var(--r-md);font-size:13px;font-weight:500;
+  cursor:pointer;font-family:var(--font);transition:background .15s;
+}
+.btn-primary:hover{background:var(--teal-dk)}
+.btn-secondary{
+  padding:9px 18px;
+  background:transparent;color:var(--text2);
+  border:0.5px solid var(--border2);
+  border-radius:var(--r-md);font-size:13px;
+  cursor:pointer;font-family:var(--font);
+  transition:background .12s;
+}
+.btn-secondary:hover{background:var(--bg2)}
+
+/* ── Dataset panel ─────────────────────────────────────── */
+.dataset-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.dcard{background:var(--bg1);border:0.5px solid var(--border);border-radius:var(--r-lg);padding:14px 16px}
+.dcard-label{font-size:11px;color:var(--text3);margin-bottom:5px}
+.dcard-val{font-size:20px;font-weight:500;color:var(--text1)}
+.dcard-sub{font-size:11px;color:var(--text2);margin-top:3px}
+.model-row{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 14px;border-radius:var(--r-md);
+  border:0.5px solid var(--border2);margin-bottom:8px;
+}
+.model-row.best{border-color:var(--teal);background:var(--teal-lt);border-width:1.5px}
+.model-row-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.model-row-info{flex:1}
+.model-row-name{font-size:13px;font-weight:500;color:var(--text1)}
+.model-row.best .model-row-name{color:var(--teal-txt)}
+.model-row-desc{font-size:11px;color:var(--text2);margin-top:2px}
+.model-row.best .model-row-desc{color:var(--teal-dk)}
+.tag{
+  display:inline-block;font-size:11px;
+  padding:3px 8px;border-radius:10px;margin:3px;
+}
+.tag-teal{background:var(--teal-lt);color:var(--teal-txt)}
+.tag-amber{background:var(--amber-lt);color:var(--amber-txt)}
+.tag-gray{background:var(--gray-lt);color:var(--gray-txt)}
+
+/* ── Status bar ────────────────────────────────────────── */
+#status-bar{
+  height:28px;padding:0 20px;
+  background:var(--bg1);border-top:0.5px solid var(--border);
+  display:flex;align-items:center;gap:16px;
+  flex-shrink:0;
+}
+.status-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.status-dot.green{background:var(--teal)}
+.status-dot.gray{background:var(--text3)}
+.status-dot.amber{background:var(--amber)}
+#status-text{font-size:11px;color:var(--text3)}
+#infer-time{font-size:11px;color:var(--text3);margin-left:auto}
+
+/* ── Loading overlay ───────────────────────────────────── */
+#loading-overlay{
+  display:none;position:absolute;inset:0;
+  background:rgba(0,0,0,.3);
+  align-items:center;justify-content:center;
+  z-index:100;border-radius:var(--r-lg);
+}
+#loading-overlay.active{display:flex}
+.spinner{
+  width:28px;height:28px;border:2.5px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Toast ─────────────────────────────────────────────── */
+#toast{
+  position:fixed;bottom:24px;right:24px;
+  background:var(--text1);color:var(--bg1);
+  font-size:12px;padding:9px 16px;border-radius:var(--r-md);
+  opacity:0;transform:translateY(8px);
+  transition:opacity .2s,transform .2s;
+  pointer-events:none;z-index:999;
+}
+#toast.show{opacity:1;transform:translateY(0)}
+
+/* ── Util ──────────────────────────────────────────────── */
+.divider{height:0.5px;background:var(--border);margin:12px 0}
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ══ SIDEBAR ══════════════════════════════════════════ -->
+  <div id="sidebar">
+
+    <div class="sb-head">
+      <div class="logo-mark">
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2 8C2 8 4.2 3 8 3C11.8 3 14 8 14 8C14 8 11.8 13 8 13C4.2 13 2 8 2 8Z" stroke="white" stroke-width="1.4" fill="none"/>
+          <circle cx="8" cy="8" r="2" fill="white"/>
+          <path d="M8 3V1.5M8 13V14.5M14 8H15.5M2 8H0.5" stroke="white" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="logo-words" id="logo-words">
+        <div class="ln">AeroNet</div>
+        <div class="ls">CFD Surrogate</div>
+      </div>
+      <button id="toggle-sb" title="Collapse sidebar">
+        <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="sb-model" id="sb-model-wrap">
+      <div class="sb-section-label">Active model</div>
+      <div class="model-pill" id="model-pill">
+        <div class="model-dot"></div>
+        <span class="model-pill-name" id="model-pill-name">GradBoost-DrivAerML</span>
+        <span class="model-badge" id="model-pill-r2">R²=0.95</span>
+      </div>
+    </div>
+
+    <div class="sb-nav" id="sb-nav">
+      <div class="nav-item active" data-tab="results">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="9" width="3" height="5.5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="6.5" y="5.5" width="3" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="11.5" y="1.5" width="3" height="13" rx="1" stroke="currentColor" stroke-width="1.3"/></svg>
+        <span class="nav-label">Results</span>
+      </div>
+      <div class="nav-item" data-tab="sweep">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M1.5 12C3 9 5 4.5 7.5 4C10 3.5 11 8 13 7C14 6.5 14.5 5.5 14.5 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="7.5" cy="4.1" r="1.1" fill="currentColor" opacity=".5"/></svg>
+        <span class="nav-label">Parameter sweep</span>
+      </div>
+      <div class="nav-item" data-tab="sliders">
+        <svg viewBox="0 0 16 16" fill="none"><line x1="2" y1="4" x2="14" y2="4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="6" cy="4" r="1.8" fill="var(--bg1)" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="9" x2="14" y2="9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="10" cy="9" r="1.8" fill="var(--bg1)" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="13.5" x2="14" y2="13.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="5" cy="13.5" r="1.8" fill="var(--bg1)" stroke="currentColor" stroke-width="1.3"/></svg>
+        <span class="nav-label">Edit parameters</span>
+      </div>
+      <div class="nav-item" data-tab="dataset">
+        <svg viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5V8C2.5 9.1 5 10 8 10C11 10 13.5 9.1 13.5 8V4.5" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8V11.5C2.5 12.6 5 13.5 8 13.5C11 13.5 13.5 12.6 13.5 11.5V8" stroke="currentColor" stroke-width="1.3"/></svg>
+        <span class="nav-label">Dataset</span>
+      </div>
+    </div>
+
+    <div class="sb-features" id="sb-features">
+      <div id="feat-list"></div>
+    </div>
+
+    <div class="sb-foot">
+      <button class="run-full" id="run-btn">Run prediction</button>
+      <button class="run-icon" id="run-icon-btn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M5 3L13 8L5 13V3Z" fill="white"/></svg>
+      </button>
+    </div>
+
+  </div>
+
+  <!-- ══ MAIN ═════════════════════════════════════════════ -->
+  <div id="main">
+
+    <div class="topbar">
+      <div class="tb-info">
+        <div class="tb-title" id="tb-title">Drag coefficient — results</div>
+        <div class="tb-sub">DrivAerML · 484 HF-LES OpenFOAM cases · Notchback</div>
+      </div>
+      <div class="tab-row">
+        <button class="tab-btn active" data-tab="results">Results</button>
+        <button class="tab-btn" data-tab="sweep">Parameter sweep</button>
+        <button class="tab-btn" data-tab="sliders">Edit parameters</button>
+        <button class="tab-btn" data-tab="dataset">Dataset</button>
+      </div>
+    </div>
+
+    <div id="content" style="position:relative">
+      <div id="loading-overlay"><div class="spinner"></div></div>
+
+      <!-- ── Results panel ── -->
+      <div class="panel active" id="panel-results">
+
+        <div class="metrics-row">
+          <div class="mcard">
+            <div class="mcard-label">Predicted Cd</div>
+            <div class="mcard-value green" id="r-cd">—</div>
+            <div class="mcard-sub" id="r-rating">Run a prediction</div>
+            <div class="mcard-badge badge-green" id="r-pct" style="display:none"></div>
+          </div>
+          <div class="mcard">
+            <div class="mcard-label">Ensemble Cd</div>
+            <div class="mcard-value" id="r-ens">—</div>
+            <div class="mcard-sub">GradBoost + RF avg</div>
+          </div>
+          <div class="mcard">
+            <div class="mcard-label">Uncertainty ±</div>
+            <div class="mcard-value" id="r-unc">—</div>
+            <div class="mcard-sub">RF tree std dev</div>
+          </div>
+          <div class="mcard">
+            <div class="mcard-label">Confidence</div>
+            <div class="mcard-value green" id="r-conf">—</div>
+            <div class="mcard-sub" id="r-ms">awaiting run</div>
+          </div>
+        </div>
+
+        <div class="conf-strip">
+          <span class="conf-label">Model confidence</span>
+          <div class="conf-track"><div class="conf-fill" id="conf-fill" style="width:0%"></div></div>
+          <span class="conf-val" id="conf-val-txt">—</span>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <div class="card-title">Cd vs. dataset range</div>
+            <div class="card-sub">0.206 (best) → 0.360 (worst) — 484 CFD cases</div>
+            <div class="gauge-wrap">
+              <div class="gauge-track">
+                <div class="gauge-seg" style="background:#1d9e75;opacity:.8"></div>
+                <div class="gauge-seg" style="background:#5dcaa5;opacity:.7"></div>
+                <div class="gauge-seg" style="background:#ef9f27;opacity:.7"></div>
+                <div class="gauge-seg" style="background:#d85a30;opacity:.7"></div>
+                <div class="gauge-seg" style="background:#e24b4a;opacity:.8"></div>
+              </div>
+              <div class="gauge-pointer-row">
+                <div class="gauge-pointer" id="gauge-ptr" style="left:50%"></div>
+              </div>
+              <div class="gauge-labels">
+                <span>0.206</span><span>0.237</span><span>0.279 mean</span><span>0.320</span><span>0.360</span>
+              </div>
+            </div>
+            <div class="bench-list" id="bench-list">
+              <div style="font-size:12px;color:var(--text3);padding:8px 0">Run a prediction to see comparisons</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Model comparison</div>
+            <div class="model-compare" id="model-compare">
+              <div class="mcomp best"><div class="mcomp-name">GradBoost</div><div class="mcomp-cd">—</div><div class="mcomp-r2">R²=0.9525</div></div>
+              <div class="mcomp"><div class="mcomp-name">RandomForest</div><div class="mcomp-cd">—</div><div class="mcomp-r2">R²=0.8149</div></div>
+            </div>
+            <div class="divider"></div>
+            <div class="card-title" style="margin-bottom:8px">Cd distribution</div>
+            <div style="position:relative;height:72px">
+              <canvas id="dist-chart" role="img" aria-label="Normal distribution of dataset Cd values with current prediction marked">Cd distribution centred at mean 0.279.</canvas>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /panel-results -->
+
+      <!-- ── Sweep panel ── -->
+      <div class="panel" id="panel-sweep">
+        <div class="card">
+          <div class="card-title">Parameter sensitivity curve</div>
+          <div class="sweep-ctrl">
+            <label>Sweep</label>
+            <select id="sweep-select"></select>
+            <span class="sweep-stat" id="sweep-stat">Select a parameter to sweep</span>
+          </div>
+          <div style="position:relative;height:240px">
+            <canvas id="sweep-chart" role="img" aria-label="Cd versus swept parameter value">Sensitivity curve.</canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Feature sensitivity ranking</div>
+          <div class="card-sub">Impact on Cd over ±1σ range — higher bar = stronger effect</div>
+          <div id="sens-bars">
+            <div style="font-size:12px;color:var(--text3)">Run a prediction first to rank sensitivities.</div>
+          </div>
+        </div>
+      </div><!-- /panel-sweep -->
+
+      <!-- ── Sliders panel ── -->
+      <div class="panel" id="panel-sliders">
+        <div class="card">
+          <div class="slider-section">
+            <div class="slider-section-title">Body dimensions</div>
+            <div class="slider-grid" id="sl-body"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="slider-section">
+            <div class="slider-section-title">Front geometry</div>
+            <div class="slider-grid" id="sl-front"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="slider-section">
+            <div class="slider-section-title">Rear geometry</div>
+            <div class="slider-grid" id="sl-rear"></div>
+          </div>
+          <div class="slider-actions" style="margin-top:16px">
+            <button class="btn-primary" id="run-from-sliders">Run prediction with these values</button>
+            <button class="btn-secondary" id="reset-sliders">Reset to dataset means</button>
+          </div>
+        </div>
+      </div><!-- /panel-sliders -->
+
+      <!-- ── Dataset panel ── -->
+      <div class="panel" id="panel-dataset">
+        <div class="dataset-grid">
+          <div class="dcard"><div class="dcard-label">Total CFD cases</div><div class="dcard-val">484</div><div class="dcard-sub">HF-LES OpenFOAM runs</div></div>
+          <div class="dcard"><div class="dcard-label">Configuration</div><div class="dcard-val" style="font-size:16px">Notchback</div><div class="dcard-sub">DrivAerML geometry family</div></div>
+          <div class="dcard"><div class="dcard-label">Input features</div><div class="dcard-val">16</div><div class="dcard-sub">Vehicle geometry params</div></div>
+          <div class="dcard"><div class="dcard-label">Cd range</div><div class="dcard-val" style="font-size:16px">0.206 – 0.360</div><div class="dcard-sub">Min → Max across dataset</div></div>
+          <div class="dcard"><div class="dcard-label">Best model CV R²</div><div class="dcard-val" style="color:var(--teal)">0.9525</div><div class="dcard-sub">5-fold cross-validation</div></div>
+          <div class="dcard"><div class="dcard-label">Best model RMSE</div><div class="dcard-val">0.00651</div><div class="dcard-sub">GradBoost-DrivAerML</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Available models</div>
+          <div class="model-row best">
+            <div class="model-row-dot" style="background:var(--teal)"></div>
+            <div class="model-row-info">
+              <div class="model-row-name">GradBoost-DrivAerML</div>
+              <div class="model-row-desc">484 HF-LES cases · CV R²=0.9525 · RMSE=0.00651</div>
+            </div>
+            <span class="mcard-badge badge-green">best</span>
+          </div>
+          <div class="model-row">
+            <div class="model-row-dot" style="background:var(--text3)"></div>
+            <div class="model-row-info">
+              <div class="model-row-name">RandomForest-DrivAerML</div>
+              <div class="model-row-desc">484 HF-LES cases · CV R²=0.8149 · RMSE=0.01292</div>
+            </div>
+            <span class="mcard-badge badge-gray">ready</span>
+          </div>
+          <div class="model-row" style="opacity:.55">
+            <div class="model-row-dot" style="background:var(--bg3)"></div>
+            <div class="model-row-info">
+              <div class="model-row-name">ResNet-Tabular-12K</div>
+              <div class="model-row-desc">DrivAerStar 12K cases · Requires dataset download</div>
+            </div>
+            <span class="mcard-badge badge-gray">pending</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Feature index</div>
+          <div style="margin-top:4px">
+            <span class="tag tag-teal">Vehicle_Length</span><span class="tag tag-teal">Vehicle_Width</span><span class="tag tag-teal">Vehicle_Height</span><span class="tag tag-teal">Vehicle_Ride_Height</span><span class="tag tag-teal">Vehicle_Pitch</span><span class="tag tag-amber">Front_Overhang</span><span class="tag tag-amber">Front_Planview</span><span class="tag tag-amber">Hood_Angle</span><span class="tag tag-amber">Approach_Angle</span><span class="tag tag-amber">Windscreen_Angle</span><span class="tag tag-gray">Backlight_Angle</span><span class="tag tag-gray">Decklid_Height</span><span class="tag tag-gray">Rearend_tapering</span><span class="tag tag-gray">Rear_Overhang</span><span class="tag tag-gray">Rear_Diffusor_Angle</span><span class="tag tag-gray">Greenhouse_Tapering</span>
+          </div>
+        </div>
+      </div><!-- /panel-dataset -->
+
+    </div><!-- /content -->
+
+    <div id="status-bar">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Connecting to surrogate server…</span>
+      <span id="infer-time"></span>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ── Feature definitions ────────────────────────────────────────────────────
+const FEATURES = [
+  {key:'Vehicle_Length',    label:'Vehicle length',      mean:49.936, std:3.2,   group:'body',  min:42,    max:58,    step:0.1},
+  {key:'Vehicle_Width',     label:'Vehicle width',       mean:0.6152, std:0.04,  group:'body',  min:0.52,  max:0.72,  step:0.001},
+  {key:'Vehicle_Height',    label:'Vehicle height',      mean:0.1269, std:0.02,  group:'body',  min:0.08,  max:0.18,  step:0.001},
+  {key:'Vehicle_Ride_Height',label:'Ride height',        mean:-0.1787,std:0.05,  group:'body',  min:-0.35, max:0,     step:0.001},
+  {key:'Vehicle_Pitch',     label:'Vehicle pitch',       mean:0.004,  std:0.015, group:'body',  min:-0.03, max:0.04,  step:0.0001},
+  {key:'Front_Overhang',    label:'Front overhang',      mean:-25.966,std:2.5,   group:'front', min:-32,   max:-19,   step:0.1},
+  {key:'Front_Planview',    label:'Front planview',      mean:0.9034, std:0.05,  group:'front', min:0.78,  max:1.02,  step:0.001},
+  {key:'Hood_Angle',        label:'Hood angle',          mean:0.0524, std:0.025, group:'front', min:0,     max:0.12,  step:0.001},
+  {key:'Approach_Angle',    label:'Approach angle',      mean:-5.3339,std:1.8,   group:'front', min:-9,    max:-1,    step:0.1},
+  {key:'Windscreen_Angle',  label:'Windscreen angle',    mean:0.1797, std:0.04,  group:'front', min:0.08,  max:0.28,  step:0.001},
+  {key:'Backlight_Angle',   label:'Backlight angle',     mean:50.181, std:6.5,   group:'rear',  min:35,    max:65,    step:0.1},
+  {key:'Decklid_Height',    label:'Decklid height',      mean:-0.5868,std:0.12,  group:'rear',  min:-0.85, max:-0.3,  step:0.001},
+  {key:'Rearend_tapering',  label:'Rearend tapering',    mean:-9.9599,std:2.2,   group:'rear',  min:-15,   max:-4,    step:0.1},
+  {key:'Rear_Overhang',     label:'Rear overhang',       mean:-23.685,std:2.8,   group:'rear',  min:-30,   max:-16,   step:0.1},
+  {key:'Rear_Diffusor_Angle',label:'Diffusor angle',     mean:0.1420, std:0.04,  group:'rear',  min:0.04,  max:0.24,  step:0.001},
+  {key:'Greenhouse_Tapering',label:'Greenhouse tapering',mean:0.8376, std:0.06,  group:'rear',  min:0.7,   max:0.98,  step:0.001},
+];
+
+const BENCHMARKS = [
+  {name:'Tesla Model 3', Cd:0.23},
+  {name:'BMW 3 Series',  Cd:0.26},
+  {name:'Audi A4',       Cd:0.27},
+  {name:'Toyota Camry',  Cd:0.28},
+  {name:'VW Golf',       Cd:0.30},
+  {name:'Porsche 911',   Cd:0.30},
+  {name:'Ford Mustang',  Cd:0.35},
+  {name:'Generic SUV',   Cd:0.38},
+];
+
+// ── State ──────────────────────────────────────────────────────────────────
+let vals = {};
+FEATURES.forEach(f => vals[f.key] = f.mean);
+let lastResult = null;
+let sweepInst = null, distInst = null;
+let sidebarCollapsed = false;
+const ACTIVE_MODEL = 'GradBoost-DrivAerML';
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function cdRating(cd) {
+  if (cd < 0.24) return 'Exceptional';
+  if (cd < 0.27) return 'Excellent';
+  if (cd < 0.30) return 'Good';
+  if (cd < 0.33) return 'Average';
+  if (cd < 0.37) return 'Above avg drag';
+  return 'High drag';
+}
+function cdClass(cd) {
+  if (cd < 0.27) return 'green';
+  if (cd < 0.32) return '';
+  return 'amber';
+}
+function cdToGaugePct(cd) {
+  return Math.max(2, Math.min(97, ((cd - 0.206) / (0.360 - 0.206)) * 100));
+}
+function benchColor(cd) {
+  if (cd < 0.26) return '#1d9e75';
+  if (cd < 0.29) return '#5dcaa5';
+  if (cd < 0.32) return '#ef9f27';
+  return '#e24b4a';
+}
+function fmtN(n, d) { return typeof n === 'number' ? n.toFixed(d) : '—'; }
+function erfApprox(x) {
+  const t = 1/(1+0.3275911*Math.abs(x));
+  const p = 1-(0.254829592*t-0.284496736*t*t+1.421413741*t*t*t-1.453152027*t*t*t*t+1.061405429*t*t*t*t*t)*Math.exp(-x*x);
+  return x >= 0 ? p : -p;
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── API calls ──────────────────────────────────────────────────────────────
+async function apiPredict() {
+  const overlay = document.getElementById('loading-overlay');
+  overlay.classList.add('active');
+  try {
+    const res = await fetch('/api/predict', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({features: vals, active_model: ACTIVE_MODEL}),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    overlay.classList.remove('active');
+  }
+}
+
+async function apiSweep(param) {
+  const res = await fetch('/api/sweep', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({param_name: param, fixed_features: vals, n_points: 40}),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+async function checkStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    const dot = document.getElementById('status-dot');
+    const txt = document.getElementById('status-text');
+    if (data.loaded) {
+      dot.className = 'status-dot green';
+      txt.textContent = `Models ready — ${data.models_available.join(', ')}`;
+    } else {
+      dot.className = 'status-dot amber';
+      txt.textContent = 'Surrogate models not loaded';
+    }
+  } catch {
+    document.getElementById('status-dot').className = 'status-dot gray';
+    document.getElementById('status-text').textContent = 'Server offline — check deployment';
+  }
+}
+
+// ── Sidebar feature list ───────────────────────────────────────────────────
+function renderFeatureList() {
+  const groups = {body:'Body dimensions', front:'Front geometry', rear:'Rear geometry'};
+  let html = '';
+  for (const [g, gtitle] of Object.entries(groups)) {
+    const feats = FEATURES.filter(f => f.group === g);
+    html += `<div class="feat-group"><div class="feat-group-title">${gtitle}</div>`;
+    feats.forEach(f => {
+      const v = vals[f.key];
+      const pct = Math.max(4, Math.min(100, ((v - f.min) / (f.max - f.min)) * 100));
+      html += `<div class="feat-item">
+        <div class="feat-row">
+          <span class="feat-name">${f.label}</span>
+          <span class="feat-val">${v.toFixed(3)}</span>
+        </div>
+        <div class="feat-bar"><div class="feat-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+  document.getElementById('feat-list').innerHTML = html;
+}
+
+// ── Results rendering ──────────────────────────────────────────────────────
+function renderResults(r) {
+  const cd = r.Cd;
+  const conf = r.confidence_pct;
+  const z = (cd - 0.2788) / 0.0302;
+  const perc = Math.round(50 * (1 + erfApprox(z / Math.sqrt(2))));
+
+  document.getElementById('r-cd').textContent = fmtN(cd, 4);
+  document.getElementById('r-cd').className = 'mcard-value ' + cdClass(cd);
+  document.getElementById('r-rating').textContent = cdRating(cd);
+  const pctEl = document.getElementById('r-pct');
+  pctEl.textContent = `${perc}th percentile`;
+  pctEl.style.display = 'inline-block';
+  pctEl.className = 'mcard-badge ' + (cd < 0.2788 ? 'badge-green' : 'badge-amber');
+
+  document.getElementById('r-ens').textContent = fmtN(r.Cd_ensemble, 4);
+  document.getElementById('r-unc').textContent = fmtN(r.uncertainty, 4);
+
+  document.getElementById('r-conf').textContent = fmtN(conf, 1) + '%';
+  document.getElementById('r-conf').className = 'mcard-value ' + (conf >= 75 ? 'green' : conf >= 55 ? '' : 'amber');
+  document.getElementById('r-ms').textContent = `${r.inferenceMs} ms`;
+
+  const cfPct = Math.max(0, Math.min(100, conf));
+  document.getElementById('conf-fill').style.width = cfPct.toFixed(1) + '%';
+  document.getElementById('conf-val-txt').textContent = fmtN(conf, 1) + '%';
+
+  document.getElementById('gauge-ptr').style.left = cdToGaugePct(cd).toFixed(1) + '%';
+
+  // benchmark bars
+  const maxCd = 0.42;
+  let bHtml = `<div class="bench-row">
+    <span class="bench-name" style="color:var(--teal);font-weight:500">This vehicle</span>
+    <div class="bench-track"><div class="bench-fill" style="width:${((cd-0.206)/(maxCd-0.206)*100).toFixed(1)}%;background:var(--teal)"></div></div>
+    <span class="bench-val" style="color:var(--teal)">${cd.toFixed(4)}</span>
+  </div>`;
+  BENCHMARKS.forEach(b => {
+    bHtml += `<div class="bench-row">
+      <span class="bench-name">${b.name}</span>
+      <div class="bench-track"><div class="bench-fill" style="width:${((b.Cd-0.206)/(maxCd-0.206)*100).toFixed(1)}%;background:${benchColor(b.Cd)}"></div></div>
+      <span class="bench-val">${b.Cd.toFixed(2)}</span>
+    </div>`;
+  });
+  document.getElementById('bench-list').innerHTML = bHtml;
+
+  // model compare
+  const gbCd = r.all_predictions['GradBoost-DrivAerML'];
+  const rfCd = r.all_predictions['RandomForest-DrivAerML'];
+  document.getElementById('model-compare').innerHTML = `
+    <div class="mcomp best"><div class="mcomp-name">GradBoost</div><div class="mcomp-cd">${fmtN(gbCd,4)}</div><div class="mcomp-r2">R²=0.9525</div></div>
+    <div class="mcomp"><div class="mcomp-name">RandomForest</div><div class="mcomp-cd">${fmtN(rfCd,4)}</div><div class="mcomp-r2">R²=0.8149</div></div>`;
+
+  renderDistChart(cd);
+  renderSensBars();
+
+  document.getElementById('infer-time').textContent = `${r.inferenceMs} ms`;
+}
+
+function renderDistChart(cd) {
+  const ctx = document.getElementById('dist-chart');
+  if (distInst) distInst.destroy();
+  const mean = 0.2788, std = 0.0302;
+  const xs = [], ys = [];
+  for (let i = 0; i <= 70; i++) {
+    const x = 0.17 + i * 0.003;
+    xs.push(x.toFixed(3));
+    const z = (x - mean) / std;
+    ys.push(+(Math.exp(-0.5*z*z) / (std*Math.sqrt(2*Math.PI))).toFixed(4));
+  }
+  const markerIdx = Math.min(69, Math.max(0, Math.round((cd - 0.17) / 0.003)));
+  const ptColors = ys.map((_, i) => i === markerIdx ? '#e24b4a' : 'transparent');
+  const ptSizes = ys.map((_, i) => i === markerIdx ? 5 : 0);
+  distInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: xs,
+      datasets: [
+        {data:ys, borderColor:'#1d9e75', borderWidth:1.8, pointRadius:0, fill:true, backgroundColor:'rgba(29,158,117,0.1)', tension:0.4},
+        {data:ys.map((v,i)=>i===markerIdx?v:null), borderColor:'#e24b4a', borderWidth:2, pointRadius:ptSizes, pointBackgroundColor:ptColors, fill:false, tension:0},
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}, tooltip:{enabled:false}},
+      scales:{x:{display:false}, y:{display:false}},
+      animation:{duration:350},
+    }
+  });
+}
+
+// ── Sensitivity bars ───────────────────────────────────────────────────────
+function computeSens() {
+  return FEATURES.map(f => {
+    const saved = vals[f.key];
+    const lo = f.mean - f.std, hi = f.mean + f.std;
+    vals[f.key] = lo;  const cdLo = localPredict();
+    vals[f.key] = hi;  const cdHi = localPredict();
+    vals[f.key] = saved;
+    return {key:f.key, label:f.label, delta: Math.abs(cdHi - cdLo)};
+  }).sort((a,b) => b.delta - a.delta);
+}
+
+function renderSensBars() {
+  const ranks = computeSens().slice(0, 8);
+  const maxD = ranks[0].delta;
+  const colors = ['#1d9e75','#1d9e75','#5dcaa5','#5dcaa5','#b4b2a9','#b4b2a9','#b4b2a9','#b4b2a9'];
+  let html = '';
+  ranks.forEach((r, i) => {
+    const pct = (r.delta / maxD * 100).toFixed(1);
+    html += `<div class="sens-row">
+      <span class="sens-name">${r.label}</span>
+      <div class="sens-track"><div class="sens-fill" style="width:${pct}%;background:${colors[i]}"></div></div>
+      <span class="sens-val">Δ${r.delta.toFixed(4)}</span>
+    </div>`;
+  });
+  document.getElementById('sens-bars').innerHTML = html;
+}
+
+// ── Local prediction (physics-inspired proxy used for sensitivity ranking) ─
+function localPredict() {
+  const f = vals;
+  const CD_MEAN = 0.2788;
+  let cd = CD_MEAN;
+  const BA = FEATURES.find(x=>x.key==='Backlight_Angle');
+  const WS = FEATURES.find(x=>x.key==='Windscreen_Angle');
+  cd += ((f['Backlight_Angle']  - BA.mean) / BA.std)  * 0.024;
+  cd += ((f['Windscreen_Angle'] - WS.mean) / WS.std)  * 0.016;
+  cd += ((f['Vehicle_Height']   - 0.127)   / 0.02)    * 0.014;
+  cd += ((f['Rearend_tapering'] - (-9.96)) / 2.2)     * 0.012;
+  cd += ((f['Vehicle_Ride_Height']-(-0.179))/0.05)    * 0.010;
+  cd += ((f['Rear_Diffusor_Angle']-0.142)  / 0.04)    * 0.009;
+  cd += ((f['Hood_Angle']       - 0.052)   / 0.025)   * (-0.007);
+  cd += ((f['Greenhouse_Tapering']-0.838)  / 0.06)    * 0.008;
+  cd += ((f['Approach_Angle']   - (-5.33)) / 1.8)     * 0.006;
+  cd += ((f['Decklid_Height']   - (-0.587))/ 0.12)    * 0.005;
+  return Math.max(0.21, Math.min(0.355, cd));
+}
+
+// ── Sweep chart ────────────────────────────────────────────────────────────
+async function runSweepChart(param) {
+  document.getElementById('sweep-stat').textContent = 'Running sweep…';
+  try {
+    const data = await apiSweep(param);
+    const xs = data.x.map(v => parseFloat(v).toFixed(3));
+    const ys = data.predictions[ACTIVE_MODEL] || data.predictions[Object.keys(data.predictions)[0]];
+    const minCd = Math.min(...ys), minIdx = ys.indexOf(minCd);
+    const f = FEATURES.find(x => x.key === param);
+
+    if (sweepInst) sweepInst.destroy();
+    const ctx = document.getElementById('sweep-chart');
+    sweepInst = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: xs,
+        datasets: [{
+          data: ys,
+          borderColor: '#1d9e75', borderWidth: 2,
+          pointRadius: ys.map((_,i) => i===minIdx ? 6 : 0),
+          pointBackgroundColor: ys.map((_,i) => i===minIdx ? '#0f6e56' : 'transparent'),
+          fill: true, backgroundColor: 'rgba(29,158,117,0.07)', tension: 0.35,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: {display:false},
+          tooltip: {callbacks:{label: c => 'Cd: ' + c.parsed.y.toFixed(4)}, displayColors:false}
+        },
+        scales: {
+          x: {title:{display:true,text:f?f.label:param,font:{size:11},color:'#888780'}, ticks:{maxTicksLimit:8,font:{size:10},color:'#888780'}, grid:{color:'rgba(136,135,128,0.1)'}},
+          y: {title:{display:true,text:'Cd',font:{size:11},color:'#888780'}, ticks:{font:{size:10},color:'#888780',callback:v=>v.toFixed(3)}, grid:{color:'rgba(136,135,128,0.1)'}},
+        },
+        animation: {duration:350},
+      }
+    });
+    const range = (Math.max(...ys) - Math.min(...ys)).toFixed(4);
+    document.getElementById('sweep-stat').textContent =
+      `Δ Cd range: ${range} · optimal Cd ${minCd.toFixed(4)} at ${xs[minIdx]}`;
+  } catch (e) {
+    document.getElementById('sweep-stat').textContent = 'Sweep failed — is the server running?';
+    showToast('Sweep error: ' + e.message);
+  }
+}
+
+// ── Slider builder ─────────────────────────────────────────────────────────
+function buildSliders(group, containerId) {
+  const feats = FEATURES.filter(f => f.group === group);
+  const el = document.getElementById(containerId);
+  let html = '';
+  feats.forEach(f => {
+    html += `<div class="sl-item">
+      <div class="sl-header">
+        <span class="sl-name">${f.label}</span>
+        <span class="sl-val" id="sv-${f.key}">${f.mean.toFixed(3)}</span>
+      </div>
+      <input type="range" min="${f.min}" max="${f.max}" step="${f.step}" value="${f.mean}" id="sl-${f.key}" data-key="${f.key}">
+    </div>`;
+  });
+  el.innerHTML = html;
+  feats.forEach(f => {
+    document.getElementById('sl-'+f.key).addEventListener('input', function() {
+      const v = parseFloat(this.value);
+      vals[f.key] = v;
+      document.getElementById('sv-'+f.key).textContent = v.toFixed(3);
+      renderFeatureList();
+    });
+  });
+}
+
+function resetSliders() {
+  FEATURES.forEach(f => {
+    vals[f.key] = f.mean;
+    const sl = document.getElementById('sl-'+f.key);
+    if (sl) { sl.value = f.mean; document.getElementById('sv-'+f.key).textContent = f.mean.toFixed(3); }
+  });
+  renderFeatureList();
+  showToast('Parameters reset to dataset means');
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+const TAB_TITLES = {
+  results: 'Drag coefficient — results',
+  sweep:   'Parameter sensitivity — sweep',
+  sliders: 'Edit parameters — 16 features',
+  dataset: 'Dataset — DrivAerML overview',
+};
+function switchTab(tab) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('panel-'+tab).classList.add('active');
+  document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add('active');
+  document.querySelector(`.nav-item[data-tab="${tab}"]`).classList.add('active');
+  document.getElementById('tb-title').textContent = TAB_TITLES[tab] || 'AeroNet';
+  if (tab === 'sweep') {
+    const sel = document.getElementById('sweep-select');
+    runSweepChart(sel.value);
+    if (lastResult) renderSensBars();
+  }
+}
+
+// ── Sidebar collapse ───────────────────────────────────────────────────────
+document.getElementById('toggle-sb').addEventListener('click', () => {
+  const sb = document.getElementById('sidebar');
+  sidebarCollapsed = !sidebarCollapsed;
+  sb.classList.toggle('collapsed', sidebarCollapsed);
+  ['logo-words','sb-model-wrap','sb-nav','sb-features'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = sidebarCollapsed ? 'none' : '';
+  });
+});
+
+// ── Run prediction ─────────────────────────────────────────────────────────
+async function runPrediction() {
+  try {
+    const result = await apiPredict();
+    lastResult = result;
+    renderResults(result);
+    renderFeatureList();
+    switchTab('results');
+    showToast('Prediction complete — Cd ' + result.Cd.toFixed(4));
+  } catch (e) {
+    showToast('Prediction failed: ' + e.message);
+    document.getElementById('status-dot').className = 'status-dot gray';
+    document.getElementById('status-text').textContent = 'Server error — check /api/status';
+  }
+}
+
+// ── Sweep select setup ─────────────────────────────────────────────────────
+function buildSweepSelect() {
+  const sel = document.getElementById('sweep-select');
+  FEATURES.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f.key; opt.textContent = f.label;
+    sel.appendChild(opt);
+  });
+  sel.value = 'Backlight_Angle';
+  sel.addEventListener('change', () => runSweepChart(sel.value));
+}
+
+// ── Wire up events ─────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+document.querySelectorAll('.nav-item').forEach(n => n.addEventListener('click', () => switchTab(n.dataset.tab)));
+document.getElementById('run-btn').addEventListener('click', runPrediction);
+document.getElementById('run-icon-btn').addEventListener('click', runPrediction);
+document.getElementById('run-from-sliders').addEventListener('click', runPrediction);
+document.getElementById('reset-sliders').addEventListener('click', resetSliders);
+
+// ── Init ───────────────────────────────────────────────────────────────────
+buildSliders('body',  'sl-body');
+buildSliders('front', 'sl-front');
+buildSliders('rear',  'sl-rear');
+buildSweepSelect();
+renderFeatureList();
+checkStatus();
+</script>
+</body>
+</html>
