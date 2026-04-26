@@ -1,0 +1,75 @@
+{
+  "features": [
+    "Vehicle_Length",
+    "Vehicle_Width",
+    "Vehicle_Height",
+    "Front_Overhang",
+    "Front_Planview",
+    "Hood_Angle",
+    "Approach_Angle",
+    "Windscreen_Angle",
+    "Greenhouse_Tapering",
+    "Backlight_Angle",
+    "Decklid_Height",
+    "Rearend_tapering",
+    "Rear_Overhang",
+    "Rear_Diffusor_Angle",
+    "Vehicle_Ride_Height",
+    "Vehicle_Pitch"
+  ],
+  "cd_min": 0.2064222,
+  "cd_max": 0.3600617,
+  "cd_mean": 0.2787672047520662,
+  "cd_std": 0.03021076965619355,
+  "cl_mean": 0.02989479544772727,
+  "cs_mean": 0.02193630747911157,
+  "n_samples": 484,
+  "dataset": "DrivAerML 484 HF-LES OpenFOAM CFD cases notchback",
+  "models": {
+    "GradBoost-DrivAerML": {
+      "description": "Gradient Boosting on DrivAerML (484 real CFD cases)",
+      "best_for": "484 samples",
+      "cv_r2": 0.9525,
+      "cv_rmse": 0.00651,
+      "file": "drivaerml_gb_final.pkl",
+      "needs_scaling": false
+    },
+    "RandomForest-DrivAerML": {
+      "description": "Random Forest on DrivAerML (484 real CFD cases)",
+      "best_for": "484 samples",
+      "cv_r2": 0.8149,
+      "cv_rmse": 0.01292,
+      "file": "drivaerml_rf_final.pkl",
+      "needs_scaling": false
+    },
+    "ResNet-Tabular-12K": {
+      "description": "Residual MLP \u2014 designed for DrivAerStar 12,000 cases (not yet trained)",
+      "best_for": "12000 samples",
+      "cv_r2": null,
+      "cv_rmse": null,
+      "file": null,
+      "needs_scaling": true,
+      "status": "pending \u2014 requires DrivAerStar dataset download",
+      "architecture": "Input(16) -> BN -> [Linear(256)->BN->ReLU->Drop(0.1)] x2 (skip) -> Linear(128)->BN->ReLU -> Linear(64)->ReLU -> Linear(1)"
+    }
+  },
+  "best_model": "GradBoost-DrivAerML",
+  "feature_means": [
+    49.93583308471076,
+    0.6151906710743893,
+    0.12690807809917903,
+    -25.965636152892554,
+    0.9034326646694225,
+    0.052378203512401245,
+    -5.333922526219005,
+    0.1797126859504309,
+    0.837575620454546,
+    50.18060776921488,
+    -0.5868210177685897,
+    -9.959852862169416,
+    -23.68495466528925,
+    0.14198853243801787,
+    -0.17871281239669115,
+    0.003998794212810045
+  ]
+}

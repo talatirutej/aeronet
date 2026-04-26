@@ -1,0 +1,56 @@
+# Pretrain AeroNet on the full DrivAerStar dataset.
+# Tuned for a single RTX 3090 / 4090 (24GB) with bf16 mixed precision.
+
+seed: 42
+
+data:
+  val_fraction: 0.1
+  cache_dirs:
+    # Override per-cache values if needed; otherwise inherits from manifest.json
+    - path: ./cache/notchback
+      body_class: 0
+    - path: ./cache/fastback
+      body_class: 1
+    - path: ./cache/estate
+      body_class: 2
+
+model:
+  use_normals: true
+  global_dim: 4
+  # Default architecture from AeroNetConfig is fine. Override below
+  # if you want a smaller/larger model. Lists become tuples in train.py.
+  sa1_centroids: 4096
+  sa2_centroids: 1024
+  sa3_centroids: 256
+  bottleneck_dim: 512
+  bottleneck_layers: 4
+  bottleneck_heads: 8
+  bottleneck_dropout: 0.1
+
+loss:
+  w_field: 1.0
+  w_force: 0.5
+  w_smooth: 0.05
+  pressure_weight: 1.0
+  tau_weight: 1.0
+
+optim:
+  lr: 3e-4
+  weight_decay: 1e-4
+  warmup_steps: 1000
+  max_steps: 200000
+  min_lr_ratio: 0.05
+  grad_clip: 1.0
+
+trainer:
+  max_epochs: 100
+  batch_size: 2
+  val_batch_size: 1
+  accumulate_grad_batches: 4         # effective batch = 8
+  num_workers: 4
+  precision: bf16-mixed
+  accelerator: gpu
+  devices: 1
+  log_dir: ./logs/pretrain
+  log_every_n_steps: 10
+  early_stop_patience: 25

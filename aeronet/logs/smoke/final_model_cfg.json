@@ -1,0 +1,91 @@
+{
+  "n_input_points": 2048,
+  "use_normals": true,
+  "global_dim": 4,
+  "sa1_centroids": 512,
+  "sa1_radii": [
+    0.05,
+    0.1
+  ],
+  "sa1_samples": [
+    16,
+    32
+  ],
+  "sa1_mlps": [
+    [
+      32,
+      32,
+      64
+    ],
+    [
+      32,
+      32,
+      64
+    ]
+  ],
+  "sa2_centroids": 128,
+  "sa2_radii": [
+    0.1,
+    0.2
+  ],
+  "sa2_samples": [
+    16,
+    32
+  ],
+  "sa2_mlps": [
+    [
+      64,
+      64,
+      128
+    ],
+    [
+      64,
+      96,
+      128
+    ]
+  ],
+  "sa3_centroids": 32,
+  "sa3_radii": [
+    0.2,
+    0.4
+  ],
+  "sa3_samples": [
+    16,
+    32
+  ],
+  "sa3_mlps": [
+    [
+      128,
+      196,
+      256
+    ],
+    [
+      128,
+      196,
+      256
+    ]
+  ],
+  "bottleneck_dim": 128,
+  "bottleneck_layers": 2,
+  "bottleneck_heads": 4,
+  "bottleneck_dropout": 0.1,
+  "fp3_mlp": [
+    256,
+    256
+  ],
+  "fp2_mlp": [
+    256,
+    128
+  ],
+  "fp1_mlp": [
+    128,
+    128,
+    128
+  ],
+  "head_hidden": [
+    128,
+    64
+  ],
+  "output_channels": 4,
+  "head_dropout": 0.1
+}

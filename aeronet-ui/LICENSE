@@ -1,0 +1,23 @@
+Copyright (c) 2026 Rutej Talati. All rights reserved.
+
+AeroNet — neural surrogate model for vehicle aerodynamics.
+
+This source code and all accompanying materials are the original work of
+Rutej Talati. All rights are reserved by the author.
+
+Permission is NOT granted to copy, modify, distribute, sublicense, or use
+this software, in whole or in part, for any purpose without prior written
+permission from the author.
+
+The author makes no warranties regarding this software. It is provided
+"as is" without warranty of any kind, express or implied, including but
+not limited to fitness for a particular purpose, merchantability, or
+non-infringement.
+
+Third-party datasets referenced by this software (including DrivAerStar,
+DrivAerNet, and DrivAerNet++) are the property of their respective
+authors and are licensed separately under the terms of those projects.
+This software does not redistribute those datasets and users must obtain
+them under their own license terms.
+
+For licensing inquiries, contact the author.

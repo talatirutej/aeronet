@@ -1,0 +1,8 @@
+# Server-side dependencies for the AeroNet inference API.
+# Install with: pip install -r requirements-server.txt
+# Assumes core ML deps from requirements.txt are already installed.
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+trimesh>=4.0

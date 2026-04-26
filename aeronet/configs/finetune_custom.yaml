@@ -1,0 +1,33 @@
+# Fine-tune a pretrained DrivAerStar checkpoint on the in-house dataset.
+# Designed for a small dataset (~50 cases) with frozen encoder.
+
+seed: 42
+
+data:
+  cache_dir: ./cache/custom
+  val_fraction: 0.2                  # 20% of 50 = 10 val cases
+  rotation_deg: 8.0
+  jitter_std: 0.008
+
+loss:
+  w_field: 1.0
+  w_force: 1.0                       # weight Cd higher since Cd is the target metric
+  w_smooth: 0.1                      # heavier smoothing on small data
+
+optim:
+  lr: 3e-5                           # 10x lower than pretrain
+  weight_decay: 1e-4
+  warmup_steps: 100
+  max_steps: 10000
+  min_lr_ratio: 0.1
+  grad_clip: 1.0
+
+trainer:
+  max_epochs: 200
+  batch_size: 1
+  num_workers: 2
+  precision: bf16-mixed
+  accelerator: gpu
+  devices: 1
+  log_dir: ./logs/finetune_custom
+  accumulate_grad_batches: 4

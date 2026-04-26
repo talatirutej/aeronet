@@ -1,0 +1,38 @@
+# Copyright (c) 2026 Rutej Talati. All rights reserved.
+# AeroNet — neural surrogate model for vehicle aerodynamics.
+
+# Smoke test config: synthetic data, tiny model, runs on CPU in a few minutes.
+# Use with: python scripts/train.py --config configs/smoke_test.yaml --smoke-test
+
+seed: 0
+
+data:
+  val_fraction: 0.1
+
+model: {}     # ignored, train.py builds a tiny model under --smoke-test
+
+loss:
+  w_field: 1.0
+  w_force: 0.0      # disable force loss for synthetic — synthetic normals are noisy
+  w_smooth: 0.0
+  enable_force_loss: false
+  enable_smooth_loss: false
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.0
+  warmup_steps: 5
+  max_steps: 200
+  min_lr_ratio: 0.1
+  grad_clip: 1.0
+
+trainer:
+  max_epochs: 3
+  batch_size: 4
+  val_batch_size: 2
+  num_workers: 0
+  precision: 32             # CPU doesn't do bf16 well
+  accelerator: cpu
+  devices: 1
+  log_dir: ./logs/smoke
+  log_every_n_steps: 5
