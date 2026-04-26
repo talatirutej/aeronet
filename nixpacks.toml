@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python312"]
+
+[phases.install]
+cmds = ["pip install -r aeronet/server/requirements.txt"]
+
+[start]
+cmd = "cd aeronet/server && python app.py"
