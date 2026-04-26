@@ -19,9 +19,13 @@ from surrogate_server import (
 
 app = FastAPI(title="AeroNet", version="1.0.0")
 
+import os as _os
+_ORIGINS = _os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -236,5 +240,8 @@ def _make_smoke_test_mesh(pts, cp_vals):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8080, reload=False)
+    import uvicorn, os
+    port = int(os.environ.get("PORT", 8080))
+    host = "0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1"
+    uvicorn.run("app:app", host=host, port=port, reload=False)
+# Railway entry point patch — appended
