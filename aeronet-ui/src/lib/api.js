@@ -76,3 +76,4 @@ export async function predictRemote(file, params, { timeoutMs = 600_000 } = {}) 
   }
   return data
 }
+
