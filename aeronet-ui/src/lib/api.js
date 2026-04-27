@@ -1,194 +1,75 @@
-===== Application Startup at 2026-04-27 05:18:23 =====
+// Copyright (c) 2026 Rutej Talati. All rights reserved.
+// AeroNet — neural surrogate model for vehicle aerodynamics.
 
-/app/app.py:55: DeprecationWarning: 
-        on_event is deprecated, use lifespan event handlers instead.
+const DEFAULT_BACKEND = "https://rutejtalati16-aeronet.hf.space"
 
-        Read more about it in the
-        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-        
-  @app.on_event("startup")
-INFO:     Started server process [1]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:7860 (Press CTRL+C to quit)
-[surrogate] Not found: /drivaerml_gb_final.pkl
-[surrogate] Not found: /drivaerml_rf_final.pkl
-[surrogate] ResNet-Tabular-12K: skipped (status=pending)
-[app] WARNING: surrogate models not loaded from / — predictions will fail.
-INFO:     10.16.27.106:64147 - "GET / HTTP/1.1" 500 Internal Server Error
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/site-packages/starlette/responses.py", line 343, in __call__
-    stat_result = await anyio.to_thread.run_sync(os.stat, self.path)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/to_thread.py", line 63, in run_sync
-    return await get_async_backend().run_sync_in_worker_thread(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2518, in run_sync_in_worker_thread
-    return await future
-           ^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 1002, in run
-    result = context.run(func, *args)
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: '/app/index.html'
+export function getBackendUrl() {
+  return import.meta.env?.VITE_AERONET_BACKEND ?? DEFAULT_BACKEND
+}
 
-During handling of the above exception, another exception occurred:
+export async function checkBackendHealth({ timeoutMs = 5000, retries = 4 } = {}) {
+  const url = `${getBackendUrl()}/health`
+  for (let i = 0; i < retries; i++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const res = await fetch(url, { signal: controller.signal })
+      if (res.ok) {
+        const data = await res.json()
+        clearTimeout(timer)
+        return { online: true, model: data?.model?.loaded ? data.model : null }
+      }
+    } catch (e) {
+      // retry
+    } finally {
+      clearTimeout(timer)
+    }
+    if (i < retries - 1) await new Promise(r => setTimeout(r, 3000))
+  }
+  return { online: false, error: 'Backend unreachable after retries' }
+}
 
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/applications.py", line 112, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/cors.py", line 85, in __call__
-    await self.app(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 714, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 734, in app
-    await route.handle(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 74, in app
-    await response(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/responses.py", line 346, in __call__
-    raise RuntimeError(f"File at path {self.path} does not exist.")
-RuntimeError: File at path /app/index.html does not exist.
-INFO:     10.16.24.44:4381 - "GET / HTTP/1.1" 500 Internal Server Error
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/site-packages/starlette/responses.py", line 343, in __call__
-    stat_result = await anyio.to_thread.run_sync(os.stat, self.path)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/to_thread.py", line 63, in run_sync
-    return await get_async_backend().run_sync_in_worker_thread(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2518, in run_sync_in_worker_thread
-    return await future
-           ^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 1002, in run
-    result = context.run(func, *args)
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: '/app/index.html'
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/applications.py", line 112, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/cors.py", line 85, in __call__
-    await self.app(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 714, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 734, in app
-    await route.handle(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 74, in app
-    await response(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/responses.py", line 346, in __call__
-    raise RuntimeError(f"File at path {self.path} does not exist.")
-RuntimeError: File at path /app/index.html does not exist.
-INFO:     10.16.27.106:12105 - "GET / HTTP/1.1" 500 Internal Server Error
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/site-packages/starlette/responses.py", line 343, in __call__
-    stat_result = await anyio.to_thread.run_sync(os.stat, self.path)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/to_thread.py", line 63, in run_sync
-    return await get_async_backend().run_sync_in_worker_thread(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2518, in run_sync_in_worker_thread
-    return await future
-           ^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 1002, in run
-    result = context.run(func, *args)
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: '/app/index.html'
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/applications.py", line 112, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 187, in __call__
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/cors.py", line 85, in __call__
-    await self.app(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 714, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 734, in app
-    await route.handle(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 74, in app
-    await response(scope, receive, send)
-  File "/usr/local/lib/python3.12/site-packages/starlette/responses.py", line 346, in __call__
-    raise RuntimeError(f"File at path {self.path} does not exist.")
-RuntimeError: File at path /app/index.html does not exist.
+export async function predictRemote(file, params, { timeoutMs = 600_000 } = {}) {
+  const url = `${getBackendUrl()}/predict`
+  const formData = new FormData()
+  formData.append("file", file)
+  formData.append("params", JSON.stringify({
+    body_type:            params.bodyType,
+    u_ref:                params.uRef,
+    rho:                  params.rho,
+    a_ref:                params.aRef,
+    size_factor:          params.sizeFactor,
+    yaw_angle_deg:        params.yawAngleDeg        ?? 0,
+    ground_clearance_mm:  params.groundClearanceMm  ?? 100,
+  }))
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let res
+  try {
+    res = await fetch(url, { method: "POST", body: formData, signal: controller.signal })
+  } catch (e) {
+    clearTimeout(timer)
+    throw new Error(e?.name === "AbortError" ? `Backend timed out after ${timeoutMs / 1000}s` : `Backend unreachable: ${e?.message ?? "network error"}`)
+  }
+  clearTimeout(timer)
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const err = await res.json(); if (err?.detail) detail = err.detail } catch {}
+    throw new Error(`Backend rejected request: ${detail}`)
+  }
+  const data = await res.json()
+  if (data?.pointCloud) {
+    data.pointCloud.positions = Float32Array.from(data.pointCloud.positions)
+    data.pointCloud.pressures = Float32Array.from(data.pointCloud.pressures)
+  }
+  if (data?.viewer?.points) {
+    data.viewer.points.positions = Float32Array.from(data.viewer.points.positions)
+    data.viewer.points.pressures = Float32Array.from(data.viewer.points.pressures)
+  }
+  if (data?.viewer?.mesh) {
+    data.viewer.mesh.positions = Float32Array.from(data.viewer.mesh.positions)
+    data.viewer.mesh.indices   = Uint32Array.from(data.viewer.mesh.indices)
+    data.viewer.mesh.pressures = Float32Array.from(data.viewer.mesh.pressures)
+  }
+  return data
+}
