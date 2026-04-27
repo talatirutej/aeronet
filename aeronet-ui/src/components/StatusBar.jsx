@@ -1,92 +1,75 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 
-export default function StatusBar({ result, history }) {
-  const avg = history.length
-    ? Math.round(history.reduce((s,h) => s + h.inferenceMs, 0) / history.length)
+export default function StatusBar({ result, history, activeModel, backendStatus }) {
+  const avgMs = history.length > 0
+    ? Math.round(history.reduce((a, b) => a + b.inferenceMs, 0) / history.length)
     : null
 
   return (
     <footer style={{
-      height: 52,
+      height: 26,
       display: 'flex',
       alignItems: 'center',
+      justifyContent: 'space-between',
       padding: '0 16px',
-      gap: 0,
-      borderTop: '1px solid #1e2b30',
-      background: '#000',
+      background: 'var(--bg1)',
+      borderTop: '0.5px solid var(--sep)',
       flexShrink: 0,
-      flexDirection: 'column',
-      justifyContent: 'center',
     }}>
-      <div style={{ display:'flex', alignItems:'center', width:'100%', gap:16 }}>
-
-        {/* Left: project metadata */}
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <Chip icon={
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/>
-              <line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/>
-              <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
-            </svg>
-          }>
-            <span style={{ color:'#4dd8e8' }}>main</span>
-            <span style={{ color:'#3a4f56', margin:'0 4px' }}>·</span>
-            <span style={{ fontFamily:'Roboto Mono' }}>8a3f4e2</span>
-          </Chip>
-
-          <Chip icon={
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
-            </svg>
-          }>
-            DrivAerStar · 12,000 cases
-          </Chip>
-
-          <Chip>
-            <span style={{ color:'#938f99' }}># val Cd err</span>
-            <span style={{ color:'#4dd8e8', marginLeft:4, fontFamily:'Roboto Mono' }}>5.4%</span>
-          </Chip>
-        </div>
-
-        <div style={{ flex:1 }} />
-
-        {/* Right: runtime stats */}
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          {history.length > 0 && (
-            <Chip>
-              <span style={{ color:'#938f99' }}>Inferences:</span>
-              <span style={{ fontFamily:'Roboto Mono', color:'#4dd8e8', marginLeft:4 }}>{history.length}</span>
-            </Chip>
-          )}
-          {avg && (
-            <Chip>
-              <span style={{ color:'#938f99' }}>Avg latency:</span>
-              <span style={{ fontFamily:'Roboto Mono', color:'#fff', marginLeft:4 }}>{avg} ms</span>
-            </Chip>
-          )}
-          <Chip>
-            <span style={{ width:6, height:6, borderRadius:'50%', background:'#4ade80',
-              animation:'pulse 2s ease-in-out infinite', flexShrink:0 }} />
-            <span style={{ color:'#4ade80', marginLeft:4 }}>Ready</span>
-          </Chip>
-        </div>
+      {/* Left */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <StatusItem>
+          <span style={{ color: 'var(--label3)' }}>main</span>
+          <Sep />
+          <span className="mono" style={{ color: 'var(--label3)' }}>8a3f4e2</span>
+        </StatusItem>
+        <Sep />
+        <StatusItem>
+          <span style={{ color: 'var(--label3)' }}>DrivAerML · 484 HF-LES cases</span>
+        </StatusItem>
+        <Sep />
+        <StatusItem>
+          <span style={{ color: 'var(--label3)' }}>val Cd err 5.4%</span>
+        </StatusItem>
       </div>
 
-      {/* Copyright line */}
-      <div style={{ width:'100%', textAlign:'center', fontSize:10, color:'#3a4f56',
-        fontWeight:400, letterSpacing:'0.04em', marginTop:2 }}>
-        © 2026 Rutej Talati · AeroNet · All rights reserved
+      {/* Right */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <StatusItem>
+          <span style={{ color: 'var(--label3)' }}>Runs:</span>
+          <span className="mono num" style={{ color: 'var(--blue)' }}>{history.length}</span>
+        </StatusItem>
+        {avgMs !== null && (
+          <>
+            <Sep />
+            <StatusItem>
+              <span style={{ color: 'var(--label3)' }}>Avg:</span>
+              <span className="mono num" style={{ color: 'var(--blue)' }}>{avgMs} ms</span>
+            </StatusItem>
+          </>
+        )}
+        <Sep />
+        <StatusItem>
+          <span className="status-dot" style={{
+            background: 'var(--green)',
+            boxShadow: '0 0 4px var(--green)',
+            animation: 'pulse 2.5s ease-in-out infinite',
+          }} />
+          <span style={{ color: 'var(--green)' }}>Ready</span>
+        </StatusItem>
       </div>
     </footer>
   )
 }
 
-function Chip({ children, icon }) {
+function StatusItem({ children }) {
   return (
-    <div style={{ display:'flex', alignItems:'center', gap:5,
-      fontSize:11, color:'#938f99', fontVariantNumeric:'tabular-nums' }}>
-      {icon && <span style={{ color:'#938f99', display:'flex', alignItems:'center' }}>{icon}</span>}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, letterSpacing: '-0.08px' }}>
       {children}
     </div>
   )
+}
+
+function Sep() {
+  return <span style={{ width: 0.5, height: 10, background: 'var(--sep)', display: 'inline-block', flexShrink: 0 }} />
 }
