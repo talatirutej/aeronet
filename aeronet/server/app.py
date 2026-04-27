@@ -6,6 +6,7 @@ Serves the frontend and exposes prediction/sweep API endpoints.
 
 Endpoints:
   GET  /               → serves index.html
+  GET  /health         → backend health check (used by frontend status pill)
   GET  /api/status     → surrogate model status
   POST /api/predict    → predict Cd from 16 features
   POST /api/sweep      → sweep one parameter
@@ -30,6 +31,7 @@ from surrogate_server import (
     sweep_parameter,
     CD_BENCHMARKS,
     FEATURE_NAMES,
+    _SURR,
 )
 
 app = FastAPI(title="AeroNet", version="2.0.0")
@@ -64,6 +66,21 @@ async def startup():
 @app.get("/", response_class=FileResponse)
 async def index():
     return FileResponse(str(HERE / "index.html"))
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    """Health check endpoint — used by the Vercel frontend status pill."""
+    loaded = _SURR.get("loaded", False)
+    models_ready = list(_SURR.get("models", {}).keys())
+    return {
+        "status": "ok",
+        "model": {
+            "loaded": loaded,
+            "models_available": models_ready,
+            "best": "GradBoost-DrivAerML" if loaded else None,
+        },
+    }
 
 
 @app.get("/api/status")
