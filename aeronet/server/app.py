@@ -54,11 +54,13 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 @app.on_event("startup")
 async def startup():
-    ok = load_surrogate_models(HERE)
+    # .pkl files and meta json live in repo root (2 levels up from aeronet/server/)
+    model_dir = HERE.parent.parent
+    ok = load_surrogate_models(model_dir)
     if ok:
-        print("[app] Surrogate models loaded successfully.")
+        print(f"[app] Surrogate models loaded from {model_dir}")
     else:
-        print("[app] WARNING: surrogate models not loaded — predictions will fail.")
+        print(f"[app] WARNING: surrogate models not loaded from {model_dir} — predictions will fail.")
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
