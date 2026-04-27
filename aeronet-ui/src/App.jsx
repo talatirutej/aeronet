@@ -16,13 +16,15 @@ const TABS = [
 ]
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('cfd')
-  const [result,    setResult]    = useState(null)
-  const [history,   setHistory]   = useState([])
-  const [isLoading, setIsLoading] = useState(false)
+  const [activeTab,    setActiveTab]    = useState('cfd')
+  const [result,       setResult]       = useState(null)
+  const [history,      setHistory]      = useState([])
+  const [isLoading,    setIsLoading]    = useState(false)
+  const [uploadedFile, setUploadedFile] = useState(null)  // ← STL/OBJ file for 3D viewer
 
   const handleSubmit = useCallback(async (file, params) => {
     setIsLoading(true)
+    setUploadedFile(file)   // pass file to CarViewer immediately so mesh loads
     try {
       const data = await predict(file, params)
       setResult(data)
@@ -39,8 +41,8 @@ export default function App() {
     }
   }, [])
 
-  // CarViewer expects { positions: Float32Array, pressures: Float32Array }
-  const viewerData = result?.pointCloud ?? result?.viewer?.points ?? null
+  // CarViewer reads Cd from result to colour the Cp map
+  const viewerResult = result?.pointCloud ? result : null
 
   return (
     <div className="h-screen flex flex-col bg-md-background overflow-hidden">
@@ -49,15 +51,12 @@ export default function App() {
       {/* Tab bar */}
       <div className="flex gap-0 border-b border-md-outline-variant bg-md-surface-container-low shrink-0 px-4">
         {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             className={`flex items-center gap-2 px-5 py-3 text-label-lg font-medium
                         transition-colors border-b-2 -mb-px
               ${activeTab === tab.id
                 ? 'border-md-primary text-md-primary'
-                : 'border-transparent text-md-on-surface-variant hover:text-md-on-surface'}`}
-          >
+                : 'border-transparent text-md-on-surface-variant hover:text-md-on-surface'}`}>
             <span>{tab.icon}</span>
             <span>{tab.label}</span>
           </button>
@@ -75,7 +74,11 @@ export default function App() {
 
           <section className="bg-md-background p-4 overflow-hidden">
             <div className="h-full rounded-xl overflow-hidden shadow-elevation-3">
-              <CarViewer data={viewerData} isLoading={isLoading} />
+              <CarViewer
+                data={viewerResult}
+                isLoading={isLoading}
+                uploadedFile={uploadedFile}
+              />
             </div>
           </section>
 
