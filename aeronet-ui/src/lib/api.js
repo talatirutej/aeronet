@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 // AeroNet — neural surrogate model for vehicle aerodynamics.
 
-const DEFAULT_BACKEND = "https://rutejtalati16-aeronet.hf.space"
+// Use Vercel proxy to avoid HuggingFace CORS restrictions.
+// Vercel rewrites /api/hf/* → https://rutejtalati16-aeronet.hf.space/*
+const DEFAULT_BACKEND = "/api/hf"
 
 export function getBackendUrl() {
   return import.meta.env?.VITE_AERONET_BACKEND ?? DEFAULT_BACKEND
@@ -73,3 +75,4 @@ export async function predictRemote(file, params, { timeoutMs = 600_000 } = {}) 
   }
   return data
 }
+
