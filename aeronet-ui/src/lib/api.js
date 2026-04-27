@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 // AeroNet — lib/api.js
-// Uses same /api/hf Vercel proxy as predict.js
 
-import { getBackendUrl } from './predict'
+const DEFAULT_BACKEND = '/api/hf'
+const BASE = import.meta.env?.VITE_AERONET_BACKEND ?? DEFAULT_BACKEND
 
 /**
  * Analyse a vehicle image via Moondream2 / Qwen2-VL backend.
@@ -13,10 +13,7 @@ export async function analyzeImage(imageFile) {
   const fd = new FormData()
   fd.append('file', imageFile)
 
-  const res = await fetch(`${getBackendUrl()}/analyze`, {
-    method: 'POST',
-    body: fd,
-  })
+  const res = await fetch(`${BASE}/analyze`, { method: 'POST', body: fd })
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     try { const err = await res.json(); if (err?.detail) detail = err.detail } catch {}
@@ -34,7 +31,7 @@ export async function streamChat(message, onToken) {
   const fd = new FormData()
   fd.append('message', message)
 
-  const res = await fetch(`${getBackendUrl()}/chat`, { method: 'POST', body: fd })
+  const res = await fetch(`${BASE}/chat`, { method: 'POST', body: fd })
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`)
 
   const reader = res.body.getReader()
