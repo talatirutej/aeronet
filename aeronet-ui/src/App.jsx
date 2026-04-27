@@ -49,7 +49,7 @@ export default function App() {
       setBackendStatus(status)
       if (status?.online) {
         try {
-          const r = await fetch('http://https://aeronet-osiw.onrender.com/surrogate/status')
+          const r = await fetch('/api/hf/api/status')
           if (r.ok) setSurrogateStatus(await r.json())
         } catch {}
       }
