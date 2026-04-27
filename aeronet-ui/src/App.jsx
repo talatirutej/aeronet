@@ -7,20 +7,21 @@ import InputPanel  from './components/InputPanel'
 import CarViewer   from './components/CarViewer'
 import ResultsPanel from './components/ResultsPanel'
 import Views2DPage  from './components/Views2DPage'
-import OptimisePage from './components/OptimisePage'
-import ComparePage  from './components/ComparePage'
-import RoadmapPage  from './components/RoadmapPage'
 import { predict, refreshBackendStatus } from './lib/predict'
+
+const PAGES = [
+  { id: '3d',       label: '3D Viewer',      shortcut: '1' },
+  { id: '2d',       label: 'Parametric',      shortcut: '2' },
+  { id: 'history',  label: 'Run History',     shortcut: '3' },
+]
 
 export default function App() {
   const [activePage,      setActivePage]      = useState('3d')
   const [activeModel,     setActiveModel]     = useState('AeroNet-PointNet')
   const [result,          setResult]          = useState(null)
-  const [compareResults,  setCompareResults]  = useState([])
   const [history,         setHistory]         = useState([])
   const [isLoading,       setIsLoading]       = useState(false)
   const [backendStatus,   setBackendStatus]   = useState(null)
-  const [surrogateStatus, setSurrogateStatus] = useState(null)
   const [viewMode,        setViewMode]        = useState('mesh')
   const [showWake,        setShowWake]        = useState(false)
   const [showTunnel,      setShowTunnel]      = useState(false)
@@ -47,22 +48,11 @@ export default function App() {
     const refresh = async () => {
       const status = await refreshBackendStatus()
       setBackendStatus(status)
-      if (status?.online) {
-        try {
-          const r = await fetch('/api/hf/api/status')
-          if (r.ok) setSurrogateStatus(await r.json())
-        } catch {}
-      }
     }
     refresh()
     const iv = setInterval(refresh, 15_000)
     return () => clearInterval(iv)
   }, [])
-
-  const handleRefreshBackend = async () => {
-    setBackendStatus(null)
-    setBackendStatus(await refreshBackendStatus())
-  }
 
   const handleSubmit = async (file, params) => {
     setIsLoading(true)
@@ -72,10 +62,11 @@ export default function App() {
       const entry = {
         id: Date.now(), file, params,
         label: `${file.name.replace(/\.[^.]+$/, '')} · ${params.bodyType}`,
-        Cd: r.Cd, Cl: r.Cl, inferenceMs: r.inferenceMs, source: r._source, result: r,
+        Cd: r.Cd, Cl: r.Cl, inferenceMs: r.inferenceMs,
+        source: r._source, result: r,
+        timestamp: new Date(),
       }
-      setHistory(h => [...h, entry])
-      setCompareResults(prev => [...prev.slice(-1), entry])
+      setHistory(h => [entry, ...h])
     } catch (e) {
       console.error('Prediction failed:', e)
     } finally {
@@ -83,81 +74,125 @@ export default function App() {
     }
   }
 
-  const renderPage = () => {
-    switch (activePage) {
-      case '3d':
-        return (
-          <main style={{ flex: 1, display: 'grid', overflow: 'hidden',
-            gridTemplateColumns: '300px 1fr 300px', gap: '1px', background: '#222' }}>
-            <aside style={{ overflow: 'auto', padding: 20, background: '#0a0a0a' }}>
-              <InputPanel onSubmit={handleSubmit} isLoading={isLoading} />
-            </aside>
-            <section style={{ position: 'relative', overflow: 'hidden',
-              padding: 12, background: '#000' }}>
-              <div style={{ width: '100%', height: '100%', borderRadius: 12,
-                overflow: 'hidden', border: '1px solid #243339' }}>
-                <CarViewer
-                  data={result ?? null}
-                  isLoading={isLoading}
-                  viewMode={viewMode}
-                  onViewModeChange={setViewMode}
-                  showWake={showWake}
-                  onToggleWake={() => setShowWake(w => !w)}
-                  showTunnel={showTunnel}
-                  onToggleTunnel={() => setShowTunnel(t => !t)}
-                />
-              </div>
-            </section>
-            <aside style={{ overflow: 'auto', padding: 20, background: '#0a0a0a' }}>
-              <ResultsPanel result={result} history={history} isLoading={isLoading} />
-            </aside>
-          </main>
-        )
-      case '2d':
-        return (
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <Views2DPage activeModel={activeModel} onModelChange={handleModelChange}
-              predictionData={result} />
+  const renderContent = () => {
+    if (activePage === '3d') {
+      return (
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '300px 1fr 300px', overflow: 'hidden', gap: '0.5px', background: 'var(--sep)' }}>
+          <div style={{ background: 'var(--bg0)', overflow: 'auto' }}>
+            <InputPanel onSubmit={handleSubmit} isLoading={isLoading} />
           </div>
-        )
-      case 'optimise':
-        return (
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <OptimisePage backendOnline={backendStatus?.online} />
+          <div style={{ background: '#000', position: 'relative', overflow: 'hidden' }}>
+            <CarViewer
+              data={result ?? null}
+              isLoading={isLoading}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              showWake={showWake}
+              onToggleWake={() => setShowWake(w => !w)}
+              showTunnel={showTunnel}
+              onToggleTunnel={() => setShowTunnel(t => !t)}
+            />
           </div>
-        )
-      case 'compare':
-        return (
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <ComparePage history={history} compareResults={compareResults}
-              onSubmit={handleSubmit} isLoading={isLoading} />
+          <div style={{ background: 'var(--bg0)', overflow: 'auto' }}>
+            <ResultsPanel result={result} history={history} isLoading={isLoading} />
           </div>
-        )
-      case 'roadmap':
-        return (
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <RoadmapPage />
-          </div>
-        )
-      default:
-        return null
+        </div>
+      )
     }
+
+    if (activePage === '2d') {
+      return (
+        <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg0)' }}>
+          <Views2DPage
+            activeModel={activeModel}
+            onModelChange={handleModelChange}
+            predictionData={result}
+          />
+        </div>
+      )
+    }
+
+    if (activePage === 'history') {
+      return (
+        <div style={{ flex: 1, overflow: 'auto', background: 'var(--bg0)', padding: '28px 32px' }}>
+          <HistoryPage history={history} />
+        </div>
+      )
+    }
+
+    return null
   }
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column',
-      background: '#000' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg0)', overflow: 'hidden' }}>
       <AppBar
         backendStatus={backendStatus}
-        onRefreshBackend={handleRefreshBackend}
         activePage={activePage}
         onPageChange={handlePageChange}
         activeModel={activeModel}
         onModelChange={handleModelChange}
-        surrogateStatus={surrogateStatus}
       />
-      {renderPage()}
-      <StatusBar result={result} history={history} activeModel={activeModel} />
+      {renderContent()}
+      <StatusBar result={result} history={history} activeModel={activeModel} backendStatus={backendStatus} />
+    </div>
+  )
+}
+
+function HistoryPage({ history }) {
+  if (history.length === 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
+        <div style={{ width: 56, height: 56, borderRadius: 14, background: 'var(--bg1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--label3)" strokeWidth="1.5">
+            <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>
+          </svg>
+        </div>
+        <div className="t-headline" style={{ color: 'var(--label2)' }}>No runs yet</div>
+        <div className="t-footnote" style={{ color: 'var(--label3)' }}>Run a prediction to see history</div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ maxWidth: 800, margin: '0 auto' }}>
+      <div className="section-label" style={{ marginBottom: 16 }}>Run History — {history.length} predictions</div>
+      <div className="ios-card" style={{ overflow: 'hidden' }}>
+        {history.map((h, i) => (
+          <div key={h.id} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '14px 20px',
+            borderBottom: i < history.length - 1 ? '0.5px solid var(--sep)' : 'none'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--bg2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span className="mono t-footnote" style={{ color: 'var(--label3)' }}>
+                  {String(history.length - i).padStart(2, '0')}
+                </span>
+              </div>
+              <div>
+                <div className="t-subhead" style={{ color: 'var(--label)' }}>{h.label}</div>
+                <div className="t-caption1" style={{ color: 'var(--label3)', marginTop: 2 }}>
+                  {h.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} ·{' '}
+                  {h.inferenceMs} ms ·{' '}
+                  <span style={{ color: h.source === 'backend' ? 'var(--green)' : 'var(--orange)' }}>
+                    {h.source === 'backend' ? 'backend' : 'mock'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 28, alignItems: 'baseline' }}>
+              <div style={{ textAlign: 'right' }}>
+                <div className="t-caption2" style={{ color: 'var(--label3)' }}>Cd</div>
+                <div className="mono t-headline" style={{ color: 'var(--blue)' }}>{h.Cd.toFixed(3)}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div className="t-caption2" style={{ color: 'var(--label3)' }}>Cl</div>
+                <div className="mono t-subhead" style={{ color: 'var(--label2)' }}>{h.Cl?.toFixed(3) ?? '—'}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
