@@ -503,7 +503,7 @@ export default function CarViewer({ data, isLoading, viewMode = 'points', onView
         onCreated={({ gl }) => { gl.domElement.addEventListener('webglcontextlost', e => e.preventDefault()) }}
       >
         <color attach="background" args={['#050505']} />
-        <Environment preset="city" />
+        <Environment files="https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/potsdamer_platz_1k.hdr" />
         <ambientLight intensity={0.4} />
         <directionalLight
           position={[cam.scale * 3, cam.scale * 2, cam.scale * 4]}
