@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 // AeroNet — App root v3
 
-import { useState, useCallback, useEffect } from 'react'
-import AppBar     from './components/AppBar'
-import StatusBar  from './components/StatusBar'
-import InputPanel from './components/InputPanel'
-import CarViewer  from './components/CarViewer'
+import { useState, useCallback } from 'react'
+import AppBar       from './components/AppBar'
+import StatusBar    from './components/StatusBar'
+import InputPanel   from './components/InputPanel'
+import CarViewer    from './components/CarViewer'
 import ResultsPanel from './components/ResultsPanel'
 import Views2DPage  from './components/Views2DPage'
-import { predictRemote, checkBackendHealth } from './lib/predict'
+import { predict }  from './lib/predict'
 
 const TABS = [
   { id: 'cfd',   label: 'CFD Predictor',  icon: '📐' },
@@ -20,16 +20,11 @@ export default function App() {
   const [result,    setResult]    = useState(null)
   const [history,   setHistory]   = useState([])
   const [isLoading, setIsLoading] = useState(false)
-  const [backendOk, setBackendOk] = useState(null)
-
-  useEffect(() => {
-    checkBackendHealth().then(h => setBackendOk(h.online))
-  }, [])
 
   const handleSubmit = useCallback(async (file, params) => {
     setIsLoading(true)
     try {
-      const data = await predictRemote(file, params)
+      const data = await predict(file, params)
       setResult(data)
       setHistory(h => [...h, {
         id:          Date.now(),
@@ -45,7 +40,6 @@ export default function App() {
   }, [])
 
   // CarViewer expects { positions: Float32Array, pressures: Float32Array }
-  // predictRemote populates either data.pointCloud or data.viewer.points
   const viewerData = result?.pointCloud ?? result?.viewer?.points ?? null
 
   return (
