@@ -104,7 +104,7 @@ export default function OptimisePage({ backendOnline }) {
       }
 
       try {
-        const res = await fetch('http://https://aeronet-osiw.onrender.com/surrogate/predict', {
+        const res = await fetch('/api/hf/api/predict', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ features: candidate, active_model: 'GradBoost-DrivAerML' }),
