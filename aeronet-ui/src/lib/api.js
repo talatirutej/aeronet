@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 // AeroNet — neural surrogate model for vehicle aerodynamics.
 
-const DEFAULT_BACKEND = "http://https://aeronet-osiw.onrender.com"
+const DEFAULT_BACKEND = "https://aeronet-osiw.onrender.com"
 
 export function getBackendUrl() {
   return import.meta.env?.VITE_AERONET_BACKEND ?? DEFAULT_BACKEND
