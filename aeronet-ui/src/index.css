@@ -3,32 +3,42 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; overflow: hidden; }
 
-/* ── Universal font lock — IBM Plex only, no Roboto, no system fonts ── */
-* {
-  font-family: 'IBM Plex Sans', sans-serif !important;
-  color: #ffffff;
-}
-code, pre, .mono, [class*="mono"] {
-  font-family: 'IBM Plex Mono', monospace !important;
-}
+/* ── Universal font lock ── */
+* { font-family: 'IBM Plex Sans', sans-serif !important; color: #ffffff; }
+code, pre, .mono, [class*="mono"] { font-family: 'IBM Plex Mono', monospace !important; }
 
-body {
-  background: #000;
-  color: #ffffff;
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 15px;          /* up from 14px */
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* ── CSS Variables ── */
+/* ════════════════════════════════════════════════════════════
+   DESIGN TOKENS  — single source of truth for every color
+   All components reference only these variables, never raw hex
+   ════════════════════════════════════════════════════════════ */
 :root {
+  /* ── Surfaces ── */
   --bg0:    #000000;
   --bg1:    #1C1C1E;
   --bg2:    #2C2C2E;
   --bg3:    #3A3A3C;
   --bg4:    #48484A;
   --sep:    rgba(84,84,88,0.55);
+
+  /* ── Text — all white, graded by opacity ──
+     Use these instead of any raw rgba(255,255,255,X)
+     --text-primary   : main readable text
+     --text-secondary : supporting labels
+     --text-tertiary  : dim labels / units / captions
+     --text-quaternary: very dim / placeholder / disabled
+  */
+  --text-primary:    rgba(255,255,255,1.00);   /* #ffffff   — headings, values */
+  --text-secondary:  rgba(255,255,255,0.75);   /* 75% white — body text        */
+  --text-tertiary:   rgba(255,255,255,0.45);   /* 45% white — labels, captions */
+  --text-quaternary: rgba(255,255,255,0.28);   /* 28% white — dim/disabled     */
+
+  /* Legacy aliases used by AppBar / ResultsPanel (kept for compat) */
+  --label:  var(--text-primary);
+  --label2: var(--text-secondary);
+  --label3: var(--text-tertiary);
+  --label4: var(--text-quaternary);
+
+  /* ── Accent / semantic colors ── */
   --blue:   #0A84FF;
   --green:  #30D158;
   --orange: #FF9F0A;
@@ -36,20 +46,22 @@ body {
   --indigo: #5E5CE6;
   --teal:   #40CBE0;
   --yellow: #FFD60A;
+}
 
-  /* Text opacity tokens — all still white, just at different opacities */
-  --label:   rgba(255,255,255,1.00);
-  --label2:  rgba(255,255,255,0.75);
-  --label3:  rgba(255,255,255,0.45);
-  --label4:  rgba(255,255,255,0.28);
+body {
+  background: var(--bg0);
+  color: var(--text-primary);
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ── Typography ── */
 .mono { font-family: 'IBM Plex Mono', monospace !important; }
 .num  { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 
-/* Bump every font-size token by ~1–2px */
-.t-largetitle { font-size: 36px; font-weight: 700; letter-spacing: -1px;   line-height: 1.1; }
+.t-largetitle { font-size: 36px; font-weight: 700; letter-spacing: -1px;    line-height: 1.1; }
 .t-title1     { font-size: 30px; font-weight: 700; letter-spacing: -0.8px; }
 .t-title2     { font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
 .t-title3     { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; }
@@ -79,21 +91,17 @@ body {
 }
 .ios-card::before {
   content: '';
-  position: absolute; top: 0; left: 0; right: 0;
-  height: 0.5px;
+  position: absolute; top: 0; left: 0; right: 0; height: 0.5px;
   background: rgba(255,255,255,0.09);
   pointer-events: none;
 }
-.ios-card:hover {
-  border-color: rgba(255,255,255,0.12);
-  background: #222;
-}
+.ios-card:hover { border-color: rgba(255,255,255,0.12); background: #222; }
 
-/* ── Buttons ── */
+/* ── Button ── */
 .ios-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 0 22px; height: 40px; border-radius: 10px;
-  background: var(--blue); color: #ffffff;
+  background: var(--blue); color: var(--text-primary);
   font-size: 14px; font-weight: 600; letter-spacing: -0.2px;
   border: none; cursor: pointer;
   transition: opacity 0.15s, transform 0.1s;
@@ -102,58 +110,49 @@ body {
 .ios-btn:active { transform: scale(0.97); opacity: 0.8; }
 .ios-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
 
-/* ── Chips ── */
+/* ── Chip ── */
 .ios-chip {
   display: inline-flex; align-items: center;
   padding: 5px 14px; border-radius: 8px;
   border: 0.5px solid var(--sep);
   background: transparent;
-  color: rgba(255,255,255,0.5);
+  color: var(--text-tertiary);
   font-size: 13px; font-weight: 500; letter-spacing: -0.2px;
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.ios-chip:hover { background: var(--bg2); color: rgba(255,255,255,0.8); }
+.ios-chip:hover { background: var(--bg2); color: var(--text-secondary); }
 .ios-chip-active {
   background: rgba(10,132,255,0.14);
   border-color: rgba(10,132,255,0.45);
   color: var(--blue);
 }
 
-/* ── Inputs ── */
+/* ── Input ── */
 .ios-input {
   background: var(--bg2); border: 0.5px solid var(--sep); border-radius: 9px;
-  padding: 9px 13px; color: #ffffff;
+  padding: 9px 13px; color: var(--text-primary);
   font-size: 14px; outline: none; width: 100%;
   transition: border-color 0.15s;
 }
 .ios-input:focus { border-color: var(--blue); }
-.ios-input::placeholder { color: rgba(255,255,255,0.25); }
-
-/* ── Progress bar ── */
-.ios-progress-track {
-  height: 3px; background: var(--bg3); border-radius: 9999px; overflow: hidden;
-}
-.ios-progress-fill {
-  height: 100%; border-radius: 9999px;
-  transition: width 0.4s cubic-bezier(0.34,1.56,0.64,1);
-}
+.ios-input::placeholder { color: var(--text-quaternary); }
 
 /* ── Section label ── */
 .section-label {
   font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
-  text-transform: uppercase; color: rgba(255,255,255,0.35); margin-bottom: 8px;
+  text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 8px;
 }
 
 /* ── Separator ── */
-.ios-sep { height: 0.5px; background: var(--sep); }
+.ios-sep    { height: 0.5px; background: var(--sep); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 
-/* ── Status dot ── */
-.status-dot {
-  width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0;
-}
+/* ── Progress ── */
+.ios-progress-track  { height: 3px; background: var(--bg3); border-radius: 9999px; overflow: hidden; }
+.ios-progress-fill   { height: 100%; border-radius: 9999px; transition: width 0.4s cubic-bezier(0.34,1.56,0.64,1); }
 
-/* ── CFD grid background ── */
+/* ── CFD grid ── */
 .cfd-grid {
   background-image:
     linear-gradient(rgba(10,132,255,0.04) 1px, transparent 1px),
@@ -166,7 +165,7 @@ body {
 .hover-row:hover { background: rgba(255,255,255,0.03); }
 
 /* ── Animations ── */
-@keyframes fadeIn      { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fadeIn      { from { opacity: 0 }               to { opacity: 1 } }
 @keyframes fadeUp      { from { opacity: 0; transform: translateY(8px)  } to { opacity: 1; transform: translateY(0) } }
 @keyframes slideUp     { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) } }
 @keyframes pageSlideIn { from { opacity: 0; transform: translateY(6px)  } to { opacity: 1; transform: translateY(0) } }
@@ -182,7 +181,6 @@ body {
 .anim-pulse { animation: pulse    2.5s ease-in-out infinite; }
 .anim-spin  { animation: spin     0.85s linear infinite; }
 
-/* Staggered children */
 .stagger > *:nth-child(1) { animation-delay: 0.04s }
 .stagger > *:nth-child(2) { animation-delay: 0.08s }
 .stagger > *:nth-child(3) { animation-delay: 0.12s }
@@ -190,7 +188,6 @@ body {
 .stagger > *:nth-child(5) { animation-delay: 0.20s }
 .stagger > *:nth-child(6) { animation-delay: 0.24s }
 
-/* ── Skeleton shimmer ── */
 .skeleton {
   background: linear-gradient(90deg, var(--bg2) 25%, var(--bg3) 50%, var(--bg2) 75%);
   background-size: 400px 100%;
@@ -198,7 +195,6 @@ body {
   border-radius: 8px;
 }
 
-/* ── Print ── */
 @media print {
   .no-print { display: none !important; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
