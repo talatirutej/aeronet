@@ -1,273 +1,283 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
-// AeroNet — ReportPage.jsx
-// Professional CFD post-processing report — printable / save as PDF
 
 import { useState } from 'react'
 
 const BENCHMARKS = [
-  { name:'Tesla Model 3', Cd:0.23 }, { name:'BMW 3 Series',  Cd:0.26 },
-  { name:'Audi A4',       Cd:0.27 }, { name:'Toyota Camry',  Cd:0.28 },
-  { name:'VW Golf',       Cd:0.30 }, { name:'Porsche 911',   Cd:0.30 },
-  { name:'Ford Mustang',  Cd:0.35 }, { name:'Generic SUV',   Cd:0.38 },
+  { name:'Tesla Model 3', Cd:0.23 },{ name:'BMW 3 Series',  Cd:0.26 },
+  { name:'Audi A4',       Cd:0.27 },{ name:'Toyota Camry',  Cd:0.28 },
+  { name:'VW Golf',       Cd:0.30 },{ name:'Porsche 911',   Cd:0.30 },
+  { name:'Ford Mustang',  Cd:0.35 },{ name:'Generic SUV',   Cd:0.38 },
 ]
+const DRAG_COLORS=['#FF453A','#FF9F0A','#FFD60A','#30D158','#40CBE0','#6C7C83']
 
-const DRAG_COLORS = ['#ef4444','#fb923c','#fbbf24','#84cc16','#22d3ee','#8a9296']
+function cdColor(cd) {
+  if (cd<0.25) return 'var(--green)'
+  if (cd<0.30) return 'var(--blue)'
+  if (cd<0.34) return 'var(--orange)'
+  return 'var(--red)'
+}
 
-function SH({ n, t }) {
+function SL({ n, t }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-label-md text-md-primary font-mono">{n}</span>
-      <div className="flex-1 h-px bg-md-outline-variant" />
-      <span className="text-label-md text-md-on-surface-variant uppercase tracking-wider">{t}</span>
+    <div style={{ display:'flex', alignItems:'center', gap:10, margin:'20px 0 12px' }}>
+      <span style={{ fontSize:11, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>{n}</span>
+      <div style={{ flex:1, height:0.5, background:'var(--sep)' }}/>
+      <span style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.08em', textTransform:'uppercase' }}>{t}</span>
     </div>
   )
 }
 
-// Confidence colour
-const confColor = c => c > 0.85 ? '#34D399' : c > 0.70 ? '#FBBF24' : '#F87171'
+function IOSInput({ value, onChange, placeholder, style }) {
+  return (
+    <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+      style={{
+        background:'var(--bg2)', border:'0.5px solid var(--sep)', borderRadius:8,
+        padding:'7px 12px', color:'rgba(235,235,245,0.8)', fontSize:13,
+        fontFamily:"'IBM Plex Sans',sans-serif", outline:'none',
+        transition:'border-color 0.15s',
+        ...style,
+      }}
+      onFocus={e=>e.target.style.borderColor='var(--blue)'}
+      onBlur={e=>e.target.style.borderColor='var(--sep)'}
+    />
+  )
+}
+
+const card = { background:'var(--bg1)', borderRadius:12, border:'0.5px solid rgba(255,255,255,0.06)', overflow:'hidden' }
 
 export default function ReportPage({ result, history }) {
   const [title,   setTitle]   = useState('AeroNet CFD Surrogate Report')
-  const [author,  setAuthor]  = useState('AeroNet v2.0')
+  const [author,  setAuthor]  = useState('AeroNet v3.0')
   const [project, setProject] = useState('')
   const [notes,   setNotes]   = useState('')
 
-  const now      = new Date().toLocaleString('en-GB')
+  const now = new Date().toLocaleString('en-GB')
   const hasResult = !!result
-
-  const avgLatency = history.length
-    ? Math.round(history.reduce((a, b) => a + b.inferenceMs, 0) / history.length)
-    : 0
+  const avgLatency = history.length ? Math.round(history.reduce((a,b)=>a+b.inferenceMs,0)/history.length) : 0
 
   return (
-    <div className="flex flex-col h-full bg-md-background text-md-on-surface overflow-hidden">
+    <div style={{ display:'flex', flexDirection:'column', height:'100%', background:'var(--bg0)', overflow:'hidden' }}>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-md-outline-variant bg-md-surface-container-low shrink-0 no-print">
-        <div className="w-7 h-7 rounded-full bg-md-primary-container flex items-center justify-center">
-          <span style={{ fontSize: 14 }}>📄</span>
-        </div>
+      <div className="no-print" style={{
+        display:'flex', alignItems:'center', gap:12, padding:'10px 16px',
+        borderBottom:'0.5px solid var(--sep)', background:'var(--bg1)', flexShrink:0,
+      }}>
         <div>
-          <div className="text-label-lg text-md-on-surface font-medium">Report Generator</div>
-          <div className="text-label-md text-md-on-surface-variant">Print / Save as PDF · professional CFD post-processing</div>
+          <div style={{ fontSize:13, fontWeight:600, color:'rgba(235,235,245,0.85)', letterSpacing:'-0.2px' }}>Report Generator</div>
+          <div style={{ fontSize:11, color:'rgba(235,235,245,0.28)', marginTop:1 }}>Print · Save as PDF</div>
         </div>
-        <div className="flex items-center gap-2 ml-4">
-          <input value={title} onChange={e => setTitle(e.target.value)}
-            className="bg-md-surface-container border border-md-outline-variant rounded-sm px-3 h-8 text-body-sm text-md-on-surface w-64 focus:outline-none focus:border-md-primary"
-            placeholder="Report title" />
-          <input value={author} onChange={e => setAuthor(e.target.value)}
-            className="bg-md-surface-container border border-md-outline-variant rounded-sm px-3 h-8 text-body-sm text-md-on-surface w-36 focus:outline-none focus:border-md-primary"
-            placeholder="Author" />
-          <input value={project} onChange={e => setProject(e.target.value)}
-            className="bg-md-surface-container border border-md-outline-variant rounded-sm px-3 h-8 text-body-sm text-md-on-surface w-36 focus:outline-none focus:border-md-primary"
-            placeholder="Project / vehicle" />
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginLeft:8 }}>
+          <IOSInput value={title}   onChange={setTitle}   placeholder="Report title"       style={{ width:220 }}/>
+          <IOSInput value={author}  onChange={setAuthor}  placeholder="Author"              style={{ width:130 }}/>
+          <IOSInput value={project} onChange={setProject} placeholder="Project / vehicle"   style={{ width:130 }}/>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-body-sm text-md-on-surface-variant">
-            {history.length} run{history.length !== 1 ? 's' : ''} · avg {avgLatency} ms
+        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ fontSize:12, color:'rgba(235,235,245,0.3)' }}>
+            {history.length} run{history.length!==1?'s':''} · avg {avgLatency} ms
           </span>
-          <button onClick={() => window.print()}
-            className="m3-btn-filled px-5 h-9 rounded-sm">
-            🖨 Print / Save PDF
+          <button onClick={()=>window.print()} style={{
+            height:34, padding:'0 18px', borderRadius:9, border:'none',
+            background:'var(--blue)', color:'#fff', fontSize:13, fontWeight:600,
+            cursor:'pointer', fontFamily:"'IBM Plex Sans',sans-serif",
+            display:'flex', alignItems:'center', gap:6, transition:'opacity 0.15s',
+          }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z"/></svg>
+            Print / Save PDF
           </button>
         </div>
       </div>
 
-      {/* Scrollable report */}
-      <div className="flex-1 overflow-y-auto p-6 bg-md-surface-container-lowest">
-        <div className="max-w-5xl mx-auto space-y-5">
+      {/* Report body */}
+      <div style={{ flex:1, overflowY:'auto', padding:'24px', background:'rgba(0,0,0,0.3)' }}>
+        <div style={{ maxWidth:960, margin:'0 auto' }}>
 
-          {/* Cover */}
-          <div className="m3-card-elevated p-8 animate-slide-up">
-            <div className="flex items-start justify-between mb-6">
+          {/* Cover card */}
+          <div style={{ ...card, padding:'24px 28px', marginBottom:0, animation:'fadeUp 0.3s ease both' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:20 }}>
               <div>
-                <div className="text-headline-md text-md-on-surface font-medium">{title}</div>
-                {project && <div className="text-title-md text-md-primary mt-1">{project}</div>}
-                <div className="text-body-md text-md-on-surface-variant mt-1">
-                  AeroNet CFD Surrogate · DrivAerML 484 HF-LES OpenFOAM cases
-                </div>
+                <div style={{ fontSize:24, fontWeight:700, color:'rgba(235,235,245,0.9)', letterSpacing:'-0.6px', lineHeight:1.2 }}>{title}</div>
+                {project && <div style={{ fontSize:16, color:'var(--blue)', marginTop:4, fontWeight:500 }}>{project}</div>}
+                <div style={{ fontSize:13, color:'rgba(235,235,245,0.35)', marginTop:4 }}>AeroNet CFD Surrogate · DrivAerML 484 HF-LES OpenFOAM cases</div>
               </div>
-              <div className="text-right text-body-sm text-md-on-surface-variant space-y-0.5">
-                <div className="text-label-lg text-md-on-surface">{author}</div>
+              <div style={{ textAlign:'right', fontSize:12, color:'rgba(235,235,245,0.35)', lineHeight:1.8 }}>
+                <div style={{ fontSize:14, fontWeight:600, color:'rgba(235,235,245,0.7)' }}>{author}</div>
                 <div>{now}</div>
-                <div className="text-md-primary font-mono">GradBoost · R²=0.9525 · err 5.4%</div>
+                <div style={{ color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace", fontSize:11 }}>GradBoost · R²=0.9525 · err 5.4%</div>
               </div>
             </div>
-            <div className="h-px bg-md-outline-variant mb-6" />
-            <div className="grid grid-cols-5 gap-4">
-              {[
-                ['Model',        'GradBoost-DrivAerML'],
-                ['Training Set', '484 HF-LES cases'],
-                ['Val Error',    'Cd err 5.4%'],
-                ['Inference',    `${avgLatency} ms avg`],
-                ['Total Runs',   history.length.toString()],
-              ].map(([k, v]) => (
-                <div key={k} className="m3-card-filled p-4 text-center">
-                  <div className="text-label-md text-md-on-surface-variant uppercase tracking-wider mb-1">{k}</div>
-                  <div className="text-label-lg text-md-primary font-mono">{v}</div>
+            <div style={{ height:0.5, background:'var(--sep)', marginBottom:20 }}/>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:10 }}>
+              {[['Model','GradBoost-DrivAerML'],['Training Set','484 HF-LES cases'],['Val Error','Cd err 5.4%'],['Avg Latency',`${avgLatency} ms`],['Total Runs',String(history.length)]].map(([k,v])=>(
+                <div key={k} style={{ background:'var(--bg2)', borderRadius:10, padding:'12px', textAlign:'center', border:'0.5px solid rgba(255,255,255,0.05)' }}>
+                  <div style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:6 }}>{k}</div>
+                  <div style={{ fontSize:13, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>{v}</div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Section 01 — Aerodynamic Coefficients */}
-          <SH n="01" t="Aerodynamic Coefficients" />
+          <SL n="01" t="Aerodynamic Coefficients"/>
           {hasResult ? (
-            <div className="m3-card-outlined overflow-hidden animate-fade-in">
-              <div className="grid grid-cols-4 divide-x divide-md-outline-variant">
+            <div style={{ ...card, animation:'fadeUp 0.3s 0.05s ease both' }}>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', borderBottom:'0.5px solid var(--sep)' }}>
                 {[
-                  { k:'Drag Coef.',    v: result.Cd.toFixed(4),       unit:'Cd', c:'#82CFFF',  big:true },
-                  { k:'Lift Coef.',    v: result.Cl.toFixed(4),       unit:'Cl', c: result.Cl > 0 ? '#F87171' : '#34D399' },
-                  { k:'Side Coef.',    v: result.Cs.toFixed(4),       unit:'Cs', c:'#FBBF24' },
-                  { k:'Confidence',   v: (result.confidence*100).toFixed(1)+'%', unit:'', c: confColor(result.confidence) },
-                ].map(m => (
-                  <div key={m.k} className="p-5 space-y-2">
-                    <div className="text-label-md text-md-on-surface-variant uppercase tracking-wider">{m.k}</div>
-                    <div className={`font-mono num ${m.big ? 'text-display-sm' : 'text-headline-sm'}`} style={{ color: m.c }}>
-                      {m.v} <span className="text-body-md text-md-on-surface-variant">{m.unit}</span>
+                  { k:'Drag Coef.',  v:result.Cd.toFixed(4),                    unit:'Cd', c:cdColor(result.Cd), big:true },
+                  { k:'Lift Coef.',  v:result.Cl?.toFixed(4)??'—',              unit:'Cl', c:result.Cl>0?'var(--red)':'var(--green)' },
+                  { k:'Side Coef.',  v:result.Cs?.toFixed(4)??'—',              unit:'Cs', c:'var(--orange)' },
+                  { k:'Confidence', v:(result.confidence*100).toFixed(1)+'%',   unit:'',   c:result.confidence>0.85?'var(--green)':result.confidence>0.7?'var(--orange)':'var(--red)' },
+                ].map((m,i)=>(
+                  <div key={m.k} style={{ padding:'18px 20px', borderRight: i<3?'0.5px solid var(--sep)':'none' }}>
+                    <div style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:10 }}>{m.k}</div>
+                    <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+                      <span style={{ fontSize: m.big?38:24, fontWeight:700, color:m.c, fontFamily:"'IBM Plex Mono',monospace", letterSpacing:m.big?'-1.5px':'-0.5px', lineHeight:1 }}>{m.v}</span>
+                      {m.unit&&<span style={{ fontSize:14, color:'rgba(235,235,245,0.3)' }}>{m.unit}</span>}
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="border-t border-md-outline-variant grid grid-cols-4 divide-x divide-md-outline-variant">
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', borderBottom:'0.5px solid var(--sep)' }}>
                 {[
-                  { k:'Drag Force',     v: result.dragForceN.toFixed(1), unit:'N' },
-                  { k:'Lift Force',     v: result.liftForceN.toFixed(1), unit:'N' },
-                  { k:'Dyn. Pressure', v: result.qInfPa.toFixed(1),     unit:'Pa' },
-                  { k:'Inference',     v: result.inferenceMs,             unit:'ms' },
-                ].map(m => (
-                  <div key={m.k} className="p-4 space-y-1">
-                    <div className="text-label-md text-md-on-surface-variant uppercase tracking-wider">{m.k}</div>
-                    <div className="text-title-lg font-mono num text-md-on-surface">{m.v} <span className="text-label-md text-md-on-surface-variant">{m.unit}</span></div>
+                  { k:'Drag Force',    v:result.dragForceN?.toFixed(1)??'—', unit:'N'  },
+                  { k:'Lift Force',    v:result.liftForceN?.toFixed(1)??'—', unit:'N'  },
+                  { k:'Dyn. Pressure', v:result.qInfPa?.toFixed(1)??'—',    unit:'Pa' },
+                  { k:'Inference',     v:String(result.inferenceMs),          unit:'ms' },
+                ].map((m,i)=>(
+                  <div key={m.k} style={{ padding:'12px 20px', borderRight: i<3?'0.5px solid var(--sep)':'none' }}>
+                    <div style={{ fontSize:10, color:'rgba(235,235,245,0.28)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:5 }}>{m.k}</div>
+                    <div style={{ fontSize:18, fontWeight:600, color:'rgba(235,235,245,0.8)', fontFamily:"'IBM Plex Mono',monospace" }}>{m.v} <span style={{ fontSize:12, color:'rgba(235,235,245,0.28)' }}>{m.unit}</span></div>
                   </div>
                 ))}
               </div>
-              <div className="border-t border-md-outline-variant p-5 space-y-2">
-                <div className="flex items-baseline justify-between mb-3">
-                  <span className="text-label-md text-md-on-surface-variant uppercase tracking-wider">Drag Region Breakdown</span>
-                  <span className="text-body-sm text-md-on-surface-variant">% of total Cd</span>
+              {result.dragBreakdown && (
+                <div style={{ padding:'16px 20px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:12 }}>
+                    <span style={{ fontSize:11, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.06em', textTransform:'uppercase' }}>Drag Region Breakdown</span>
+                    <span style={{ fontSize:11, color:'rgba(235,235,245,0.28)' }}>% of total Cd</span>
+                  </div>
+                  {result.dragBreakdown.map((b,i)=>(
+                    <div key={b.region} style={{ marginBottom:10 }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, marginBottom:5 }}>
+                        <span style={{ color:'rgba(235,235,245,0.65)' }}>{b.region}</span>
+                        <span style={{ fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.4)', fontVariantNumeric:'tabular-nums' }}>{(b.fraction*100).toFixed(1)}%</span>
+                      </div>
+                      <div style={{ height:4, background:'var(--bg3)', borderRadius:2, overflow:'hidden' }}>
+                        <div style={{ height:'100%', background:DRAG_COLORS[i], borderRadius:2, width:`${b.fraction*100}%`, transition:'width 0.6s cubic-bezier(0.34,1.56,0.64,1)' }}/>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {result.dragBreakdown?.map((b, i) => (
-                  <div key={b.region} className="space-y-1">
-                    <div className="flex justify-between text-body-sm">
-                      <span className="text-md-on-surface">{b.region}</span>
-                      <span className="font-mono num text-md-on-surface-variant">{(b.fraction*100).toFixed(1)}%</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-md-surface-container-highest overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width:`${b.fraction*100}%`, background: DRAG_COLORS[i] }}/>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              )}
             </div>
           ) : (
-            <div className="m3-card-outlined p-8 text-center text-md-on-surface-variant">
+            <div style={{ ...card, padding:'36px', textAlign:'center', color:'rgba(235,235,245,0.25)', fontSize:13 }}>
               No prediction results yet. Run a CFD prediction from the CFD Predictor tab first.
             </div>
           )}
 
-          {/* Section 02 — Benchmark Comparison */}
-          <SH n="02" t="Benchmark Comparison" />
-          <div className="m3-card-outlined overflow-hidden">
+          <SL n="02" t="Benchmark Comparison"/>
+          <div style={{ ...card, animation:'fadeUp 0.3s 0.08s ease both' }}>
             {hasResult && (
-              <div className="p-4 border-b border-md-outline-variant">
-                <div className="relative h-3 rounded-full overflow-hidden mb-2">
-                  <div className="absolute inset-0" style={{ background:'linear-gradient(to right,#34D399,#82CFFF,#FBBF24,#F87171)' }}/>
-                  {BENCHMARKS.map((b, i) => (
-                    <div key={i} className="absolute top-0 bottom-0 w-px bg-black/40"
-                      style={{ left:`${((b.Cd-0.20)/0.20)*100}%` }}/>
-                  ))}
-                  <div className="absolute top-[-3px] bottom-[-3px] w-1 bg-white rounded-full shadow"
-                    style={{ left:`${Math.min(98,Math.max(2,((result.Cd-0.20)/0.20)*100))}%` }}/>
+              <div style={{ padding:'14px 20px', borderBottom:'0.5px solid var(--sep)' }}>
+                <div style={{ position:'relative', height:10, borderRadius:5, overflow:'hidden', marginBottom:6 }}>
+                  <div style={{ position:'absolute', inset:0, background:'linear-gradient(to right,#30D158,#0A84FF,#FF9F0A,#FF453A)' }}/>
+                  <div style={{ position:'absolute', top:-2, bottom:-2, width:3, borderRadius:9999, background:'#fff', boxShadow:'0 1px 6px rgba(0,0,0,0.6)', transition:'left 0.4s', left:`${Math.min(98,Math.max(2,((result.Cd-0.20)/0.20)*100))}%` }}/>
                 </div>
-                <div className="flex justify-between text-label-sm text-md-on-surface-variant font-mono">
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:'rgba(235,235,245,0.28)', fontFamily:"'IBM Plex Mono',monospace" }}>
                   <span>0.20</span><span>0.30</span><span>0.40</span>
                 </div>
               </div>
             )}
-            <div className="divide-y divide-md-outline-variant">
-              {BENCHMARKS.map((b, i) => {
-                const d = hasResult ? result.Cd - b.Cd : null
-                return (
-                  <div key={i} className="flex items-center gap-4 px-5 py-3 hover:bg-md-surface-container transition-colors">
-                    <span className="text-body-md text-md-on-surface w-32">{b.name}</span>
-                    <span className="text-label-lg font-mono num text-md-primary w-12">{b.Cd.toFixed(3)}</span>
-                    <div className="flex-1 h-1.5 rounded-full bg-md-surface-container-highest overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width:`${((b.Cd-0.20)/0.25)*100}%`,
-                        background: b.Cd<0.26?'#34D399':b.Cd<0.30?'#82CFFF':b.Cd<0.34?'#FBBF24':'#F87171' }}/>
-                    </div>
-                    {d !== null && (
-                      <span className="text-label-lg font-mono num w-16 text-right"
-                        style={{ color: d <= 0 ? '#34D399' : '#F87171' }}>
-                        {d > 0 ? '+' : ''}{d.toFixed(4)}
-                      </span>
-                    )}
+            {BENCHMARKS.map((b,i)=>{
+              const d=hasResult?result.Cd-b.Cd:null
+              const clr=b.Cd<0.26?'var(--green)':b.Cd<0.30?'var(--blue)':b.Cd<0.34?'var(--orange)':'var(--red)'
+              return (
+                <div key={i} style={{
+                  display:'flex', alignItems:'center', gap:14, padding:'10px 20px',
+                  borderBottom: i<BENCHMARKS.length-1?'0.5px solid var(--sep)':'none',
+                  transition:'background 0.12s',
+                }}
+                  onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.02)'}
+                  onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <span style={{ fontSize:13, color:'rgba(235,235,245,0.65)', width:120, flexShrink:0 }}>{b.name}</span>
+                  <span style={{ fontSize:13, fontWeight:600, fontFamily:"'IBM Plex Mono',monospace", color:clr, width:44, flexShrink:0 }}>{b.Cd.toFixed(3)}</span>
+                  <div style={{ flex:1, height:3, background:'var(--bg3)', borderRadius:2, overflow:'hidden' }}>
+                    <div style={{ height:'100%', background:clr, borderRadius:2, width:`${((b.Cd-0.20)/0.25)*100}%` }}/>
                   </div>
-                )
-              })}
-            </div>
+                  {d!==null && (
+                    <span style={{ fontSize:12, fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums', width:56, textAlign:'right', color:d<=0?'var(--green)':'var(--red)', flexShrink:0 }}>
+                      {d>0?'+':''}{d.toFixed(4)}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
           </div>
 
-          {/* Section 03 — Inference History */}
-          {history.length > 0 && (
+          {history.length>0 && (
             <>
-              <SH n="03" t={`Inference History (${history.length} runs)`} />
-              <div className="m3-card-outlined overflow-hidden">
-                <div className="grid grid-cols-4 text-label-md text-md-on-surface-variant uppercase tracking-wider px-5 py-3 bg-md-surface-container-high border-b border-md-outline-variant">
-                  <span>#</span><span>Configuration</span><span className="text-right">Cd</span><span className="text-right">Latency</span>
+              <SL n="03" t={`Inference History (${history.length} runs)`}/>
+              <div style={{ ...card, animation:'fadeUp 0.3s 0.1s ease both' }}>
+                <div style={{ display:'grid', gridTemplateColumns:'40px 1fr 80px 80px', padding:'8px 16px', borderBottom:'0.5px solid var(--sep)', fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.06em', textTransform:'uppercase' }}>
+                  <span>#</span><span>Configuration</span><span style={{ textAlign:'right' }}>Cd</span><span style={{ textAlign:'right' }}>ms</span>
                 </div>
-                <div className="divide-y divide-md-outline-variant">
-                  {history.map((h, i) => (
-                    <div key={h.id} className="grid grid-cols-4 px-5 py-3 hover:bg-md-surface-container transition-colors">
-                      <span className="text-label-md font-mono text-md-on-surface-variant">{String(i+1).padStart(2,'0')}</span>
-                      <span className="text-body-sm text-md-on-surface truncate">{h.label}</span>
-                      <span className="text-label-lg font-mono num text-right" style={{ color:'#82CFFF' }}>{h.Cd.toFixed(4)}</span>
-                      <span className="text-label-md font-mono text-md-on-surface-variant text-right num">{h.inferenceMs} ms</span>
+                {history.map((h,i)=>(
+                  <div key={h.id} style={{
+                    display:'grid', gridTemplateColumns:'40px 1fr 80px 80px', padding:'9px 16px',
+                    borderBottom: i<history.length-1?'0.5px solid rgba(255,255,255,0.04)':'none',
+                    transition:'background 0.12s',
+                  }}
+                    onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.02)'}
+                    onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                    <span style={{ fontSize:11, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.25)' }}>{String(i+1).padStart(2,'0')}</span>
+                    <span style={{ fontSize:12, color:'rgba(235,235,245,0.6)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.label}</span>
+                    <span style={{ fontSize:13, fontWeight:600, fontFamily:"'IBM Plex Mono',monospace", color:'var(--blue)', textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{h.Cd.toFixed(4)}</span>
+                    <span style={{ fontSize:12, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.3)', textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{h.inferenceMs}</span>
+                  </div>
+                ))}
+                {(()=>{
+                  const cds=history.map(h=>h.Cd)
+                  return (
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:0, borderTop:'0.5px solid var(--sep)', background:'rgba(255,255,255,0.02)' }}>
+                      {[
+                        { k:'Min Cd',  v:Math.min(...cds).toFixed(4), c:'var(--green)' },
+                        { k:'Max Cd',  v:Math.max(...cds).toFixed(4), c:'var(--red)'   },
+                        { k:'Mean Cd', v:(cds.reduce((a,b)=>a+b,0)/cds.length).toFixed(4), c:'var(--blue)' },
+                        { k:'Avg ms',  v:String(avgLatency), c:'rgba(235,235,245,0.5)' },
+                      ].map((s,i,arr)=>(
+                        <div key={s.k} style={{ padding:'10px 16px', textAlign:'center', borderRight:i<arr.length-1?'0.5px solid var(--sep)':'none' }}>
+                          <div style={{ fontSize:10, color:'rgba(235,235,245,0.28)', marginBottom:4 }}>{s.k}</div>
+                          <div style={{ fontSize:14, fontWeight:600, fontFamily:"'IBM Plex Mono',monospace", color:s.c, fontVariantNumeric:'tabular-nums' }}>{s.v}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                {/* Stats footer */}
-                <div className="grid grid-cols-4 gap-4 p-4 bg-md-surface-container-high border-t border-md-outline-variant">
-                  {(() => {
-                    const cds = history.map(h => h.Cd)
-                    return [
-                      { k:'Min Cd',  v: Math.min(...cds).toFixed(4), c:'#34D399' },
-                      { k:'Max Cd',  v: Math.max(...cds).toFixed(4), c:'#F87171' },
-                      { k:'Mean Cd', v: (cds.reduce((a,b)=>a+b,0)/cds.length).toFixed(4), c:'#82CFFF' },
-                      { k:'Avg ms',  v: avgLatency.toString(), c:'#BFC8CC' },
-                    ].map(s => (
-                      <div key={s.k} className="text-center">
-                        <div className="text-label-md text-md-on-surface-variant">{s.k}</div>
-                        <div className="text-label-lg font-mono num" style={{ color: s.c }}>{s.v}</div>
-                      </div>
-                    ))
-                  })()}
-                </div>
+                  )
+                })()}
               </div>
             </>
           )}
 
-          {/* Section 04 — Engineer Notes */}
-          <SH n="04" t="Engineer Notes" />
-          <div className="m3-card-outlined overflow-hidden">
-            <textarea value={notes} onChange={e => setNotes(e.target.value)}
+          <SL n="04" t="Engineer Notes"/>
+          <div style={{ ...card }}>
+            <textarea value={notes} onChange={e=>setNotes(e.target.value)}
               placeholder="Add observations, design decisions, next steps…"
-              className="w-full p-5 bg-transparent text-md-on-surface text-body-md resize-none focus:outline-none placeholder:text-md-on-surface-variant"
-              style={{ minHeight: 100, fontFamily:'Roboto, sans-serif' }} />
+              style={{
+                width:'100%', minHeight:100, padding:'14px 18px',
+                background:'transparent', border:'none', outline:'none', resize:'none',
+                color:'rgba(235,235,245,0.65)', fontSize:13, lineHeight:1.6,
+                fontFamily:"'IBM Plex Sans',sans-serif",
+              }}/>
           </div>
 
-          {/* Footer */}
-          <div className="text-center text-label-sm text-md-on-surface-variant py-4">
+          <div style={{ textAlign:'center', padding:'24px 0 8px', fontSize:11, color:'rgba(235,235,245,0.15)' }}>
             AeroNet CFD Surrogate · GradBoost-DrivAerML · 484 HF-LES OpenFOAM cases · val Cd err 5.4% · {now}
           </div>
         </div>
       </div>
 
       <style>{`
-        @media print {
-          .no-print { display: none !important; }
-          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        }
+        @media print { .no-print { display:none !important; } * { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
       `}</style>
     </div>
   )
