@@ -23,10 +23,10 @@ const FEATURES = [
 ]
 
 const STATUS = {
-  'in-progress':        { label:'In Progress',        color:'#40CBE0', bg:'rgba(64,203,224,0.1)',  border:'rgba(64,203,224,0.2)' },
-  'architecture-ready': { label:'Architecture Ready', color:'#BF5AF2', bg:'rgba(191,90,242,0.1)', border:'rgba(191,90,242,0.2)' },
-  'feasible-now':       { label:'CPU Only',            color:'#30D158', bg:'rgba(48,209,88,0.1)',  border:'rgba(48,209,88,0.2)'  },
-  'planned':            { label:'Planned',             color:'#FFD60A', bg:'rgba(255,214,10,0.08)', border:'rgba(255,214,10,0.2)' },
+  'in-progress':        { label:'In Progress',        color:'var(--teal)', bg:'rgba(64,203,224,0.1)',  border:'rgba(64,203,224,0.2)' },
+  'architecture-ready': { label:'Architecture Ready', color:'var(--indigo)', bg:'rgba(191,90,242,0.1)', border:'rgba(191,90,242,0.2)' },
+  'feasible-now':       { label:'CPU Only',            color:'var(--green)', bg:'rgba(48,209,88,0.1)',  border:'rgba(48,209,88,0.2)'  },
+  'planned':            { label:'Planned',             color:'var(--yellow)', bg:'rgba(255,214,10,0.08)', border:'rgba(255,214,10,0.2)' },
 }
 const IMPACT_COLOR = { 'Very High':'#30D158', 'High':'#0A84FF', 'Medium':'#FFD60A' }
 const FILTER_TAGS = [
@@ -38,10 +38,10 @@ const FILTER_TAGS = [
   { key:'frontend',        label:'Frontend'      },
 ]
 const STATS = [
-  { label:'CPU Only',    value:'5', color:'#30D158' },
-  { label:'GPU Required',value:'4', color:'#FF453A' },
-  { label:'In Progress', value:'3', color:'#40CBE0' },
-  { label:'Planned',     value:'7', color:'#FFD60A' },
+  { label:'CPU Only',    value:'5', color:'var(--green)' },
+  { label:'GPU Required',value:'4', color:'var(--red)' },
+  { label:'In Progress', value:'3', color:'var(--teal)' },
+  { label:'Planned',     value:'7', color:'var(--yellow)' },
 ]
 
 function FeatureCard({ item }) {
@@ -64,17 +64,17 @@ function FeatureCard({ item }) {
         <div style={{ display:'flex', alignItems:'flex-start', gap:12 }}>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:6 }}>
-              <span style={{ fontSize:14, fontWeight:500, color:'rgba(235,235,245,0.85)', letterSpacing:'-0.2px' }}>{item.name}</span>
+              <span style={{ fontSize:14, fontWeight:500, color:'var(--text-primary)', letterSpacing:'-0.2px' }}>{item.name}</span>
               <span style={{ fontSize:11, fontWeight:600, padding:'2px 10px', borderRadius:20, background:sc.bg, color:sc.color, border:`0.5px solid ${sc.border}` }}>{sc.label}</span>
-              {cpuOnly&&!needsGPU&&<span style={{ fontSize:11, padding:'2px 8px', borderRadius:20, background:'rgba(48,209,88,0.08)', color:'#30D158', border:'0.5px solid rgba(48,209,88,0.2)' }}>No GPU</span>}
+              {cpuOnly&&!needsGPU&&<span style={{ fontSize:11, padding:'2px 8px', borderRadius:20, background:'rgba(48,209,88,0.08)', color:'var(--green)', border:'0.5px solid rgba(48,209,88,0.2)' }}>No GPU</span>}
               {needsGPU&&<span style={{ fontSize:11, padding:'2px 8px', borderRadius:20, background:'rgba(255,69,58,0.08)', color:'var(--red)', border:'0.5px solid rgba(255,69,58,0.2)' }}>GPU required</span>}
             </div>
-            <p style={{ fontSize:12, color:'rgba(235,235,245,0.38)', lineHeight:1.65, margin:0 }}>{item.desc}</p>
+            <p style={{ fontSize:12, color:'var(--text-tertiary)', lineHeight:1.65, margin:0 }}>{item.desc}</p>
           </div>
           <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4, flexShrink:0 }}>
-            <span style={{ fontSize:12, fontWeight:500, color:IMPACT_COLOR[item.impact]||'rgba(235,235,245,0.5)' }}>{item.impact}</span>
-            <span style={{ fontSize:11, color:'rgba(235,235,245,0.25)' }}>{item.effort} effort</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(235,235,245,0.25)" strokeWidth="2"
+            <span style={{ fontSize:12, fontWeight:500, color:IMPACT_COLOR[item.impact]||'rgba(255,255,255,0.5)' }}>{item.impact}</span>
+            <span style={{ fontSize:11, color:'var(--text-quaternary)' }}>{item.effort} effort</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2"
               style={{ marginTop:4, transform:open?'rotate(180deg)':'none', transition:'transform 0.2s cubic-bezier(0.22,1,0.36,1)' }}>
               <polyline points="6 9 12 15 18 9"/>
             </svg>
@@ -84,14 +84,14 @@ function FeatureCard({ item }) {
       {open && (
         <div style={{ borderTop:'0.5px solid var(--sep)', padding:'12px 16px 14px', animation:'fadeUp 0.2s ease both' }}>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-            {[['GPU',item.gpu,'var(--red)'],['VRAM',item.vram,'var(--orange)'],['Training Time',item.trainingTime,'var(--blue)'],['Dataset',item.dataset,'rgba(235,235,245,0.6)']].filter(([,v])=>v&&v!=='None').map(([label,value,color])=>(
+            {[['GPU',item.gpu,'var(--red)'],['VRAM',item.vram,'var(--orange)'],['Training Time',item.trainingTime,'var(--blue)'],['Dataset',item.dataset,'rgba(255,255,255,0.6)']].filter(([,v])=>v&&v!=='None').map(([label,value,color])=>(
               <div key={label} style={{ background:'var(--bg2)', borderRadius:9, padding:'9px 12px', border:'0.5px solid rgba(255,255,255,0.05)' }}>
-                <div style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.25)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:5 }}>{label}</div>
+                <div style={{ fontSize:10, fontWeight:600, color:'var(--text-quaternary)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:5 }}>{label}</div>
                 <div style={{ fontSize:12, color, lineHeight:1.5 }}>{value}</div>
               </div>
             ))}
           </div>
-          {item.reference&&<p style={{ fontSize:11, color:'rgba(235,235,245,0.25)', margin:'10px 0 0', fontStyle:'italic' }}>{item.reference}</p>}
+          {item.reference&&<p style={{ fontSize:11, color:'var(--text-quaternary)', margin:'10px 0 0', fontStyle:'italic' }}>{item.reference}</p>}
         </div>
       )}
     </div>
@@ -113,8 +113,8 @@ export default function RoadmapPage() {
             </svg>
           </div>
           <div>
-            <h1 style={{ fontSize:22, fontWeight:700, color:'rgba(235,235,245,0.9)', margin:0, letterSpacing:'-0.5px' }}>Roadmap</h1>
-            <p style={{ fontSize:12, color:'rgba(235,235,245,0.3)', margin:'2px 0 0' }}>Upcoming features, GPU requirements, and compute estimates</p>
+            <h1 style={{ fontSize:22, fontWeight:700, color:'var(--text-primary)', margin:0, letterSpacing:'-0.5px' }}>Roadmap</h1>
+            <p style={{ fontSize:12, color:'var(--text-tertiary)', margin:'2px 0 0' }}>Upcoming features, GPU requirements, and compute estimates</p>
           </div>
         </div>
 
@@ -124,8 +124,8 @@ export default function RoadmapPage() {
             <div key={s.label} style={{ background:'var(--bg1)', borderRadius:12, border:'0.5px solid rgba(255,255,255,0.06)', padding:'14px 16px', transition:'border-color 0.15s', cursor:'default' }}
               onMouseEnter={e=>e.currentTarget.style.borderColor=s.color+'44'}
               onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.06)'}>
-              <div style={{ fontSize:36, fontWeight:300, color:s.color, fontFamily:"'IBM Plex Mono',monospace", lineHeight:1, fontVariantNumeric:'tabular-nums' }}>{s.value}</div>
-              <div style={{ fontSize:12, color:'rgba(235,235,245,0.3)', marginTop:6 }}>{s.label}</div>
+              <div style={{ fontSize:36, fontWeight:300, color:s.color, fontFamily:"'IBM Plex Mono'", lineHeight:1, fontVariantNumeric:'tabular-nums' }}>{s.value}</div>
+              <div style={{ fontSize:12, color:'var(--text-tertiary)', marginTop:6 }}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -139,9 +139,9 @@ export default function RoadmapPage() {
                 padding:'5px 16px', borderRadius:20,
                 border:`0.5px solid ${active?'rgba(10,132,255,0.45)':'rgba(255,255,255,0.08)'}`,
                 background: active?'rgba(10,132,255,0.14)':'transparent',
-                color: active?'var(--blue)':'rgba(235,235,245,0.4)',
+                color: active?'var(--blue)':'rgba(255,255,255,0.4)',
                 fontSize:12, fontWeight:500, cursor:'pointer', transition:'all 0.14s',
-                fontFamily:"'IBM Plex Sans',sans-serif",
+                fontFamily:"'IBM Plex Sans'",
               }}>{t.label}</button>
             )
           })}
@@ -154,7 +154,7 @@ export default function RoadmapPage() {
           </svg>
           <div>
             <p style={{ fontSize:13, fontWeight:500, color:'var(--red)', margin:'0 0 3px' }}>GPU Requirement Notice</p>
-            <p style={{ fontSize:12, color:'rgba(235,235,245,0.35)', margin:0, lineHeight:1.6 }}>
+            <p style={{ fontSize:12, color:'var(--text-tertiary)', margin:0, lineHeight:1.6 }}>
               GPU Required features need a dedicated NVIDIA GPU with ≥24 GB VRAM for training — RTX 4090, A100, or a cloud instance. Inference after training runs on any machine. Features tagged No GPU need no additional compute.
             </p>
           </div>
@@ -168,7 +168,7 @@ export default function RoadmapPage() {
             <div key={section.category} style={{ marginBottom:32 }}>
               <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:12 }}>
                 <div style={{ flex:1, height:0.5, background:'rgba(255,255,255,0.06)' }}/>
-                <span style={{ fontSize:11, fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase', color:'rgba(235,235,245,0.3)' }}>{section.category}</span>
+                <span style={{ fontSize:11, fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase', color:'var(--text-tertiary)' }}>{section.category}</span>
                 <div style={{ flex:1, height:0.5, background:'rgba(255,255,255,0.06)' }}/>
               </div>
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
@@ -180,7 +180,7 @@ export default function RoadmapPage() {
 
         {/* Footer */}
         <div style={{ padding:'14px 18px', background:'var(--bg1)', borderRadius:12, border:'0.5px solid rgba(255,255,255,0.05)', marginTop:16 }}>
-          <p style={{ fontSize:11, color:'rgba(235,235,245,0.2)', margin:0, lineHeight:1.7 }}>
+          <p style={{ fontSize:11, color:'var(--text-quaternary)', margin:0, lineHeight:1.7 }}>
             DrivAerML is licensed CC-BY-SA. DrivAerStar is CC-BY-NC-SA — commercial use of trained models requires written permission. AeroNet source and trained weights are proprietary. © 2026 Rutej Talati.
           </p>
         </div>
