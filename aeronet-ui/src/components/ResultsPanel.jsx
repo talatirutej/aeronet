@@ -12,12 +12,12 @@ export default function ResultsPanel({ result, history, isLoading }) {
             width: 48, height: 48, borderRadius: 12, background: 'var(--bg2)',
             margin: '0 auto 14px', display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--label3)" strokeWidth="1.5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.5">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
             </svg>
           </div>
-          <div className="t-subhead" style={{ color: 'var(--label2)' }}>No prediction yet</div>
-          <div className="t-caption1" style={{ color: 'var(--label3)', marginTop: 4 }}>Configure inputs and run inference</div>
+          <div className="t-subhead" style={{ color: 'var(--text-secondary)' }}>No prediction yet</div>
+          <div className="t-caption1" style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>Configure inputs and run inference</div>
         </div>
       )}
 
@@ -49,19 +49,19 @@ function PrimaryKPI({ result }) {
     <div className="ios-card anim-up" style={{ padding: '20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
         <div>
-          <div className="t-caption2" style={{ color: 'var(--label3)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
+          <div className="t-caption2" style={{ color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
             Drag Coefficient
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
             <span className="mono num" style={{ fontSize: 46, fontWeight: 700, letterSpacing: '-2px', color: 'var(--blue)', lineHeight: 1 }}>
               {result.Cd.toFixed(3)}
             </span>
-            <span className="t-title3" style={{ color: 'var(--label3)' }}>Cd</span>
+            <span className="t-title3" style={{ color: 'var(--text-tertiary)' }}>Cd</span>
           </div>
         </div>
         {/* Confidence */}
         <div style={{ textAlign: 'right' }}>
-          <div className="t-caption2" style={{ color: 'var(--label3)', marginBottom: 6 }}>Confidence</div>
+          <div className="t-caption2" style={{ color: 'var(--text-tertiary)', marginBottom: 6 }}>Confidence</div>
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 5,
             padding: '4px 12px', borderRadius: 20,
@@ -82,8 +82,8 @@ function PrimaryKPI({ result }) {
 
       <div className="ios-sep" />
       <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12 }}>
-        <span className="t-footnote" style={{ color: 'var(--label3)' }}>{result.bodyTypeLabel}</span>
-        <span className="mono t-footnote num" style={{ color: 'var(--label3)' }}>{result.inferenceMs} ms</span>
+        <span className="t-footnote" style={{ color: 'var(--text-tertiary)' }}>{result.bodyTypeLabel}</span>
+        <span className="mono t-footnote num" style={{ color: 'var(--text-tertiary)' }}>{result.inferenceMs} ms</span>
       </div>
     </div>
   )
@@ -94,19 +94,19 @@ function SecondaryGrid({ result }) {
     { label: 'Lift Coef.', val: result.Cl?.toFixed(3) ?? '—', unit: 'Cl', accent: result.Cl > 0 ? 'var(--orange)' : 'var(--green)' },
     { label: 'Side Coef.', val: result.Cs?.toFixed(3) ?? '—', unit: 'Cs', accent: 'var(--indigo)' },
     { label: 'Drag Force', val: result.dragForceN?.toFixed(0) ?? '—', unit: 'N',  accent: 'var(--red)' },
-    { label: 'Lift Force', val: result.liftForceN?.toFixed(0) ?? '—', unit: 'N',  accent: 'var(--label2)' },
+    { label: 'Lift Force', val: result.liftForceN?.toFixed(0) ?? '—', unit: 'N',  accent: 'var(--text-secondary)' },
   ]
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
       {metrics.map((m, i) => (
         <div key={m.label} className="ios-card anim-up" style={{ padding: '14px 16px' }}>
-          <div className="t-caption2" style={{ color: 'var(--label3)', marginBottom: 8 }}>{m.label}</div>
+          <div className="t-caption2" style={{ color: 'var(--text-tertiary)', marginBottom: 8 }}>{m.label}</div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
             <span className="mono num" style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.5px', color: m.accent }}>
               {m.val}
             </span>
-            <span className="t-caption1" style={{ color: 'var(--label3)' }}>{m.unit}</span>
+            <span className="t-caption1" style={{ color: 'var(--text-tertiary)' }}>{m.unit}</span>
           </div>
         </div>
       ))}
@@ -122,15 +122,15 @@ function DragBreakdown({ breakdown }) {
   return (
     <div className="ios-card anim-up" style={{ padding: '16px 16px 12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 16 }}>
-        <span className="t-caption2" style={{ color: 'var(--label3)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+        <span className="t-caption2" style={{ color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
           Drag Contribution
         </span>
-        <span className="t-caption1" style={{ color: 'var(--label3)' }}>% of total Cd</span>
+        <span className="t-caption1" style={{ color: 'var(--text-tertiary)' }}>% of total Cd</span>
       </div>
       {breakdown.map((b, i) => (
         <div key={b.region} style={{ marginBottom: i < breakdown.length - 1 ? 12 : 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-            <span className="t-footnote" style={{ color: 'var(--label)' }}>{b.region}</span>
+            <span className="t-footnote" style={{ color: 'var(--text-primary)' }}>{b.region}</span>
             <span className="mono t-footnote num" style={{ color: COLORS[i] }}>
               {(b.fraction * 100).toFixed(1)}%
             </span>
@@ -157,16 +157,16 @@ function HistoryList({ items }) {
           borderBottom: i < Math.min(items.length, 6) - 1 ? '0.5px solid var(--sep)' : 'none',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <span className="mono t-caption2 num" style={{ color: 'var(--label3)', minWidth: 20, flexShrink: 0 }}>
+            <span className="mono t-caption2 num" style={{ color: 'var(--text-tertiary)', minWidth: 20, flexShrink: 0 }}>
               {String(i + 1).padStart(2, '0')}
             </span>
-            <span className="t-footnote" style={{ color: 'var(--label2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span className="t-footnote" style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {h.label}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, flexShrink: 0, marginLeft: 8 }}>
             <span className="mono t-subhead num" style={{ color: 'var(--blue)' }}>{h.Cd.toFixed(3)}</span>
-            <span className="t-caption2" style={{ color: 'var(--label3)' }}>Cd</span>
+            <span className="t-caption2" style={{ color: 'var(--text-tertiary)' }}>Cd</span>
           </div>
         </div>
       ))}
