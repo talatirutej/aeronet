@@ -54,11 +54,11 @@ function SL({ n, t, collapsible, open, onToggle }) {
         userSelect:'none', marginBottom:10,
       }}
     >
-      <span style={{ fontSize:10, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>{n}</span>
+      <span style={{ fontSize:10, fontWeight:600, color:'var(--text-primary)', fontFamily:"'IBM Plex Mono'" }}>{n}</span>
       <div style={{ flex:1, height:0.5, background:'var(--sep)' }}/>
-      <span style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.3)', letterSpacing:'0.08em', textTransform:'uppercase' }}>{t}</span>
+      <span style={{ fontSize:10, fontWeight:600, color:'var(--text-tertiary)', letterSpacing:'0.08em', textTransform:'uppercase' }}>{t}</span>
       {collapsible && (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(235,235,245,0.3)" strokeWidth="2"
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2"
           style={{ transform: open ? 'rotate(180deg)' : 'none', transition:'transform 0.2s cubic-bezier(0.22,1,0.36,1)', flexShrink:0 }}>
           <polyline points="6 9 12 15 18 9"/>
         </svg>
@@ -73,10 +73,10 @@ function Slider({ label, suffix, min, max, step, value, display, onChange, accen
   return (
     <div style={{ marginBottom:14 }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
-        <span style={{ fontSize:12, color:'rgba(235,235,245,0.5)', letterSpacing:'-0.1px' }}>{label}</span>
-        <span style={{ fontSize:12, fontWeight:600, color:accent, fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums' }}>
+        <span style={{ fontSize:12, color:'var(--text-secondary)', letterSpacing:'-0.1px' }}>{label}</span>
+        <span style={{ fontSize:12, fontWeight:600, color:accent, fontFamily:"'IBM Plex Mono'", fontVariantNumeric:'tabular-nums' }}>
           {display}
-          {suffix && <span style={{ color:'rgba(235,235,245,0.25)', fontWeight:400, fontSize:10, marginLeft:3 }}>{suffix}</span>}
+          {suffix && <span style={{ color:'var(--text-quaternary)', fontWeight:400, fontSize:10, marginLeft:3 }}>{suffix}</span>}
         </span>
       </div>
       <div style={{ position:'relative', height:20, display:'flex', alignItems:'center' }}>
@@ -106,8 +106,8 @@ function KVChip({ label, value }) {
       background:'var(--bg2)', borderRadius:9, border:'0.5px solid rgba(255,255,255,0.06)',
       padding:'8px 12px',
     }}>
-      <div style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.25)', letterSpacing:'0.06em', marginBottom:4 }}>{label}</div>
-      <div style={{ fontSize:13, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums' }}>{value}</div>
+      <div style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)', letterSpacing:'0.06em', marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize:13, fontWeight:600, color:'var(--text-primary)', fontFamily:"'IBM Plex Mono'", fontVariantNumeric:'tabular-nums' }}>{value}</div>
     </div>
   )
 }
@@ -186,8 +186,8 @@ export default function InputPanel({ onSubmit, isLoading }) {
                   </svg>
                 </div>
                 <div>
-                  <div style={{ fontSize:13, fontWeight:500, color:'rgba(235,235,245,0.85)', maxWidth:148, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', letterSpacing:'-0.2px' }}>{file.name}</div>
-                  <div style={{ fontSize:11, color:'rgba(235,235,245,0.3)', fontFamily:"'IBM Plex Mono',monospace", marginTop:2, fontVariantNumeric:'tabular-nums' }}>{(file.size/1024).toFixed(1)} KB</div>
+                  <div style={{ fontSize:13, fontWeight:500, color:'var(--text-primary)', maxWidth:148, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', letterSpacing:'-0.2px' }}>{file.name}</div>
+                  <div style={{ fontSize:11, color:'var(--text-tertiary)', fontFamily:"'IBM Plex Mono'", marginTop:2, fontVariantNumeric:'tabular-nums' }}>{(file.size/1024).toFixed(1)} KB</div>
                 </div>
               </div>
               <button
@@ -196,7 +196,7 @@ export default function InputPanel({ onSubmit, isLoading }) {
                 onMouseEnter={e => e.currentTarget.style.background='rgba(255,69,58,0.2)'}
                 onMouseLeave={e => e.currentTarget.style.background='var(--bg3)'}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(235,235,245,0.6)" strokeWidth="2">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2">
                   <path d="M18 6L6 18M6 6l12 12"/>
                 </svg>
               </button>
@@ -204,13 +204,13 @@ export default function InputPanel({ onSubmit, isLoading }) {
           ) : (
             <div style={{ display:'flex', alignItems:'center', gap:12, padding:'4px 0' }}>
               <div style={{ width:36, height:36, borderRadius:9, background:'var(--bg2)', border:'0.5px solid var(--sep)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(235,235,245,0.3)" strokeWidth="1.5">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5">
                   <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                 </svg>
               </div>
               <div>
-                <div style={{ fontSize:13, fontWeight:500, color:'rgba(235,235,245,0.7)', letterSpacing:'-0.2px' }}>Drop surface mesh</div>
-                <div style={{ fontSize:11, color:'rgba(235,235,245,0.28)', marginTop:2, fontFamily:"'IBM Plex Mono',monospace" }}>STL · OBJ · VTK · PLY</div>
+                <div style={{ fontSize:13, fontWeight:500, color:'var(--text-secondary)', letterSpacing:'-0.2px' }}>Drop surface mesh</div>
+                <div style={{ fontSize:11, color:'var(--text-quaternary)', marginTop:2, fontFamily:"'IBM Plex Mono'" }}>STL · OBJ · VTK · PLY</div>
               </div>
             </div>
           )}
@@ -224,9 +224,9 @@ export default function InputPanel({ onSubmit, isLoading }) {
               padding:'5px 13px', borderRadius:8, border:'0.5px solid',
               borderColor: params.bodyType === bt.id ? 'rgba(10,132,255,0.45)' : 'var(--sep)',
               background:  params.bodyType === bt.id ? 'rgba(10,132,255,0.16)' : 'transparent',
-              color:       params.bodyType === bt.id ? 'var(--blue)' : 'rgba(235,235,245,0.4)',
+              color:       params.bodyType === bt.id ? 'var(--blue)' : 'rgba(255,255,255,0.4)',
               fontSize:12, fontWeight:500, cursor:'pointer', transition:'all 0.12s',
-              fontFamily:"'IBM Plex Sans',sans-serif",
+              fontFamily:"'IBM Plex Sans'",
             }}>{bt.label}</button>
           ))}
         </div>
@@ -268,7 +268,7 @@ export default function InputPanel({ onSubmit, isLoading }) {
         }}>
           <div style={{ display:'flex', flexDirection:'column', gap:10, paddingBottom:4 }}>
             {/* Turbulence model */}
-            <div style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:4 }}>Turbulence Model</div>
+            <div style={{ fontSize:10, fontWeight:600, color:'var(--text-quaternary)', letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:4 }}>Turbulence Model</div>
             <div style={{ ...card, overflow:'hidden' }}>
               {TURB_MODELS.map((tm, i) => (
                 <button key={tm.id} onClick={() => up('turbModel', tm.id)} style={{
@@ -277,11 +277,11 @@ export default function InputPanel({ onSubmit, isLoading }) {
                   border:'none', borderBottom: i < TURB_MODELS.length-1 ? '0.5px solid var(--sep)' : 'none',
                   cursor:'pointer', transition:'background 0.12s',
                   display:'flex', justifyContent:'space-between', alignItems:'center',
-                  fontFamily:"'IBM Plex Sans',sans-serif",
+                  fontFamily:"'IBM Plex Sans'",
                 }}>
                   <div>
-                    <div style={{ fontSize:13, fontWeight:500, color: params.turbModel===tm.id?'var(--blue)':'rgba(235,235,245,0.7)', letterSpacing:'-0.2px' }}>{tm.label}</div>
-                    <div style={{ fontSize:11, color:'rgba(235,235,245,0.28)', marginTop:2 }}>{tm.desc}</div>
+                    <div style={{ fontSize:13, fontWeight:500, color: params.turbModel===tm.id?'var(--blue)':'rgba(255,255,255,0.7)', letterSpacing:'-0.2px' }}>{tm.label}</div>
+                    <div style={{ fontSize:11, color:'var(--text-quaternary)', marginTop:2 }}>{tm.desc}</div>
                   </div>
                   {params.turbModel === tm.id && (
                     <div style={{ width:6, height:6, borderRadius:'50%', background:'var(--blue)', flexShrink:0 }}/>
@@ -297,9 +297,9 @@ export default function InputPanel({ onSubmit, isLoading }) {
                   height:36, borderRadius:9, border:'0.5px solid',
                   borderColor: params.solver===s.id ? 'rgba(10,132,255,0.45)' : 'var(--sep)',
                   background:  params.solver===s.id ? 'rgba(10,132,255,0.14)' : 'transparent',
-                  color:       params.solver===s.id ? 'var(--blue)' : 'rgba(235,235,245,0.4)',
+                  color:       params.solver===s.id ? 'var(--blue)' : 'rgba(255,255,255,0.4)',
                   fontSize:12, fontWeight:500, cursor:'pointer', transition:'all 0.12s',
-                  fontFamily:"'IBM Plex Sans',sans-serif",
+                  fontFamily:"'IBM Plex Sans'",
                 }}>{s.label}</button>
               ))}
             </div>
@@ -321,7 +321,7 @@ export default function InputPanel({ onSubmit, isLoading }) {
           transition:'max-height 0.35s cubic-bezier(0.22,1,0.36,1)',
           marginBottom:8,
         }}>
-          <div style={{ fontSize:11, color:'rgba(235,235,245,0.25)', marginBottom:10, lineHeight:1.5 }}>
+          <div style={{ fontSize:11, color:'var(--text-quaternary)', marginBottom:10, lineHeight:1.5 }}>
             DrivAerML 16 geometric parameters fed directly to the surrogate model
           </div>
           <div style={{ ...card, padding:'12px 14px 2px' }}>
@@ -345,8 +345,8 @@ export default function InputPanel({ onSubmit, isLoading }) {
       {/* ── Run button ── */}
       <div style={{ padding:'10px 14px 14px', borderTop:'0.5px solid var(--sep)', flexShrink:0 }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-          <span style={{ fontSize:11, color:'rgba(235,235,245,0.3)', fontFamily:"'IBM Plex Sans',sans-serif" }}>GradBoost-DrivAerML</span>
-          <span style={{ fontSize:11, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>R²=0.9525</span>
+          <span style={{ fontSize:11, color:'var(--text-tertiary)', fontFamily:"'IBM Plex Sans'" }}>GradBoost-DrivAerML</span>
+          <span style={{ fontSize:11, fontWeight:600, color:'var(--text-primary)', fontFamily:"'IBM Plex Mono'" }}>R²=0.9525</span>
         </div>
         <button
           onClick={submit}
@@ -354,10 +354,10 @@ export default function InputPanel({ onSubmit, isLoading }) {
           style={{
             width:'100%', height:42, borderRadius:11, border:'none',
             background: isLoading ? 'rgba(10,132,255,0.3)' : 'var(--blue)',
-            color:'#fff', fontSize:14, fontWeight:600, letterSpacing:'-0.2px',
+            color:'var(--text-primary)', fontSize:14, fontWeight:600, letterSpacing:'-0.2px',
             cursor: isLoading ? 'not-allowed' : 'pointer',
             display:'flex', alignItems:'center', justifyContent:'center', gap:7,
-            fontFamily:"'IBM Plex Sans',sans-serif",
+            fontFamily:"'IBM Plex Sans'",
             transition:'opacity 0.15s, transform 0.1s',
           }}
           onMouseEnter={e => { if (!isLoading) e.currentTarget.style.opacity='0.88' }}
