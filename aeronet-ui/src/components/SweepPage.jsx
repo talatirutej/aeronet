@@ -17,9 +17,9 @@ function hash(s){ let h=0x811c9dc5; for(let i=0;i<s.length;i++){h^=s.charCodeAt(
 function SectionLabel({ n, t }) {
   return (
     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
-      <span style={{ fontSize:10, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>{n}</span>
+      <span style={{ fontSize:10, fontWeight:600, color:'var(--text-primary)', fontFamily:"'IBM Plex Mono'" }}>{n}</span>
       <div style={{ flex:1, height:0.5, background:'var(--sep)' }}/>
-      <span style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.08em', textTransform:'uppercase' }}>{t}</span>
+      <span style={{ fontSize:10, fontWeight:600, color:'var(--text-quaternary)', letterSpacing:'0.08em', textTransform:'uppercase' }}>{t}</span>
     </div>
   )
 }
@@ -29,8 +29,8 @@ function Slider({ label, unit, min, max, step, value, fmt, onChange }) {
   return (
     <div style={{ marginBottom:14 }}>
       <div style={{ display:'flex', justifyContent:'space-between', marginBottom:7 }}>
-        <span style={{ fontSize:12, color:'rgba(235,235,245,0.45)' }}>{label}</span>
-        <span style={{ fontSize:12, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>{fmt(value)} <span style={{ color:'rgba(235,235,245,0.25)', fontWeight:400, fontSize:10 }}>{unit}</span></span>
+        <span style={{ fontSize:12, color:'var(--text-tertiary)' }}>{label}</span>
+        <span style={{ fontSize:12, fontWeight:600, color:'var(--text-primary)', fontFamily:"'IBM Plex Mono'" }}>{fmt(value)} <span style={{ color:'var(--text-quaternary)', fontWeight:400, fontSize:10 }}>{unit}</span></span>
       </div>
       <div style={{ position:'relative', height:18, display:'flex', alignItems:'center' }}>
         <div style={{ position:'absolute', left:0, right:0, height:2, borderRadius:9999, background:'var(--bg3)' }}>
@@ -114,11 +114,11 @@ export default function SweepPage() {
               borderBottom: i<SWEEP_PARAMS.length-1 ? '0.5px solid var(--sep)' : 'none',
               display:'flex', justifyContent:'space-between', alignItems:'center',
               transition:'background 0.12s',
-              fontFamily:"'IBM Plex Sans',sans-serif",
+              fontFamily:"'IBM Plex Sans'",
             }}>
               <div>
-                <div style={{ fontSize:13, fontWeight:500, color: sweepId===sp.id ? 'var(--blue)' : 'rgba(235,235,245,0.7)' }}>{sp.label}</div>
-                <div style={{ fontSize:11, color:'rgba(235,235,245,0.28)', marginTop:2 }}>{sp.pts} pts · {sp.unit}</div>
+                <div style={{ fontSize:13, fontWeight:500, color: sweepId===sp.id ? 'var(--blue)' : 'rgba(255,255,255,0.7)' }}>{sp.label}</div>
+                <div style={{ fontSize:11, color:'var(--text-quaternary)', marginTop:2 }}>{sp.pts} pts · {sp.unit}</div>
               </div>
               {sweepId===sp.id && <div style={{ width:6, height:6, borderRadius:'50%', background:'var(--blue)', flexShrink:0 }}/>}
             </button>
@@ -130,7 +130,7 @@ export default function SweepPage() {
           <div onClick={()=>setMultiBody(m=>!m)} style={{ width:36, height:22, borderRadius:11, background: multiBody?'var(--blue)':'var(--bg3)', cursor:'pointer', position:'relative', transition:'background 0.2s', flexShrink:0 }}>
             <div style={{ position:'absolute', top:3, left: multiBody?16:3, width:16, height:16, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 4px rgba(0,0,0,0.4)', transition:'left 0.2s' }}/>
           </div>
-          <span style={{ fontSize:12, color:'rgba(235,235,245,0.4)' }}>Compare all body types</span>
+          <span style={{ fontSize:12, color:'var(--text-tertiary)' }}>Compare all body types</span>
         </div>
         {!multiBody && (
           <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:14 }}>
@@ -138,9 +138,9 @@ export default function SweepPage() {
               <button key={bt} onClick={()=>setBtSingle(bt)} style={{
                 padding:'4px 12px', borderRadius:8, border:`0.5px solid ${btSingle===bt?(BT_COLORS[bt]+'88'):'var(--sep)'}`,
                 background: btSingle===bt ? (BT_COLORS[bt]+'18') : 'transparent',
-                color: btSingle===bt ? BT_COLORS[bt] : 'rgba(235,235,245,0.4)',
+                color: btSingle===bt ? BT_COLORS[bt] : 'rgba(255,255,255,0.4)',
                 fontSize:12, fontWeight:500, cursor:'pointer', transition:'all 0.12s',
-                fontFamily:"'IBM Plex Sans',sans-serif",
+                fontFamily:"'IBM Plex Sans'",
               }}>{bt}</button>
             ))}
           </div>
@@ -154,11 +154,11 @@ export default function SweepPage() {
         </div>
 
         {running ? (
-          <button onClick={cancel} style={{ width:'100%', height:38, borderRadius:10, border:'0.5px solid rgba(255,69,58,0.4)', background:'transparent', color:'var(--red)', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:"'IBM Plex Sans',sans-serif", transition:'background 0.12s' }}>
+          <button onClick={cancel} style={{ width:'100%', height:38, borderRadius:10, border:'0.5px solid rgba(255,69,58,0.4)', background:'transparent', color:'var(--red)', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:"'IBM Plex Sans'", transition:'background 0.12s' }}>
             Cancel
           </button>
         ) : (
-          <button onClick={runSweep} disabled={running} style={{ width:'100%', height:38, borderRadius:10, border:'none', background:'var(--blue)', color:'#fff', fontSize:13, fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6, fontFamily:"'IBM Plex Sans',sans-serif", transition:'opacity 0.15s' }}>
+          <button onClick={runSweep} disabled={running} style={{ width:'100%', height:38, borderRadius:10, border:'none', background:'var(--blue)', color:'var(--text-primary)', fontSize:13, fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6, fontFamily:"'IBM Plex Sans'", transition:'opacity 0.15s' }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Run Sweep
           </button>
@@ -169,7 +169,7 @@ export default function SweepPage() {
             <div style={{ height:2, background:'var(--bg3)', borderRadius:2, overflow:'hidden' }}>
               <div style={{ height:'100%', background:'var(--blue)', borderRadius:2, width:`${progress}%`, transition:'width 0.2s' }}/>
             </div>
-            <div style={{ display:'flex', justifyContent:'space-between', marginTop:5, fontSize:11, color:'rgba(235,235,245,0.3)', fontFamily:"'IBM Plex Mono',monospace" }}>
+            <div style={{ display:'flex', justifyContent:'space-between', marginTop:5, fontSize:11, color:'var(--text-tertiary)', fontFamily:"'IBM Plex Mono'" }}>
               <span>{bodies.length} bod{bodies.length>1?'ies':'y'} · {param.pts} pts</span>
               <span>{progress}%</span>
             </div>
@@ -180,7 +180,7 @@ export default function SweepPage() {
           <>
             <div style={{ marginTop:16, marginBottom:10 }}><SectionLabel n="04" t="Summary"/></div>
             <div style={cardStyle}>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', padding:'7px 12px', borderBottom:'0.5px solid var(--sep)', fontSize:10, color:'rgba(235,235,245,0.28)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em' }}>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', padding:'7px 12px', borderBottom:'0.5px solid var(--sep)', fontSize:10, color:'var(--text-quaternary)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em' }}>
                 <span>Body</span><span style={{ textAlign:'right' }}>Min Cd</span><span style={{ textAlign:'right' }}>Max Cd</span>
               </div>
               {Object.entries(data.series).map(([bt,pts],i,arr)=>{
@@ -191,8 +191,8 @@ export default function SweepPage() {
                       <span style={{ width:6, height:6, borderRadius:'50%', background:clr, flexShrink:0 }}/>
                       <span style={{ fontSize:12, color:clr, fontWeight:500 }}>{bt}</span>
                     </div>
-                    <span style={{ fontSize:12, fontWeight:600, color:'var(--blue)', textAlign:'right', fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums' }}>{Math.min(...cds).toFixed(4)}</span>
-                    <span style={{ fontSize:12, color:'rgba(235,235,245,0.4)', textAlign:'right', fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums' }}>{Math.max(...cds).toFixed(4)}</span>
+                    <span style={{ fontSize:12, fontWeight:600, color:'var(--blue)', textAlign:'right', fontFamily:"'IBM Plex Mono'", fontVariantNumeric:'tabular-nums' }}>{Math.min(...cds).toFixed(4)}</span>
+                    <span style={{ fontSize:12, color:'var(--text-tertiary)', textAlign:'right', fontFamily:"'IBM Plex Mono'", fontVariantNumeric:'tabular-nums' }}>{Math.max(...cds).toFixed(4)}</span>
                   </div>
                 )
               })}
@@ -207,14 +207,14 @@ export default function SweepPage() {
           {/* Chart header */}
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', borderBottom:'0.5px solid var(--sep)', flexShrink:0 }}>
             <div>
-              <span style={{ fontSize:14, fontWeight:600, color:'rgba(235,235,245,0.85)' }}>Cd vs {param.label}</span>
-              <span style={{ fontSize:11, color:'rgba(235,235,245,0.28)', marginLeft:10 }}>{param.pts} pts · {bodies.length} body type{bodies.length>1?'s':''}</span>
+              <span style={{ fontSize:14, fontWeight:600, color:'var(--text-primary)' }}>Cd vs {param.label}</span>
+              <span style={{ fontSize:11, color:'var(--text-quaternary)', marginLeft:10 }}>{param.pts} pts · {bodies.length} body type{bodies.length>1?'s':''}</span>
             </div>
             <div style={{ display:'flex', gap:14 }}>
               {data && Object.keys(data.series).map(bt=>(
                 <div key={bt} style={{ display:'flex', alignItems:'center', gap:5 }}>
                   <div style={{ width:20, height:2, borderRadius:1, background:BT_COLORS[bt] }}/>
-                  <span style={{ fontSize:11, color:'rgba(235,235,245,0.35)' }}>{bt}</span>
+                  <span style={{ fontSize:11, color:'var(--text-tertiary)' }}>{bt}</span>
                 </div>
               ))}
             </div>
@@ -232,8 +232,8 @@ export default function SweepPage() {
             onMouseLeave={()=>setHovX(null)}>
             {!data && !running ? (
               <div style={{ textAlign:'center' }}>
-                <div style={{ fontSize:13, color:'rgba(235,235,245,0.25)', marginBottom:6 }}>Configure sweep and run</div>
-                <div style={{ fontSize:11, color:'rgba(235,235,245,0.15)' }}>Results will appear here</div>
+                <div style={{ fontSize:13, color:'var(--text-quaternary)', marginBottom:6 }}>Configure sweep and run</div>
+                <div style={{ fontSize:11, color:'var(--text-quaternary)' }}>Results will appear here</div>
               </div>
             ) : (
               <svg viewBox={`0 0 ${CW} ${CH}`} style={{ width:'100%', height:'100%', maxHeight:320 }}>
@@ -248,17 +248,17 @@ export default function SweepPage() {
                 {yTicks.map((y,i)=>(
                   <g key={i}>
                     <line x1={PL} y1={py(y)} x2={PL+cW} y2={py(y)} stroke="rgba(255,255,255,0.05)" strokeWidth="0.8"/>
-                    <text x={PL-6} y={py(y)+4} textAnchor="end" fill="rgba(235,235,245,0.28)" fontSize="9" fontFamily="'IBM Plex Mono',monospace">{y.toFixed(3)}</text>
+                    <text x={PL-6} y={py(y)+4} textAnchor="end" fill="rgba(255,255,255,0.28)" fontSize="9" fontFamily="'IBM Plex Mono',monospace">{y.toFixed(3)}</text>
                   </g>
                 ))}
                 {xTicks.map((x,i)=>(
                   <g key={i}>
                     <line x1={px(x)} y1={PT} x2={px(x)} y2={PT+cH} stroke="rgba(255,255,255,0.05)" strokeWidth="0.8"/>
-                    <text x={px(x)} y={PT+cH+14} textAnchor="middle" fill="rgba(235,235,245,0.28)" fontSize="9" fontFamily="'IBM Plex Mono',monospace">{param.fmt(x)}</text>
+                    <text x={px(x)} y={PT+cH+14} textAnchor="middle" fill="rgba(255,255,255,0.28)" fontSize="9" fontFamily="'IBM Plex Mono',monospace">{param.fmt(x)}</text>
                   </g>
                 ))}
-                <text x={PL+cW/2} y={CH-4} textAnchor="middle" fill="rgba(235,235,245,0.35)" fontSize="10" fontFamily="'IBM Plex Sans',sans-serif" letterSpacing="0.05em">{param.label.toUpperCase()} ({param.unit})</text>
-                <text x={12} y={PT+cH/2} textAnchor="middle" fill="rgba(235,235,245,0.35)" fontSize="10" fontFamily="'IBM Plex Sans',sans-serif" transform={`rotate(-90,12,${PT+cH/2})`}>Cd</text>
+                <text x={PL+cW/2} y={CH-4} textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize="10" fontFamily="'IBM Plex Sans',sans-serif" letterSpacing="0.05em">{param.label.toUpperCase()} ({param.unit})</text>
+                <text x={12} y={PT+cH/2} textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize="10" fontFamily="'IBM Plex Sans',sans-serif" transform={`rotate(-90,12,${PT+cH/2})`}>Cd</text>
                 <rect x={PL} y={PT} width={cW} height={cH} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="0.8"/>
                 {data && Object.entries(data.series).map(([bt,pts])=>{
                   const clr=BT_COLORS[bt]||'var(--blue)'
@@ -284,14 +284,14 @@ export default function SweepPage() {
           {/* Hover strip */}
           {hovIdx>=0&&data&&(
             <div style={{ display:'flex', alignItems:'center', gap:20, padding:'8px 16px', borderTop:'0.5px solid var(--sep)', background:'rgba(255,255,255,0.02)', flexShrink:0 }}>
-              <span style={{ fontSize:11, color:'rgba(235,235,245,0.35)', fontFamily:"'IBM Plex Mono',monospace" }}>
+              <span style={{ fontSize:11, color:'var(--text-tertiary)', fontFamily:"'IBM Plex Mono'" }}>
                 {param.label}: {param.fmt(hovPts[hovIdx]?.x??0)} {param.unit}
               </span>
               {Object.entries(data.series).map(([bt,pts])=>(
-                <span key={bt} style={{ display:'flex', alignItems:'center', gap:5, fontSize:12, fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums' }}>
+                <span key={bt} style={{ display:'flex', alignItems:'center', gap:5, fontSize:12, fontFamily:"'IBM Plex Mono'", fontVariantNumeric:'tabular-nums' }}>
                   <span style={{ width:6, height:6, borderRadius:'50%', background:BT_COLORS[bt] }}/>
                   <span style={{ color:BT_COLORS[bt] }}>{bt}:</span>
-                  <span style={{ color:'rgba(235,235,245,0.7)' }}>{pts[hovIdx]?.Cd?.toFixed(4)}</span>
+                  <span style={{ color:'var(--text-secondary)' }}>{pts[hovIdx]?.Cd?.toFixed(4)}</span>
                 </span>
               ))}
             </div>
@@ -310,12 +310,12 @@ export default function SweepPage() {
                 { label:'Best Cd',    val:best.Cd.toFixed(4),  sub:`at ${param.fmt(best.x)} ${param.unit}`,  c:'var(--green)' },
                 { label:'Worst Cd',   val:worst.Cd.toFixed(4), sub:`at ${param.fmt(worst.x)} ${param.unit}`, c:'var(--red)'   },
                 { label:'Delta',      val:(worst.Cd-best.Cd).toFixed(4), sub:'max − min',                    c:'var(--orange)'},
-                { label:'Avg Latency',val:avgMs+' ms',         sub:`${all.length} inferences`,               c:'rgba(235,235,245,0.5)' },
+                { label:'Avg Latency',val:avgMs+' ms',         sub:`${all.length} inferences`,               c:'rgba(255,255,255,0.5)' },
               ].map(s=>(
                 <div key={s.label} style={{ background:'var(--bg1)', borderRadius:12, border:'0.5px solid rgba(255,255,255,0.06)', padding:'12px 14px' }}>
-                  <div style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:6 }}>{s.label}</div>
-                  <div style={{ fontSize:20, fontWeight:600, color:s.c, fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums', letterSpacing:'-0.5px' }}>{s.val}</div>
-                  <div style={{ fontSize:11, color:'rgba(235,235,245,0.28)', marginTop:3 }}>{s.sub}</div>
+                  <div style={{ fontSize:10, fontWeight:600, color:'var(--text-quaternary)', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:6 }}>{s.label}</div>
+                  <div style={{ fontSize:20, fontWeight:600, color:s.c, fontFamily:"'IBM Plex Mono'", fontVariantNumeric:'tabular-nums', letterSpacing:'-0.5px' }}>{s.val}</div>
+                  <div style={{ fontSize:11, color:'var(--text-quaternary)', marginTop:3 }}>{s.sub}</div>
                 </div>
               ))
             })()}
