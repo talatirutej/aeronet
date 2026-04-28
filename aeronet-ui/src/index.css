@@ -3,21 +3,21 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; overflow: hidden; }
 
-/* ── Universal font lock — nothing renders in Roboto or system fonts ── */
+/* ── Universal font lock — IBM Plex only, no Roboto, no system fonts ── */
 * {
-  font-family: 'IBM Plex Sans', 'IBM Plex Mono', sans-serif !important;
+  font-family: 'IBM Plex Sans', sans-serif !important;
+  color: #ffffff;
 }
-code, pre, .mono, [class*="mono"],
-[style*="IBM Plex Mono"] {
+code, pre, .mono, [class*="mono"] {
   font-family: 'IBM Plex Mono', monospace !important;
 }
 
 body {
   background: #000;
-  color: rgba(235,235,245,0.85);
-  font-family: 'IBM Plex Sans', 'IBM Plex Mono', sans-serif;
-  font-size: 14px;
-  line-height: 1.47;
+  color: #ffffff;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 15px;          /* up from 14px */
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -36,11 +36,30 @@ body {
   --indigo: #5E5CE6;
   --teal:   #40CBE0;
   --yellow: #FFD60A;
+
+  /* Text opacity tokens — all still white, just at different opacities */
+  --label:   rgba(255,255,255,1.00);
+  --label2:  rgba(255,255,255,0.75);
+  --label3:  rgba(255,255,255,0.45);
+  --label4:  rgba(255,255,255,0.28);
 }
 
 /* ── Typography ── */
 .mono { font-family: 'IBM Plex Mono', monospace !important; }
 .num  { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+/* Bump every font-size token by ~1–2px */
+.t-largetitle { font-size: 36px; font-weight: 700; letter-spacing: -1px;   line-height: 1.1; }
+.t-title1     { font-size: 30px; font-weight: 700; letter-spacing: -0.8px; }
+.t-title2     { font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+.t-title3     { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; }
+.t-headline   { font-size: 18px; font-weight: 600; letter-spacing: -0.4px; }
+.t-body       { font-size: 18px; font-weight: 400; letter-spacing: -0.24px;}
+.t-callout    { font-size: 17px; font-weight: 400; letter-spacing: -0.24px;}
+.t-subhead    { font-size: 16px; font-weight: 400; letter-spacing: -0.24px;}
+.t-footnote   { font-size: 14px; font-weight: 400; letter-spacing: -0.08px;}
+.t-caption1   { font-size: 13px; font-weight: 400; letter-spacing: -0.08px;}
+.t-caption2   { font-size: 12px; font-weight: 400; letter-spacing: 0;      }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -53,7 +72,7 @@ body {
 .ios-card {
   background: var(--bg1);
   border-radius: 16px;
-  border: 0.5px solid rgba(255,255,255,0.06);
+  border: 0.5px solid rgba(255,255,255,0.07);
   position: relative;
   overflow: hidden;
   transition: border-color 0.18s, background 0.18s;
@@ -62,21 +81,20 @@ body {
   content: '';
   position: absolute; top: 0; left: 0; right: 0;
   height: 0.5px;
-  background: rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.09);
   pointer-events: none;
 }
 .ios-card:hover {
-  border-color: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.12);
   background: #222;
 }
 
 /* ── Buttons ── */
 .ios-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 0 20px; height: 38px; border-radius: 10px;
-  background: var(--blue); color: #fff;
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 13px; font-weight: 600; letter-spacing: -0.2px;
+  padding: 0 22px; height: 40px; border-radius: 10px;
+  background: var(--blue); color: #ffffff;
+  font-size: 14px; font-weight: 600; letter-spacing: -0.2px;
   border: none; cursor: pointer;
   transition: opacity 0.15s, transform 0.1s;
 }
@@ -87,32 +105,30 @@ body {
 /* ── Chips ── */
 .ios-chip {
   display: inline-flex; align-items: center;
-  padding: 4px 12px; border-radius: 8px;
+  padding: 5px 14px; border-radius: 8px;
   border: 0.5px solid var(--sep);
   background: transparent;
-  color: rgba(235,235,245,0.4);
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 12px; font-weight: 500; letter-spacing: -0.2px;
+  color: rgba(255,255,255,0.5);
+  font-size: 13px; font-weight: 500; letter-spacing: -0.2px;
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.ios-chip:hover { background: var(--bg2); color: rgba(235,235,245,0.7); }
+.ios-chip:hover { background: var(--bg2); color: rgba(255,255,255,0.8); }
 .ios-chip-active {
   background: rgba(10,132,255,0.14);
-  border-color: rgba(10,132,255,0.4);
+  border-color: rgba(10,132,255,0.45);
   color: var(--blue);
 }
 
 /* ── Inputs ── */
 .ios-input {
   background: var(--bg2); border: 0.5px solid var(--sep); border-radius: 9px;
-  padding: 8px 12px; color: rgba(235,235,245,0.85);
-  font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
-  outline: none; width: 100%;
+  padding: 9px 13px; color: #ffffff;
+  font-size: 14px; outline: none; width: 100%;
   transition: border-color 0.15s;
 }
 .ios-input:focus { border-color: var(--blue); }
-.ios-input::placeholder { color: rgba(235,235,245,0.2); }
+.ios-input::placeholder { color: rgba(255,255,255,0.25); }
 
 /* ── Progress bar ── */
 .ios-progress-track {
@@ -125,8 +141,8 @@ body {
 
 /* ── Section label ── */
 .section-label {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
-  text-transform: uppercase; color: rgba(235,235,245,0.28); margin-bottom: 8px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: rgba(255,255,255,0.35); margin-bottom: 8px;
 }
 
 /* ── Separator ── */
@@ -134,7 +150,7 @@ body {
 
 /* ── Status dot ── */
 .status-dot {
-  width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+  width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0;
 }
 
 /* ── CFD grid background ── */
@@ -147,24 +163,24 @@ body {
 
 /* ── Hover row ── */
 .hover-row { transition: background 0.12s; }
-.hover-row:hover { background: rgba(255,255,255,0.025); }
+.hover-row:hover { background: rgba(255,255,255,0.03); }
 
 /* ── Animations ── */
-@keyframes fadeIn  { from { opacity: 0 } to { opacity: 1 } }
-@keyframes fadeUp  { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
-@keyframes slideUp { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) } }
-@keyframes pageSlideIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
-@keyframes scan    { 0%,100% { transform: translateY(0%); opacity: 0.3 } 50% { transform: translateY(100%); opacity: 0.9 } }
-@keyframes pulse   { 0%,100% { opacity: 1 } 50% { opacity: 0.38 } }
-@keyframes spin    { to { transform: rotate(360deg) } }
-@keyframes shimmer { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
+@keyframes fadeIn      { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fadeUp      { from { opacity: 0; transform: translateY(8px)  } to { opacity: 1; transform: translateY(0) } }
+@keyframes slideUp     { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes pageSlideIn { from { opacity: 0; transform: translateY(6px)  } to { opacity: 1; transform: translateY(0) } }
+@keyframes scan        { 0%,100% { transform: translateY(0%);   opacity: 0.3 } 50% { transform: translateY(100%); opacity: 0.9 } }
+@keyframes pulse       { 0%,100% { opacity: 1 }  50% { opacity: 0.38 } }
+@keyframes spin        { to { transform: rotate(360deg) } }
+@keyframes shimmer     { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
 
-.anim-in      { animation: fadeIn   0.22s ease both; }
-.anim-up      { animation: fadeUp   0.32s cubic-bezier(0.22,1,0.36,1) both; }
-.anim-slide   { animation: slideUp  0.32s cubic-bezier(0.22,1,0.36,1) both; }
-.anim-scan    { animation: scan     2.4s ease-in-out infinite; }
-.anim-pulse   { animation: pulse    2.5s ease-in-out infinite; }
-.anim-spin    { animation: spin     0.85s linear infinite; }
+.anim-in    { animation: fadeIn   0.22s ease both; }
+.anim-up    { animation: fadeUp   0.32s cubic-bezier(0.22,1,0.36,1) both; }
+.anim-slide { animation: slideUp  0.32s cubic-bezier(0.22,1,0.36,1) both; }
+.anim-scan  { animation: scan     2.4s ease-in-out infinite; }
+.anim-pulse { animation: pulse    2.5s ease-in-out infinite; }
+.anim-spin  { animation: spin     0.85s linear infinite; }
 
 /* Staggered children */
 .stagger > *:nth-child(1) { animation-delay: 0.04s }
