@@ -228,17 +228,17 @@ function ColourBar({ mode, Cd }) {
       borderRadius:10, padding:'10px 8px', display:'flex', flexDirection:'column',
       alignItems:'center', gap:5, zIndex:10, backdropFilter:'blur(12px)',
     }}>
-      <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'var(--blue)', letterSpacing:'0.06em' }}>{title}</span>
+      <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--blue)', letterSpacing:'0.06em' }}>{title}</span>
       <div style={{ position:'relative', width:10, height:130 }}>
         <div style={{ width:10, height:130, borderRadius:5, background:'linear-gradient(to bottom,#ef4444,#fb923c,#fbbf24,#4ade80,#22d3ee,#3b82f6)' }}/>
         {labels.map((l,i)=>(
-          <div key={i} style={{ position:'absolute', right:14, top:`${(i/(labels.length-1))*100}%`, transform:'translateY(-50%)', fontSize:8, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.3)', whiteSpace:'nowrap' }}>{l}</div>
+          <div key={i} style={{ position:'absolute', right:14, top:`${(i/(labels.length-1))*100}%`, transform:'translateY(-50%)', fontSize:8, fontFamily:"'IBM Plex Mono'", color:'var(--text-tertiary)', whiteSpace:'nowrap' }}>{l}</div>
         ))}
         {labels.map((_,i)=>(
-          <div key={i} style={{ position:'absolute', right:-3, width:5, height:0.5, background:'rgba(235,235,245,0.2)', top:`${(i/(labels.length-1))*100}%` }}/>
+          <div key={i} style={{ position:'absolute', right:-3, width:5, height:0.5, background:'rgba(255,255,255,0.2)', top:`${(i/(labels.length-1))*100}%` }}/>
         ))}
       </div>
-      {Cd&&<div style={{ marginTop:4, fontSize:8, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.28)', textAlign:'center' }}>Cd {Cd.toFixed(3)}</div>}
+      {Cd&&<div style={{ marginTop:4, fontSize:8, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)', textAlign:'center' }}>Cd {Cd.toFixed(3)}</div>}
     </div>
   )
 }
@@ -287,10 +287,10 @@ function ToolBtn({ active, onClick, children, title }) {
   return (
     <button onClick={onClick} title={title} style={{
       height:26, padding:'0 10px', borderRadius:6, border:'none', cursor:'pointer',
-      fontSize:10, fontFamily:"'IBM Plex Sans',sans-serif", fontWeight: active?600:400,
+      fontSize:10, fontFamily:"'IBM Plex Sans'", fontWeight: active?600:400,
       letterSpacing:'-0.1px',
       background: active ? 'rgba(10,132,255,0.22)' : 'transparent',
-      color:      active ? 'var(--blue)' : 'rgba(235,235,245,0.35)',
+      color:      active ? 'var(--blue)' : 'rgba(255,255,255,0.35)',
       outline:    active ? '0.5px solid rgba(10,132,255,0.4)' : 'none',
       transition: 'background 0.12s, color 0.12s',
     }}>{children}</button>
@@ -352,9 +352,9 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
       }}>
         {/* Axis */}
         <div style={{ padding:'0 14px', borderRight:'0.5px solid var(--sep)', display:'flex', alignItems:'center', gap:8, height:'100%' }}>
-          <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'var(--blue)', letterSpacing:'0.1em' }}>INFLOW +X</span>
+          <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--blue)', letterSpacing:'0.1em' }}>INFLOW +X</span>
           <span style={{ width:0.5, height:10, background:'var(--sep)', display:'inline-block' }}/>
-          <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.25)', letterSpacing:'0.1em' }}>UP +Z</span>
+          <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)', letterSpacing:'0.1em' }}>UP +Z</span>
         </div>
 
         {/* Camera presets */}
@@ -362,9 +362,9 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
           {PRESETS.map(p => (
             <button key={p.id} onClick={()=>jumpPreset(p)} style={{
               height:26, padding:'0 10px', borderRadius:6, border:'none', cursor:'pointer',
-              fontSize:10, fontFamily:"'IBM Plex Sans',sans-serif", fontWeight: activePreset?.id===p.id?600:400,
+              fontSize:10, fontFamily:"'IBM Plex Sans'", fontWeight: activePreset?.id===p.id?600:400,
               background: activePreset?.id===p.id ? 'rgba(10,132,255,0.2)' : 'transparent',
-              color:      activePreset?.id===p.id ? 'var(--blue)' : 'rgba(235,235,245,0.3)',
+              color:      activePreset?.id===p.id ? 'var(--blue)' : 'rgba(255,255,255,0.3)',
               transition:'background 0.12s, color 0.12s',
             }}>{p.label}</button>
           ))}
@@ -383,7 +383,7 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
         {/* Clip plane */}
         {meshData && (
           <div style={{ padding:'0 12px', borderLeft:'0.5px solid var(--sep)', display:'flex', alignItems:'center', gap:8 }}>
-            <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.3)', letterSpacing:'0.08em' }}>CLIP X</span>
+            <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--text-tertiary)', letterSpacing:'0.08em' }}>CLIP X</span>
             <div style={{ position:'relative', width:72, height:18, display:'flex', alignItems:'center' }}>
               <div style={{ position:'absolute', left:0, right:0, height:2, borderRadius:9999, background:'var(--bg3)' }}>
                 <div style={{ position:'absolute', left:0, top:0, height:'100%', borderRadius:9999, background:'var(--blue)', width:`${clipX*100}%` }}/>
@@ -391,18 +391,18 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
               <input type="range" min={0} max={1} step={0.01} value={clipX} onChange={e=>setClipX(parseFloat(e.target.value))} style={{ position:'absolute', inset:0, width:'100%', opacity:0, cursor:'pointer', zIndex:2 }}/>
               <div style={{ position:'absolute', top:'50%', transform:'translate(-50%,-50%)', left:`${clipX*100}%`, width:14, height:14, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 5px rgba(0,0,0,0.5)', pointerEvents:'none', zIndex:1 }}/>
             </div>
-            <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'var(--blue)', width:28, textAlign:'right' }}>{Math.round(clipX*100)}%</span>
+            <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--blue)', width:28, textAlign:'right' }}>{Math.round(clipX*100)}%</span>
           </div>
         )}
 
         {/* Status right */}
         <div style={{ marginLeft:'auto', padding:'0 14px', display:'flex', alignItems:'center', gap:12 }}>
-          {parseProgress && <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'var(--orange)', letterSpacing:'0.08em', animation:'pulse 1.4s infinite' }}>{parseProgress}</span>}
-          {meshData && <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.25)' }}>{triCount.toLocaleString()} TRI</span>}
-          {isLoading && <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:'var(--blue)', animation:'pulse 1.4s infinite' }}>INFERRING</span>}
+          {parseProgress && <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--orange)', letterSpacing:'0.08em', animation:'pulse 1.4s infinite' }}>{parseProgress}</span>}
+          {meshData && <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)' }}>{triCount.toLocaleString()} TRI</span>}
+          {isLoading && <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:'var(--blue)', animation:'pulse 1.4s infinite' }}>INFERRING</span>}
           <div style={{ display:'flex', alignItems:'center', gap:5 }}>
             <span style={{ width:6, height:6, borderRadius:'50%', background:meshData?'var(--green)':'var(--bg4)', boxShadow:meshData?'0 0 5px var(--green)':'none', display:'inline-block', animation:meshData&&!isLoading?'pulse 2.5s ease-in-out infinite':'none' }}/>
-            <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono',monospace", color:meshData?'var(--green)':'rgba(235,235,245,0.2)', letterSpacing:'0.1em' }}>
+            <span style={{ fontSize:9, fontFamily:"'IBM Plex Mono'", color:meshData?'var(--green)':'rgba(255,255,255,0.2)', letterSpacing:'0.1em' }}>
               {isLoading?'SOLVING':meshData?'LIVE':'IDLE'}
             </span>
           </div>
@@ -416,7 +416,7 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
         borderRadius:9, padding:'9px 12px', backdropFilter:'blur(12px)',
         display:'flex', flexDirection:'column', gap:4,
       }}>
-        <div style={{ fontSize:8, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.2)', letterSpacing:'0.12em', marginBottom:3 }}>SOLVER</div>
+        <div style={{ fontSize:8, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)', letterSpacing:'0.12em', marginBottom:3 }}>SOLVER</div>
         {[
           ['Cd',      Cd?.toFixed(4)??'—'],
           ['Cl',      data?.Cl?.toFixed(4)??'—'],
@@ -424,8 +424,8 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
           ['Mesh',    triCount?triCount.toLocaleString()+'T':'—'],
         ].map(([k,v])=>(
           <div key={k} style={{ display:'flex', gap:10, alignItems:'baseline' }}>
-            <span style={{ fontSize:8, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.25)', width:40, letterSpacing:'0.08em' }}>{k}</span>
-            <span style={{ fontSize:11, fontFamily:"'IBM Plex Mono',monospace", color:'var(--blue)', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>{v}</span>
+            <span style={{ fontSize:8, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)', width:40, letterSpacing:'0.08em' }}>{k}</span>
+            <span style={{ fontSize:11, fontFamily:"'IBM Plex Mono'", color:'var(--blue)', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>{v}</span>
           </div>
         ))}
       </div>
@@ -438,15 +438,15 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
         backdropFilter:'blur(12px)',
       }}>
         {[['LMB','Rotate'],['RMB','Pan'],['Scroll','Zoom']].map(([k,a])=>(
-          <span key={k} style={{ fontSize:10, color:'rgba(235,235,245,0.25)', fontFamily:"'IBM Plex Sans',sans-serif" }}>
-            <span style={{ color:'rgba(235,235,245,0.45)', fontWeight:600 }}>{k}</span> {a}
+          <span key={k} style={{ fontSize:10, color:'var(--text-quaternary)', fontFamily:"'IBM Plex Sans'" }}>
+            <span style={{ color:'var(--text-tertiary)', fontWeight:600 }}>{k}</span> {a}
           </span>
         ))}
       </div>
 
       {/* Mesh error */}
       {meshError && (
-        <div style={{ position:'absolute', top:50, left:'50%', transform:'translateX(-50%)', zIndex:30, background:'rgba(255,69,58,0.12)', border:'0.5px solid rgba(255,69,58,0.4)', borderRadius:8, padding:'8px 16px', fontSize:12, color:'var(--red)', fontFamily:"'IBM Plex Sans',sans-serif" }}>
+        <div style={{ position:'absolute', top:50, left:'50%', transform:'translateX(-50%)', zIndex:30, background:'rgba(255,69,58,0.12)', border:'0.5px solid rgba(255,69,58,0.4)', borderRadius:8, padding:'8px 16px', fontSize:12, color:'var(--red)', fontFamily:"'IBM Plex Sans'" }}>
           {meshError}
         </div>
       )}
@@ -454,10 +454,10 @@ export default function CarViewer({ data, isLoading, uploadedFile }) {
       {/* Empty state */}
       {!meshData&&!parseProgress && (
         <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:5, textAlign:'center', pointerEvents:'none' }}>
-          <div style={{ fontSize:11, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.15)', letterSpacing:'0.15em', lineHeight:2.4 }}>
+          <div style={{ fontSize:11, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)', letterSpacing:'0.15em', lineHeight:2.4 }}>
             UPLOAD STL · OBJ
             <br/>
-            <span style={{ fontSize:9, color:'rgba(235,235,245,0.08)' }}>Mesh rendered with physics-based Cp field</span>
+            <span style={{ fontSize:9, color:'var(--text-quaternary)' }}>Mesh rendered with physics-based Cp field</span>
           </div>
         </div>
       )}
