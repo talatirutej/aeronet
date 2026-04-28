@@ -39,9 +39,9 @@ function featureToParams(feat, delta, bt) {
 function SL({ n, t }) {
   return (
     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
-      <span style={{ fontSize:10, fontWeight:600, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>{n}</span>
+      <span style={{ fontSize:10, fontWeight:600, color:'var(--text-primary)', fontFamily:"'IBM Plex Mono'" }}>{n}</span>
       <div style={{ flex:1, height:0.5, background:'var(--sep)' }}/>
-      <span style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.08em', textTransform:'uppercase' }}>{t}</span>
+      <span style={{ fontSize:10, fontWeight:600, color:'var(--text-quaternary)', letterSpacing:'0.08em', textTransform:'uppercase' }}>{t}</span>
     </div>
   )
 }
@@ -98,9 +98,9 @@ export default function SensitivityPage() {
             <button key={bt} onClick={()=>setBodyType(bt)} style={{
               padding:'4px 12px', borderRadius:8, border:`0.5px solid ${bodyType===bt?'rgba(10,132,255,0.4)':'var(--sep)'}`,
               background: bodyType===bt?'rgba(10,132,255,0.14)':'transparent',
-              color: bodyType===bt?'var(--blue)':'rgba(235,235,245,0.4)',
+              color: bodyType===bt?'var(--blue)':'rgba(255,255,255,0.4)',
               fontSize:12, fontWeight:500, cursor:'pointer', transition:'all 0.12s',
-              fontFamily:"'IBM Plex Sans',sans-serif",
+              fontFamily:"'IBM Plex Sans'",
             }}>{bt}</button>
           ))}
         </div>
@@ -112,19 +112,19 @@ export default function SensitivityPage() {
               flex:1, height:30, borderRadius:8, border:'0.5px solid',
               borderColor: sortBy===id?'rgba(10,132,255,0.4)':'var(--sep)',
               background: sortBy===id?'rgba(10,132,255,0.14)':'transparent',
-              color: sortBy===id?'var(--blue)':'rgba(235,235,245,0.4)',
+              color: sortBy===id?'var(--blue)':'rgba(255,255,255,0.4)',
               fontSize:11, fontWeight:500, cursor:'pointer', transition:'all 0.12s',
-              fontFamily:"'IBM Plex Sans',sans-serif",
+              fontFamily:"'IBM Plex Sans'",
             }}>{lbl}</button>
           ))}
         </div>
 
         {running ? (
-          <button onClick={cancel} style={{ width:'100%', height:38, borderRadius:10, border:'0.5px solid rgba(255,69,58,0.4)', background:'transparent', color:'var(--red)', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:"'IBM Plex Sans',sans-serif", marginBottom:10 }}>
+          <button onClick={cancel} style={{ width:'100%', height:38, borderRadius:10, border:'0.5px solid rgba(255,69,58,0.4)', background:'transparent', color:'var(--red)', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:"'IBM Plex Sans'", marginBottom:10 }}>
             Cancel
           </button>
         ) : (
-          <button onClick={run} disabled={running} style={{ width:'100%', height:38, borderRadius:10, border:'none', background:'var(--blue)', color:'#fff', fontSize:13, fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6, fontFamily:"'IBM Plex Sans',sans-serif", marginBottom:10, transition:'opacity 0.15s' }}>
+          <button onClick={run} disabled={running} style={{ width:'100%', height:38, borderRadius:10, border:'none', background:'var(--blue)', color:'var(--text-primary)', fontSize:13, fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6, fontFamily:"'IBM Plex Sans'", marginBottom:10, transition:'opacity 0.15s' }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Run Sensitivity
           </button>
@@ -135,7 +135,7 @@ export default function SensitivityPage() {
             <div style={{ height:2, background:'var(--bg3)', borderRadius:2, overflow:'hidden' }}>
               <div style={{ height:'100%', background:'var(--blue)', width:`${progress}%`, transition:'width 0.3s' }}/>
             </div>
-            <div style={{ textAlign:'right', fontSize:11, color:'rgba(235,235,245,0.28)', marginTop:4, fontFamily:"'IBM Plex Mono',monospace" }}>{progress}% · {FEATURES.length} features</div>
+            <div style={{ textAlign:'right', fontSize:11, color:'var(--text-quaternary)', marginTop:4, fontFamily:"'IBM Plex Mono'" }}>{progress}% · {FEATURES.length} features</div>
           </div>
         )}
 
@@ -144,8 +144,8 @@ export default function SensitivityPage() {
           {Object.entries(GRP_COLOR).map(([g,c])=>(
             <div key={g} style={{ display:'flex', alignItems:'center', gap:8, paddingBottom:7, marginBottom:7, borderBottom:'0.5px solid var(--sep)' }}>
               <span style={{ width:10, height:10, borderRadius:3, background:c, flexShrink:0 }}/>
-              <span style={{ fontSize:12, color:'rgba(235,235,245,0.45)', flex:1, textTransform:'capitalize' }}>{g}</span>
-              {results&&<span style={{ fontSize:11, fontWeight:600, color:c, fontFamily:"'IBM Plex Mono',monospace" }}>{((groupTotals[g]||0)*100).toFixed(0)}%</span>}
+              <span style={{ fontSize:12, color:'var(--text-tertiary)', flex:1, textTransform:'capitalize' }}>{g}</span>
+              {results&&<span style={{ fontSize:11, fontWeight:600, color:c, fontFamily:"'IBM Plex Mono'" }}>{((groupTotals[g]||0)*100).toFixed(0)}%</span>}
             </div>
           ))}
         </div>
@@ -154,9 +154,9 @@ export default function SensitivityPage() {
           <>
             <SL n="04" t="Baseline"/>
             <div style={{ ...card, padding:'14px', textAlign:'center' }}>
-              <div style={{ fontSize:10, fontWeight:600, color:'rgba(235,235,245,0.28)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8 }}>Baseline Cd</div>
-              <div style={{ fontSize:36, fontWeight:700, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace", letterSpacing:'-1.5px', lineHeight:1 }}>{results.Cd0.toFixed(4)}</div>
-              <div style={{ fontSize:11, color:'rgba(235,235,245,0.28)', marginTop:6 }}>{results.bodyType} · 40 m/s</div>
+              <div style={{ fontSize:10, fontWeight:600, color:'var(--text-quaternary)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8 }}>Baseline Cd</div>
+              <div style={{ fontSize:36, fontWeight:700, color:'var(--text-primary)', fontFamily:"'IBM Plex Mono'", letterSpacing:'-1.5px', lineHeight:1 }}>{results.Cd0.toFixed(4)}</div>
+              <div style={{ fontSize:11, color:'var(--text-quaternary)', marginTop:6 }}>{results.bodyType} · 40 m/s</div>
             </div>
           </>
         )}
@@ -167,8 +167,8 @@ export default function SensitivityPage() {
         {!results&&!running ? (
           <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center' }}>
             <div style={{ textAlign:'center' }}>
-              <div style={{ fontSize:14, color:'rgba(235,235,245,0.25)', marginBottom:6 }}>Feature Sensitivity Map</div>
-              <div style={{ fontSize:12, color:'rgba(235,235,245,0.18)', maxWidth:320, lineHeight:1.6 }}>
+              <div style={{ fontSize:14, color:'var(--text-quaternary)', marginBottom:6 }}>Feature Sensitivity Map</div>
+              <div style={{ fontSize:12, color:'var(--text-quaternary)', maxWidth:320, lineHeight:1.6 }}>
                 Runs ±σ perturbations on all 16 features and computes ∂Cd/∂x via central finite differences
               </div>
             </div>
@@ -177,8 +177,8 @@ export default function SensitivityPage() {
           <>
             <div style={{ flex:1, ...card, display:'flex', flexDirection:'column' }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', borderBottom:'0.5px solid var(--sep)', flexShrink:0 }}>
-                <span style={{ fontSize:14, fontWeight:600, color:'rgba(235,235,245,0.85)' }}>Tornado Chart — {bodyType}</span>
-                <div style={{ display:'flex', gap:16, fontSize:11, color:'rgba(235,235,245,0.35)' }}>
+                <span style={{ fontSize:14, fontWeight:600, color:'var(--text-primary)' }}>Tornado Chart — {bodyType}</span>
+                <div style={{ display:'flex', gap:16, fontSize:11, color:'var(--text-tertiary)' }}>
                   <span><span style={{ color:'var(--red)' }}>▪</span> Increases Cd</span>
                   <span><span style={{ color:'var(--green)' }}>▪</span> Decreases Cd</span>
                   <span>bar ∝ ∂Cd/∂x</span>
@@ -200,9 +200,9 @@ export default function SensitivityPage() {
                         background: isHov?'rgba(255,255,255,0.04)':'transparent',
                         transition:'background 0.12s', cursor:'default',
                       }}>
-                      <span style={{ fontSize:10, fontFamily:"'IBM Plex Mono',monospace", color:'rgba(235,235,245,0.25)', width:16, flexShrink:0 }}>{i+1}</span>
+                      <span style={{ fontSize:10, fontFamily:"'IBM Plex Mono'", color:'var(--text-quaternary)', width:16, flexShrink:0 }}>{i+1}</span>
                       <span style={{ width:8, height:8, borderRadius:2, background:clr, flexShrink:0 }}/>
-                      <span style={{ fontSize:12, color:'rgba(235,235,245,0.65)', width:148, flexShrink:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.label}</span>
+                      <span style={{ fontSize:12, color:'var(--text-secondary)', width:148, flexShrink:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.label}</span>
                       {/* Bar chart */}
                       <div style={{ flex:1, position:'relative', height:12, display:'flex', alignItems:'center' }}>
                         <div style={{ position:'absolute', left:'50%', top:0, bottom:0, width:0.5, background:'rgba(255,255,255,0.1)' }}/>
@@ -212,7 +212,7 @@ export default function SensitivityPage() {
                           <div style={{ position:'absolute', top:1, bottom:1, right:'50%', width:`${barPct}%`, background:clr, opacity:0.7, borderRadius:'3px 0 0 3px' }}/>
                         )}
                       </div>
-                      <span style={{ fontSize:11, fontWeight:600, fontFamily:"'IBM Plex Mono',monospace", fontVariantNumeric:'tabular-nums', width:72, textAlign:'right', flexShrink:0, color:isPos?'var(--red)':'var(--green)' }}>
+                      <span style={{ fontSize:11, fontWeight:600, fontFamily:"'IBM Plex Mono'", fontVariantNumeric:'tabular-nums', width:72, textAlign:'right', flexShrink:0, color:isPos?'var(--red)':'var(--green)' }}>
                         {isPos?'+':''}{s.dCdDx.toFixed(5)}
                       </span>
                       {/* Sobol mini-bar */}
@@ -220,9 +220,9 @@ export default function SensitivityPage() {
                         <div style={{ height:2, background:'var(--bg3)', borderRadius:1, overflow:'hidden' }}>
                           <div style={{ height:'100%', background:clr, width:`${s.sobol*100}%` }}/>
                         </div>
-                        <div style={{ fontSize:9, color:'rgba(235,235,245,0.25)', fontFamily:"'IBM Plex Mono',monospace", marginTop:2 }}>{(s.sobol*100).toFixed(1)}%</div>
+                        <div style={{ fontSize:9, color:'var(--text-quaternary)', fontFamily:"'IBM Plex Mono'", marginTop:2 }}>{(s.sobol*100).toFixed(1)}%</div>
                       </div>
-                      <span style={{ fontSize:10, color:'rgba(235,235,245,0.25)', width:28, textAlign:'right', flexShrink:0 }}>{s.unit}</span>
+                      <span style={{ fontSize:10, color:'var(--text-quaternary)', width:28, textAlign:'right', flexShrink:0 }}>{s.unit}</span>
                     </div>
                   )
                 })}
@@ -235,9 +235,9 @@ export default function SensitivityPage() {
                 const n=results.data.filter(d=>d.group===grp).length
                 return (
                   <div key={grp} style={{ background:'var(--bg1)', borderRadius:10, border:'0.5px solid rgba(255,255,255,0.06)', padding:'10px 10px 8px', textAlign:'center' }}>
-                    <div style={{ fontSize:22, fontWeight:700, color:clr, fontFamily:"'IBM Plex Mono',monospace", lineHeight:1 }}>{(tot*100).toFixed(0)}%</div>
-                    <div style={{ fontSize:11, color:'rgba(235,235,245,0.35)', textTransform:'capitalize', marginTop:4 }}>{grp}</div>
-                    <div style={{ fontSize:10, color:'rgba(235,235,245,0.2)' }}>{n} feat{n>1?'s':''}</div>
+                    <div style={{ fontSize:22, fontWeight:700, color:clr, fontFamily:"'IBM Plex Mono'", lineHeight:1 }}>{(tot*100).toFixed(0)}%</div>
+                    <div style={{ fontSize:11, color:'var(--text-tertiary)', textTransform:'capitalize', marginTop:4 }}>{grp}</div>
+                    <div style={{ fontSize:10, color:'var(--text-quaternary)' }}>{n} feat{n>1?'s':''}</div>
                     <div style={{ height:2, borderRadius:1, background:'var(--bg3)', overflow:'hidden', marginTop:6 }}>
                       <div style={{ height:'100%', background:clr, width:`${tot*100}%` }}/>
                     </div>
