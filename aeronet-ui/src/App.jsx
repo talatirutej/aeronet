@@ -81,7 +81,7 @@ export default function App() {
                   position: 'relative', display: 'flex', alignItems: 'center',
                   padding: '0 14px', height: 44, border: 'none', cursor: 'pointer',
                   background: 'transparent',
-                  color: isActive ? '#fff' : 'rgba(235,235,245,0.4)',
+                  color: isActive ? '#fff' : 'rgba(255,255,255,0.4)',
                   fontSize: 13, fontWeight: isActive ? 600 : 400,
                   letterSpacing: '-0.2px',
                   fontFamily: "'IBM Plex Sans', sans-serif",
