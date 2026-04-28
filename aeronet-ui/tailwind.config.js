@@ -58,18 +58,22 @@ export default {
 
         // iOS dark system colors (used by redesigned components)
         ios: {
-          bg0:    '#000000',
-          bg1:    '#1C1C1E',
-          bg2:    '#2C2C2E',
-          bg3:    '#3A3A3C',
-          bg4:    '#48484A',
-          blue:   '#0A84FF',
-          green:  '#30D158',
-          orange: '#FF9F0A',
-          red:    '#FF453A',
-          indigo: '#5E5CE6',
-          teal:   '#40CBE0',
-          yellow: '#FFD60A',
+          bg0:     '#000000',
+          bg1:     '#1C1C1E',
+          bg2:     '#2C2C2E',
+          bg3:     '#3A3A3C',
+          bg4:     '#48484A',
+          label:   '#FFFFFF',
+          label2:  'rgba(235,235,245,0.60)',
+          label3:  'rgba(235,235,245,0.30)',
+          sep:     'rgba(84,84,88,0.55)',
+          blue:    '#0A84FF',
+          green:   '#30D158',
+          orange:  '#FF9F0A',
+          red:     '#FF453A',
+          indigo:  '#5E5CE6',
+          teal:    '#40CBE0',
+          yellow:  '#FFD60A',
         },
       },
       fontFamily: {
@@ -107,6 +111,7 @@ export default {
         't-caption2':   ['11px', { lineHeight: '1.47', fontWeight: '400', letterSpacing: '0'     }],
       },
       borderRadius: {
+        // M3 shape scale
         'xs':   '4px',
         'sm':   '8px',
         'md':   '12px',
@@ -115,11 +120,12 @@ export default {
         'full': '9999px',
       },
       boxShadow: {
-        'elev1':        '0 1px 2px rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15)',
-        'elev2':        '0 1px 2px rgba(0,0,0,0.3), 0 2px 6px 2px rgba(0,0,0,0.15)',
-        'elev3':        '0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3)',
-        'elev4':        '0 6px 10px 4px rgba(0,0,0,0.15), 0 2px 3px rgba(0,0,0,0.3)',
-        'elev5':        '0 8px 12px 6px rgba(0,0,0,0.15), 0 4px 4px rgba(0,0,0,0.3)',
+        // M3 elevation
+        'elev1': '0 1px 2px rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15)',
+        'elev2': '0 1px 2px rgba(0,0,0,0.3), 0 2px 6px 2px rgba(0,0,0,0.15)',
+        'elev3': '0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3)',
+        'elev4': '0 6px 10px 4px rgba(0,0,0,0.15), 0 2px 3px rgba(0,0,0,0.3)',
+        'elev5': '0 8px 12px 6px rgba(0,0,0,0.15), 0 4px 4px rgba(0,0,0,0.3)',
         'glow-primary': '0 0 20px rgba(77,216,232,0.25)',
         'glow-sm':      '0 0 8px rgba(77,216,232,0.2)',
       },
@@ -138,21 +144,12 @@ export default {
         'anim-spin':  'spin 0.9s linear infinite',
       },
       keyframes: {
-        fadeIn: {
-          from: { opacity: '0' },
-          to:   { opacity: '1' },
-        },
-        slideUp: {
-          from: { opacity: '0', transform: 'translateY(12px)' },
-          to:   { opacity: '1', transform: 'translateY(0)' },
-        },
-        slideIn: {
-          from: { opacity: '0', transform: 'translateX(-8px)' },
-          to:   { opacity: '1', transform: 'translateX(0)' },
-        },
+        fadeIn:  { from: { opacity: '0' },                                        to: { opacity: '1' } },
+        slideUp: { from: { opacity: '0', transform: 'translateY(12px)' },         to: { opacity: '1', transform: 'translateY(0)' } },
+        slideIn: { from: { opacity: '0', transform: 'translateX(-8px)' },         to: { opacity: '1', transform: 'translateX(0)' } },
         scan: {
-          '0%,100%': { transform: 'translateY(0%)',   opacity: '0.4' },
-          '50%':     { transform: 'translateY(100%)', opacity: '1'   },
+          '0%,100%': { transform: 'translateY(0%)',    opacity: '0.4' },
+          '50%':     { transform: 'translateY(100%)',  opacity: '1'   },
         },
         ripple: {
           from: { transform: 'scale(0)', opacity: '0.4' },
