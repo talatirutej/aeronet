@@ -44,10 +44,10 @@ export default function AppBar({ backendStatus, activePage, onPageChange, active
           </svg>
         </div>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.4px', color: 'var(--label)', lineHeight: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.4px', color: 'var(--text-primary)', lineHeight: 1 }}>
             AeroNet
           </div>
-          <div style={{ fontSize: 10, color: 'var(--label3)', letterSpacing: '0.04em', textTransform: 'uppercase', marginTop: 1 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em', textTransform: 'uppercase', marginTop: 1 }}>
             CFD Surrogate
           </div>
         </div>
@@ -64,7 +64,7 @@ export default function AppBar({ backendStatus, activePage, onPageChange, active
               borderRadius: 8,
               border: 'none',
               background: activePage === p.id ? 'rgba(255,255,255,0.1)' : 'transparent',
-              color: activePage === p.id ? 'var(--label)' : 'var(--label2)',
+              color: activePage === p.id ? 'var(--text-primary)' : 'var(--text-secondary)',
               fontSize: 14,
               fontWeight: activePage === p.id ? 600 : 400,
               letterSpacing: '-0.24px',
@@ -98,16 +98,16 @@ export default function AppBar({ backendStatus, activePage, onPageChange, active
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 16 }}>
         <div className="ios-pill" style={{ gap: 6 }}>
           <span className="status-dot" style={{
-            background: isOnline === null ? 'var(--label3)' : isOnline ? 'var(--green)' : 'var(--orange)',
+            background: isOnline === null ? 'var(--text-tertiary)' : isOnline ? 'var(--green)' : 'var(--orange)',
             boxShadow: isOnline ? '0 0 5px var(--green)' : 'none',
           }} />
-          <span style={{ color: isOnline === null ? 'var(--label3)' : isOnline ? 'var(--green)' : 'var(--orange)' }}>
+          <span style={{ color: isOnline === null ? 'var(--text-tertiary)' : isOnline ? 'var(--green)' : 'var(--orange)' }}>
             {isOnline === null ? 'Checking' : isOnline ? 'Online' : 'Mock mode'}
           </span>
         </div>
         <div className="ios-pill">
-          <span className="mono" style={{ color: 'var(--label3)', fontSize: 11 }}>DrivAerML</span>
-          <span style={{ color: 'var(--label3)', fontSize: 11 }}>484 cases</span>
+          <span className="mono" style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>DrivAerML</span>
+          <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>484 cases</span>
         </div>
       </div>
     </header>
