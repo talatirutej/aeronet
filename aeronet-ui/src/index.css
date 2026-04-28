@@ -3,10 +3,19 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; overflow: hidden; }
 
+/* ── Universal font lock — nothing renders in Roboto or system fonts ── */
+* {
+  font-family: 'IBM Plex Sans', 'IBM Plex Mono', sans-serif !important;
+}
+code, pre, .mono, [class*="mono"],
+[style*="IBM Plex Mono"] {
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+
 body {
   background: #000;
   color: rgba(235,235,245,0.85);
-  font-family: 'IBM Plex Sans', -apple-system, 'Helvetica Neue', sans-serif;
+  font-family: 'IBM Plex Sans', 'IBM Plex Mono', sans-serif;
   font-size: 14px;
   line-height: 1.47;
   -webkit-font-smoothing: antialiased;
@@ -30,7 +39,7 @@ body {
 }
 
 /* ── Typography ── */
-.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace !important; }
+.mono { font-family: 'IBM Plex Mono', monospace !important; }
 .num  { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 
 /* ── Scrollbar ── */
