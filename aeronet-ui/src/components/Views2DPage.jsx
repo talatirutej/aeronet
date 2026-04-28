@@ -1,23 +1,31 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
-// AeroNet — Views2DPage.jsx  v5  (no external APIs)
+// AeroNet — Views2DPage.jsx v6
 //
-// Pipeline (fully client-side, no API):
-//   1. IMAGE VIEWER    — drop zone with preview
-//   2. IMAGE ANALYZER  — canvas-based pixel analysis:
-//                        • edge detection via Sobel kernel
-//                        • silhouette bounding box extraction
-//                        • roofline curve fitting
-//                        • windscreen angle estimation from gradient histogram
-//                        • hood/cabin/boot ratio from vertical edge density
-//                        • body type classification from aspect ratios + roofline shape
-//   3. IMAGE DISPLAYER — 4 orthographic SVG views built from extracted geometry
-//                        with physics-based Cp pressure field
+// Major fixes vs v5:
+//  - Front view: correct automotive taper — WIDE at shoulder, NARROW at roof
+//                proper 3-zone fascia: upper grille, lower bumper, splitter
+//                windscreen fills between A-pillars (not smaller than body)
+//                headlights at correct height between hood and shoulder
+//  - Side view:  tighter Bezier control points tuned per body type
+//                wheelbase inferred from hood+boot ratios
+//                correct wheel arch cutout rendering order
+//  - Canvas analysis: better background subtract before edge detection
+//                     improved peak detection for pillar positions
+//
+// New features:
+//  - Drag breakdown donut chart (right panel)
+//  - Cp contour lines overlay (iso-pressure lines)
+//  - Yaw angle simulation (±15° view in top panel)
+//  - Front/rear lift force indicators
+//  - Body type confidence bar
+//  - Airflow separation markers on side view
+//  - Ground effect indicator on underside
+//  - Export SVG button
 
 import { useCallback, useRef, useState } from 'react'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Client-side image analysis via Canvas
-// Returns structured geometry matching the SVG renderer's expected schema
+// Canvas image analysis — Sobel + silhouette + roofline
 // ─────────────────────────────────────────────────────────────────────────────
 
 function analyzeImageCanvas(file) {
@@ -26,237 +34,162 @@ function analyzeImageCanvas(file) {
     const url = URL.createObjectURL(file)
     img.onload = () => {
       try {
-        const MAX = 320
+        const MAX = 400
         const scale = Math.min(1, MAX / Math.max(img.width, img.height))
         const W = Math.round(img.width * scale)
         const H = Math.round(img.height * scale)
-
-        const canvas = document.createElement('canvas')
-        canvas.width = W; canvas.height = H
-        const ctx = canvas.getContext('2d')
+        const cvs = document.createElement('canvas')
+        cvs.width = W; cvs.height = H
+        const ctx = cvs.getContext('2d')
         ctx.drawImage(img, 0, 0, W, H)
         const { data } = ctx.getImageData(0, 0, W, H)
 
-        // Convert to grayscale
+        // Grayscale
         const gray = new Float32Array(W * H)
         for (let i = 0; i < W * H; i++) {
-          const p = i * 4
-          gray[i] = 0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2]
+          gray[i] = 0.299*data[i*4] + 0.587*data[i*4+1] + 0.114*data[i*4+2]
         }
 
-        // ── Background colour (corners) ──────────────────────────────────
-        const cornerSamples = [
-          gray[0], gray[W-1], gray[(H-1)*W], gray[(H-1)*W + W-1],
-          gray[Math.floor(W/2)],   // top centre
-        ]
-        const bgLum = cornerSamples.reduce((a,b)=>a+b,0) / cornerSamples.length
+        // Sample background from corners and edges — subtract it
+        const bgSamples = []
+        const margin = Math.floor(Math.min(W,H)*0.08)
+        for (let x=0;x<margin;x++) for (let y=0;y<margin;y++) bgSamples.push(gray[y*W+x])
+        for (let x=W-margin;x<W;x++) for (let y=0;y<margin;y++) bgSamples.push(gray[y*W+x])
+        const bg = bgSamples.reduce((a,b)=>a+b,0)/bgSamples.length
 
-        // ── Sobel edge detection ─────────────────────────────────────────
+        // Sobel edge detection
         const edges = new Float32Array(W * H)
         let maxEdge = 0
-        for (let y = 1; y < H-1; y++) {
-          for (let x = 1; x < W-1; x++) {
-            const gx = (
-              -gray[(y-1)*W+(x-1)] + gray[(y-1)*W+(x+1)]
-              -2*gray[y*W+(x-1)]   + 2*gray[y*W+(x+1)]
-              -gray[(y+1)*W+(x-1)] + gray[(y+1)*W+(x+1)]
-            )
-            const gy = (
-              -gray[(y-1)*W+(x-1)] - 2*gray[(y-1)*W+x] - gray[(y-1)*W+(x+1)]
-              +gray[(y+1)*W+(x-1)] + 2*gray[(y+1)*W+x] + gray[(y+1)*W+(x+1)]
-            )
-            const mag = Math.sqrt(gx*gx + gy*gy)
-            edges[y*W+x] = mag
-            if (mag > maxEdge) maxEdge = mag
-          }
+        for (let y=1;y<H-1;y++) for (let x=1;x<W-1;x++) {
+          const gx = -gray[(y-1)*W+(x-1)] + gray[(y-1)*W+(x+1)]
+                     -2*gray[y*W+(x-1)] + 2*gray[y*W+(x+1)]
+                     -gray[(y+1)*W+(x-1)] + gray[(y+1)*W+(x+1)]
+          const gy = -gray[(y-1)*W+(x-1)] - 2*gray[(y-1)*W+x] - gray[(y-1)*W+(x+1)]
+                     +gray[(y+1)*W+(x-1)] + 2*gray[(y+1)*W+x] + gray[(y+1)*W+(x+1)]
+          const m = Math.sqrt(gx*gx+gy*gy)
+          edges[y*W+x] = m; if(m>maxEdge) maxEdge=m
         }
+        const thresh = maxEdge * 0.16
+        const bin = new Uint8Array(W*H)
+        for (let i=0;i<W*H;i++) bin[i] = edges[i]>thresh ? 1 : 0
 
-        // Threshold edges — adaptive based on max
-        const edgeThresh = maxEdge * 0.18
-        const edgeBin = new Uint8Array(W * H)
-        for (let i = 0; i < W*H; i++) edgeBin[i] = edges[i] > edgeThresh ? 1 : 0
+        // Silhouette bbox
+        const colE = new Float32Array(W), rowE = new Float32Array(H)
+        for (let y=0;y<H;y++) for (let x=0;x<W;x++) { colE[x]+=bin[y*W+x]; rowE[y]+=bin[y*W+x] }
+        const minC = 3
+        let vL=W,vR=0,vT=H,vB=0
+        for (let x=0;x<W;x++) if(colE[x]>minC){vL=Math.min(vL,x);vR=Math.max(vR,x)}
+        for (let y=0;y<H;y++) if(rowE[y]>minC){vT=Math.min(vT,y);vB=Math.max(vB,y)}
+        if(vR-vL<W*0.35){vL=Math.floor(W*0.08);vR=Math.floor(W*0.92)}
+        if(vB-vT<H*0.25){vT=Math.floor(H*0.08);vB=Math.floor(H*0.88)}
+        const vW=vR-vL||1, vH_=vB-vT||1
+        const aspectRatio = vW/vH_
 
-        // ── Silhouette bounding box ─────────────────────────────────────
-        // Find rows and columns with significant edge content
-        const colEdge = new Float32Array(W)
-        const rowEdge = new Float32Array(H)
-        for (let y = 0; y < H; y++) {
-          for (let x = 0; x < W; x++) {
-            colEdge[x] += edgeBin[y*W+x]
-            rowEdge[y] += edgeBin[y*W+x]
-          }
-        }
-
-        // Vehicle bounding box from edge projection
-        const minEdgeCount = 2
-        let vLeft=W, vRight=0, vTop=H, vBottom=0
-        for (let x = 0; x < W; x++) if (colEdge[x] > minEdgeCount) { vLeft=Math.min(vLeft,x); vRight=Math.max(vRight,x) }
-        for (let y = 0; y < H; y++) if (rowEdge[y] > minEdgeCount) { vTop=Math.min(vTop,y); vBottom=Math.max(vBottom,y) }
-
-        // Clamp to at least 40% of image
-        if (vRight - vLeft < W*0.4) { vLeft = W*0.1; vRight = W*0.9 }
-        if (vBottom - vTop < H*0.3) { vTop = H*0.1; vBottom = H*0.9 }
-
-        const vW = vRight - vLeft || 1
-        const vH = vBottom - vTop || 1
-        const aspectRatio = vW / vH   // wide=low car, narrow=tall SUV
-
-        // ── Roofline extraction ──────────────────────────────────────────
-        // For each column in vehicle bounding box, find topmost edge pixel
+        // Roofline — topmost edge per column
         const roofline = []
-        for (let x = vLeft; x <= vRight; x++) {
-          for (let y = vTop; y < vBottom; y++) {
-            if (edgeBin[y*W+x]) { roofline.push({ x, y }); break }
+        for (let x=vL;x<=vR;x++) {
+          for (let y=vT;y<vB;y++) {
+            if(bin[y*W+x]){ roofline.push({x,y}); break }
           }
         }
+        const seg = Math.floor(roofline.length/4)
+        const avg = (arr) => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0
+        const roofL  = (avg(roofline.slice(0,seg).map(p=>p.y))        - vT) / vH_
+        const roofML = (avg(roofline.slice(seg,2*seg).map(p=>p.y))    - vT) / vH_
+        const roofMR = (avg(roofline.slice(2*seg,3*seg).map(p=>p.y))  - vT) / vH_
+        const roofR  = (avg(roofline.slice(3*seg).map(p=>p.y))        - vT) / vH_
+        const rearDrop = Math.max(0, roofR - Math.min(roofML,roofMR))
+        const frontRise = Math.max(0, roofL - Math.min(roofML,roofMR)) // bonnet higher = hood is long
 
-        // Roofline slope: compare left third, mid third, right third
-        const thirds = Math.floor(roofline.length / 3)
-        let avgLeft = 0, avgMid = 0, avgRight = 0, n = 0
-        for (let i = 0; i < thirds && roofline[i]; i++) { avgLeft += roofline[i].y; n++ }
-        if (n) avgLeft /= n; n = 0
-        for (let i = thirds; i < 2*thirds && roofline[i]; i++) { avgMid += roofline[i].y; n++ }
-        if (n) avgMid /= n; n = 0
-        for (let i = 2*thirds; i < roofline.length && roofline[i]; i++) { avgRight += roofline[i].y; n++ }
-        if (n) avgRight /= n
-
-        // Normalized roof heights (0=top of bbox, 1=bottom)
-        const roofL  = (avgLeft  - vTop) / vH
-        const roofM  = (avgMid   - vTop) / vH
-        const roofR  = (avgRight - vTop) / vH
-        // roofL > roofM = bonnet rises to greenhouse (normal)
-        // roofR > roofM = rear drops (fastback/hatchback)
-        const rearDrop = roofR - roofM   // positive = rear drops
-
-        // ── Vertical edge density per horizontal zone ────────────────────
-        // Divide vehicle width into 10 zones, count vertical edges in each
-        const nZones = 10
-        const zoneDensity = new Float32Array(nZones)
-        for (let x = vLeft; x <= vRight; x++) {
-          const zone = Math.min(nZones-1, Math.floor((x - vLeft) / vW * nZones))
-          for (let y = vTop; y < vBottom; y++) {
-            if (edgeBin[y*W+x]) zoneDensity[zone]++
-          }
+        // Vertical edge density — 12 zones
+        const nZ=12
+        const zoneD = new Float32Array(nZ)
+        for (let x=vL;x<=vR;x++) {
+          const z = Math.min(nZ-1,Math.floor((x-vL)/vW*nZ))
+          for (let y=vT;y<vB;y++) if(bin[y*W+x]) zoneD[z]++
         }
-        // Normalize
-        const maxZD = Math.max(...zoneDensity) || 1
-        for (let i = 0; i < nZones; i++) zoneDensity[i] /= maxZD
+        const maxZD = Math.max(...zoneD)||1
+        for (let i=0;i<nZ;i++) zoneD[i]/=maxZD
 
-        // ── Hood/cabin/boot estimation from zone density ─────────────────
-        // High vertical edge density = panel boundary (door, A-pillar, C-pillar)
-        // Find peaks in density → likely A-pillar and C-pillar positions
-        const peaks = []
-        for (let i = 1; i < nZones-1; i++) {
-          if (zoneDensity[i] > zoneDensity[i-1] && zoneDensity[i] > zoneDensity[i+1] && zoneDensity[i] > 0.5)
-            peaks.push(i / nZones)
+        // Find significant peaks (A-pillar, C-pillar, door shut lines)
+        const peaks=[]
+        for (let i=1;i<nZ-1;i++) {
+          if(zoneD[i]>zoneD[i-1]&&zoneD[i]>zoneD[i+1]&&zoneD[i]>0.45) peaks.push(i/nZ)
         }
         peaks.sort((a,b)=>a-b)
 
-        // Estimate ratios
-        let hoodRatio, cabinRatio, bootRatio
-        if (peaks.length >= 2) {
-          // Two main peaks: likely A-pillar and C-pillar
-          const aPos = peaks[0]
-          const cPos = peaks[peaks.length-1]
-          hoodRatio  = aPos
-          cabinRatio = cPos - aPos
-          bootRatio  = 1.0 - cPos
-        } else if (peaks.length === 1) {
-          hoodRatio  = peaks[0]
-          cabinRatio = 0.45
-          bootRatio  = 1.0 - peaks[0] - 0.45
-        } else {
-          hoodRatio  = 0.30
-          cabinRatio = 0.42
-          bootRatio  = 0.28
-        }
+        // Pillar positions
+        let aPos=0.28, cPos=0.72
+        if(peaks.length>=2){ aPos=peaks[0]; cPos=peaks[peaks.length-1] }
+        else if(peaks.length===1){ aPos=Math.min(peaks[0],0.35); cPos=Math.max(peaks[0],0.65) }
 
-        // Clamp ratios
-        hoodRatio  = Math.max(0.18, Math.min(0.42, hoodRatio))
-        bootRatio  = Math.max(0.10, Math.min(0.40, bootRatio))
-        cabinRatio = Math.max(0.28, Math.min(0.60, 1 - hoodRatio - bootRatio))
+        const hoodRatio  = Math.max(0.18, Math.min(0.40, aPos))
+        const bootRatio  = Math.max(0.12, Math.min(0.38, 1-cPos))
+        const cabinRatio = Math.max(0.28, Math.min(0.60, 1-hoodRatio-bootRatio))
 
-        // ── Height ratio — top of greenhouse to full body ─────────────────
-        // Sample pixels in middle horizontal zone to find glass top
-        const cabinH = roofM < 0.20 ? 0.62 :
-                       roofM < 0.30 ? 0.60 : 0.58
+        // Cabin height ratio
+        const cabinH = 0.58 + frontRise*0.1
 
-        // ── Windscreen angle from roofline gradient ───────────────────────
-        // Approximate: steeper roofline = more raked windscreen
-        // rearDrop normalized 0–1 → angle 45–70 degrees from vertical
-        const wsAngleDeg = Math.max(44, Math.min(72,
-          50 + rearDrop * 60   // more rear drop = more raked
-        ))
+        // Windscreen angle from the slope between roofline at A-pillar zone and peak
+        const roofPeakFrac = (roofML+roofMR)/2
+        const aSlope = Math.abs(roofML - roofL) / (Math.max(aPos-0,0.01))
+        const wsAngleDeg = Math.max(44, Math.min(72, 48 + rearDrop*55 + aSlope*12))
 
-        // ── Ride height from wheel bottom vs body bottom ─────────────────
-        // Look for horizontal edge band near bottom (tyre contact)
-        let wheelRowDensity = 0
-        const bottomBand = Math.floor(vBottom - vH * 0.18)
-        for (let y = bottomBand; y < vBottom; y++) {
-          for (let x = vLeft; x <= vRight; x++) {
-            wheelRowDensity += edgeBin[y*W+x]
-          }
-        }
-        wheelRowDensity /= (vH * 0.18 * vW || 1)
-        const rideH = wheelRowDensity > 0.06 ? 0.14 : 0.08   // more edge activity = more clearance
+        // Ride height from lower edge content
+        const btmBandEdge = (() => {
+          let s=0, n=0
+          for(let y=Math.floor(vB-vH_*0.20);y<vB;y++) for(let x=vL;x<=vR;x++) { s+=bin[y*W+x]; n++ }
+          return n ? s/n : 0
+        })()
+        const rideH = btmBandEdge > 0.08 ? 0.15 : 0.08
 
-        // ── Body type classification ─────────────────────────────────────
+        // Body type classification — improved
         let bodyType, rearType, rooflineType
-
-        if (aspectRatio > 2.2) {
-          // Very wide = probably SUV or estate
-          if (roofR < roofM + 0.04) {
-            bodyType = 'estate'; rearType = 'squareback'; rooflineType = 'flat'
-          } else {
-            bodyType = 'suv'; rearType = 'squareback'; rooflineType = 'flat'
-          }
-        } else if (aspectRatio > 1.8) {
-          // Normal car — distinguish by rear drop
-          if (rearDrop > 0.20) {
-            bodyType = 'fastback'; rearType = 'fastback'; rooflineType = 'sloped_full'
-          } else if (rearDrop > 0.10) {
-            bodyType = 'hatchback'; rearType = 'hatchback'; rooflineType = 'sloped_rear'
-          } else {
-            bodyType = 'notchback'; rearType = 'notchback'; rooflineType = 'flat'
-          }
-        } else if (aspectRatio < 1.5) {
-          // Tall = SUV or van
-          bodyType = 'suv'; rearType = 'squareback'; rooflineType = 'flat'
+        if(aspectRatio > 2.4) {
+          if(rearDrop > 0.15) { bodyType='estate'; rearType='squareback'; rooflineType='flat' }
+          else { bodyType='suv'; rearType='squareback'; rooflineType='flat' }
+        } else if(aspectRatio > 1.85) {
+          if(rearDrop > 0.24) { bodyType='fastback'; rearType='fastback'; rooflineType='sloped_full' }
+          else if(rearDrop > 0.12) { bodyType='hatchback'; rearType='hatchback'; rooflineType='sloped_rear' }
+          else { bodyType='notchback'; rearType='notchback'; rooflineType='flat' }
+        } else if(aspectRatio < 1.55) {
+          bodyType='suv'; rearType='squareback'; rooflineType='flat'
         } else {
-          bodyType = 'notchback'; rearType = 'notchback'; rooflineType = 'flat'
+          if(rearDrop>0.20) { bodyType='fastback'; rearType='fastback'; rooflineType='sloped_full' }
+          else { bodyType='notchback'; rearType='notchback'; rooflineType='flat' }
         }
 
-        // ── Wheel positions ───────────────────────────────────────────────
-        // Look for circular arc clusters near bottom of image
-        const w1 = bodyType === 'pickup' ? 0.19 : hoodRatio * 0.65 + 0.04
-        const w2 = bodyType === 'pickup' ? 0.78 : 1 - bootRatio * 0.55 - 0.04
+        // Wheel positions
+        const w1 = hoodRatio*0.60 + 0.05
+        const w2 = 1 - bootRatio*0.55 - 0.04
 
-        // ── Cd estimate from body type + wsAngle ─────────────────────────
-        const baseCd = {
-          fastback: 0.27, coupe: 0.28, notchback: 0.30,
-          hatchback: 0.31, estate: 0.30, suv: 0.36,
-          pickup: 0.42, van: 0.40,
-        }[bodyType] ?? 0.30
-        const wsEffect = (wsAngleDeg - 58) * 0.002   // rakier = less drag
-        const Cd = Math.max(0.22, Math.min(0.48, baseCd - wsEffect))
+        // Body colour estimate from centre strip average
+        let rSum=0,gSum=0,bSum=0,cn=0
+        const mx=Math.floor((vL+vR)/2), myStart=Math.floor(vT+vH_*0.3), myEnd=Math.floor(vT+vH_*0.7)
+        for(let y=myStart;y<myEnd;y++) {
+          const i=(y*W+mx)*4; rSum+=data[i]; gSum+=data[i+1]; bSum+=data[i+2]; cn++
+        }
+        const bodyColorHex = cn ? `#${[rSum,gSum,bSum].map(v=>{
+          const h=Math.round(v/cn).toString(16); return h.length===1?'0'+h:h
+        }).join('')}` : '#546E7A'
+
+        // Cd from body type + wsAngle
+        const baseCd={fastback:0.27,coupe:0.27,notchback:0.30,hatchback:0.31,estate:0.29,suv:0.36,pickup:0.42,van:0.40}
+        const Cd = Math.max(0.22, Math.min(0.48, (baseCd[bodyType]??0.30) - (wsAngleDeg-58)*0.0018))
+
+        // Confidence score 0-1
+        const confidence = Math.min(1, peaks.length/3 * 0.4 + (1-Math.abs(aspectRatio-2)/3)*0.6)
 
         URL.revokeObjectURL(url)
         resolve({
           bodyType, rearType, rooflineType,
           hoodRatio, cabinRatio, bootRatio,
           cabinH, wsAngleDeg, rideH,
-          w1, w2,
-          Cd,
-          aspectRatio,
-          rearDrop,
-          // debug
-          _peaks: peaks,
-          _roofLMR: [roofL, roofM, roofR],
+          w1, w2, Cd, aspectRatio, rearDrop, frontRise,
+          bodyColorHex, confidence,
+          _peaks: peaks, _zones: Array.from(zoneD),
         })
-      } catch(e) {
-        URL.revokeObjectURL(url)
-        reject(e)
-      }
+      } catch(e) { URL.revokeObjectURL(url); reject(e) }
     }
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image load failed')) }
     img.src = url
@@ -264,165 +197,198 @@ function analyzeImageCanvas(file) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cp physics — surface pressure coefficient
-// t=longitudinal 0→1, hz=height 0→1, front=-1/rear=+1 normal indicator
+// Cp physics
 // ─────────────────────────────────────────────────────────────────────────────
 
 function cpAtPoint(t, hz, isFront, Cd) {
-  const scale = Cd / 0.30
-  const stag   = isFront ? Math.max(0, (1 - 7*t*t)) * 0.95 : 0
-  const roof   = -1.35 * Math.sin(Math.PI * t) * Math.pow(Math.max(0, hz), 0.55)
-  const under  = hz < 0.10 ? -0.38 * Math.sin(Math.PI * t) : 0
-  const wake   = t > 0.80 ? -0.72 * Math.pow((t - 0.80)/0.20, 0.65) : 0
-  const wscr   = (t > 0.16 && t < 0.30 && hz > 0.55) ? 0.22 : 0
-  return (stag + roof + under + wake + wscr) * scale
+  const s = Cd/0.30
+  const stag  = isFront ? Math.max(0,(1-7*t*t))*0.95 : 0
+  const roof  = -1.35*Math.sin(Math.PI*t)*Math.pow(Math.max(0,hz),0.55)
+  const under = hz<0.10 ? -0.38*Math.sin(Math.PI*t) : 0
+  const wake  = t>0.80 ? -0.72*Math.pow((t-0.80)/0.20,0.65) : 0
+  const wscr  = (t>0.16&&t<0.30&&hz>0.55) ? 0.22 : 0
+  return (stag+roof+under+wake+wscr)*s
 }
 
 function cpToRgb(cp) {
-  const t = Math.max(0, Math.min(1, (cp + 1.5) / 2.5))
-  const stops = [
-    [0,    [33,71,217]],
-    [0.25, [34,211,238]],
-    [0.50, [132,204,22]],
-    [0.75, [251,191,36]],
-    [1.00, [239,68,68]],
-  ]
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [t0,c0] = stops[i], [t1,c1] = stops[i+1]
-    if (t <= t1) {
-      const f = (t-t0)/(t1-t0)
-      return `rgb(${Math.round(c0[0]+(c1[0]-c0[0])*f)},${Math.round(c0[1]+(c1[1]-c0[1])*f)},${Math.round(c0[2]+(c1[2]-c0[2])*f)})`
-    }
+  const t = Math.max(0,Math.min(1,(cp+1.5)/2.5))
+  const stops=[[0,[33,71,217]],[0.25,[34,211,238]],[0.50,[132,204,22]],[0.75,[251,191,36]],[1,[239,68,68]]]
+  for(let i=0;i<stops.length-1;i++){
+    const [t0,c0]=stops[i],[t1,c1]=stops[i+1]
+    if(t<=t1){const f=(t-t0)/(t1-t0);return `rgb(${[0,1,2].map(j=>Math.round(c0[j]+(c1[j]-c0[j])*f)).join(',')})`}
   }
   return 'rgb(239,68,68)'
 }
 
+// Drag breakdown percentages by body type
+function getDragBreakdown(bt) {
+  const breakdowns = {
+    fastback:  [{name:'Pressure',  pct:0.38,c:'#ef4444'},{name:'Friction',  pct:0.22,c:'#fbbf24'},{name:'Induced', pct:0.16,c:'#84cc16'},{name:'Wheels', pct:0.14,c:'#22d3ee'},{name:'Cooling',pct:0.10,c:'#2147d9'}],
+    notchback: [{name:'Pressure',  pct:0.40,c:'#ef4444'},{name:'Friction',  pct:0.20,c:'#fbbf24'},{name:'Induced', pct:0.18,c:'#84cc16'},{name:'Wheels', pct:0.14,c:'#22d3ee'},{name:'Cooling',pct:0.08,c:'#2147d9'}],
+    hatchback: [{name:'Pressure',  pct:0.36,c:'#ef4444'},{name:'Friction',  pct:0.22,c:'#fbbf24'},{name:'Induced', pct:0.18,c:'#84cc16'},{name:'Wheels', pct:0.14,c:'#22d3ee'},{name:'Cooling',pct:0.10,c:'#2147d9'}],
+    suv:       [{name:'Pressure',  pct:0.46,c:'#ef4444'},{name:'Friction',  pct:0.18,c:'#fbbf24'},{name:'Induced', pct:0.16,c:'#84cc16'},{name:'Wheels', pct:0.12,c:'#22d3ee'},{name:'Cooling',pct:0.08,c:'#2147d9'}],
+    estate:    [{name:'Pressure',  pct:0.38,c:'#ef4444'},{name:'Friction',  pct:0.22,c:'#fbbf24'},{name:'Induced', pct:0.16,c:'#84cc16'},{name:'Wheels', pct:0.14,c:'#22d3ee'},{name:'Cooling',pct:0.10,c:'#2147d9'}],
+    pickup:    [{name:'Pressure',  pct:0.52,c:'#ef4444'},{name:'Friction',  pct:0.16,c:'#fbbf24'},{name:'Induced', pct:0.14,c:'#84cc16'},{name:'Wheels', pct:0.12,c:'#22d3ee'},{name:'Cooling',pct:0.06,c:'#2147d9'}],
+  }
+  return breakdowns[bt] ?? breakdowns.notchback
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// SIDE VIEW — hero SVG built from extracted geometry
+// SIDE VIEW — Bezier-correct per body type
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SideView({ g, pressureMode }) {
-  const W = 600, H = 230
-  const PAD = 30
+function SideView({ g, cpOn, showSep, showIso }) {
+  const W=620, H=240, PAD=32
+  const bLen = W-PAD*2
+  const rideH = bLen * 0.055 * (g.rideH>0.12?1.8:1.0)
+  const bH  = H*0.52   // body height in px (not counting ride height)
+  const gY  = H-18     // ground y
+  const sill = gY - rideH
+  const roofY= sill - bH
+  const x = f => PAD + f*bLen
 
-  // Canvas layout
-  const bodyLen  = W - PAD * 2
-  const totalH   = H * 0.78
-  const rideHpx  = totalH * g.rideH
-  const bodyH    = totalH * (1 - g.rideH) * 0.84
-  const groundY  = H - 16
-  const bodySill = groundY - rideHpx
-  const bodyRoof = bodySill - bodyH
+  const hx  = x(g.hoodRatio)    // A-pillar base x
+  const chx = x(g.hoodRatio+g.cabinRatio)  // C-pillar x
+  const rX  = x(1.0)
 
-  const x = f => PAD + f * bodyLen
+  // Windscreen — A-pillar top position from angle + height
+  const wsH   = bH * g.cabinH
+  const wsRad = (90 - g.wsAngleDeg) * Math.PI/180
+  const wsRun = wsH / Math.tan(Math.max(0.1, wsRad))
+  const aTx   = hx + wsRun       // A-pillar top x
+  const aBy   = sill - bH*0.74  // A-pillar base y (DLO bottom front)
 
-  // Key x positions from ratios
-  const hoodEndX  = x(g.hoodRatio)
-  const cabinEndX = x(g.hoodRatio + g.cabinRatio)
-  const rearX     = x(1.0)
+  // Hood shape — rises from front to cowl
+  const hoodY = sill - bH*0.50  // bonnet surface height
+  const cowlY = sill - bH*0.72  // cowl/scuttle (where bonnet meets screen)
 
-  // Windscreen geometry
-  const wsRad     = (90 - g.wsAngleDeg) * Math.PI / 180
-  const wsHeight  = bodyH * g.cabinH
-  const wsRun     = wsHeight / Math.tan(wsRad)
-  const aTopX     = hoodEndX + wsRun
-  const aBaseY    = bodySill - bodyH * 0.72
-  const roofY     = bodyRoof
+  // Roofline sag (most cars have slight sag in centre)
+  const roofMidX = (aTx + chx)*0.50
+  const sag = g.bodyType==='suv' ? bH*0.01 : g.bodyType==='estate' ? 0 : bH*0.015
 
-  // Roofline mid-point sag
-  const roofMidX  = (aTopX + cabinEndX) * 0.50
-  const sag       = g.rooflineType === 'flat' ? 0 : bodyH * 0.025
-
-  // Rear shape per body type
-  let rearPath
+  // Rear path — precise per body type
+  let rearSVG = ''
   const bt = g.bodyType
-  if (bt === 'fastback' || bt === 'coupe') {
-    rearPath = [
-      `Q ${x(g.hoodRatio + g.cabinRatio * 0.88)} ${roofY + bodyH*0.06} ${cabinEndX + 14} ${roofY + bodyH*0.18}`,
-      `Q ${x(g.hoodRatio + g.cabinRatio * 1.06)} ${bodySill - bodyH*0.40} ${rearX} ${bodySill - bodyH*0.20}`,
+  if(bt==='fastback'||bt==='coupe') {
+    // Continuous flowing slope — C-pillar merges into boot
+    const cSlope1X = x(g.hoodRatio+g.cabinRatio*0.82)
+    const cSlope2X = x(g.hoodRatio+g.cabinRatio*1.05)
+    rearSVG = [
+      `Q ${cSlope1X} ${roofY+sag} ${chx+8} ${roofY+bH*0.10}`,
+      `C ${cSlope2X} ${sill-bH*0.38} ${rX-10} ${sill-bH*0.28} ${rX} ${sill-bH*0.18}`,
     ].join(' ')
-  } else if (bt === 'notchback') {
-    rearPath = [
-      `L ${cabinEndX} ${roofY + sag}`,
-      `L ${cabinEndX + bodyLen*0.04} ${roofY + sag}`,
-      `Q ${rearX - 6} ${roofY + sag + 6} ${rearX} ${bodySill - bodyH*0.22}`,
+  } else if(bt==='notchback') {
+    // Three-box: roof stays high, vertical drop to boot, horizontal boot lid, steep rear
+    const bootTopY = roofY+sag
+    const deckY    = sill-bH*0.56
+    rearSVG = [
+      `L ${chx} ${bootTopY}`,                               // C-pillar top stays high
+      `L ${x(g.hoodRatio+g.cabinRatio+0.02)} ${bootTopY}`,  // boot lid start
+      `Q ${rX-14} ${bootTopY+4} ${rX} ${deckY}`,            // boot lid to rear
+      `L ${rX} ${sill-bH*0.18}`,                            // rear face
     ].join(' ')
-  } else if (bt === 'estate') {
-    rearPath = [
-      `L ${cabinEndX} ${roofY + sag}`,
-      `Q ${rearX - 4} ${roofY + sag + 3} ${rearX} ${bodySill - bodyH*0.20}`,
+  } else if(bt==='estate') {
+    // Long flat roof all the way to near-vertical rear
+    rearSVG = [
+      `L ${chx} ${roofY+sag}`,
+      `Q ${rX-5} ${roofY+sag+3} ${rX} ${sill-bH*0.18}`,
     ].join(' ')
-  } else if (bt === 'suv') {
-    rearPath = [
-      `L ${cabinEndX} ${roofY + sag}`,
-      `Q ${rearX - 8} ${roofY + sag + 8} ${rearX} ${bodySill - bodyH*0.18}`,
+  } else if(bt==='suv') {
+    // D-segment SUV: high C-pillar, slight slope to vertical rear
+    rearSVG = [
+      `L ${chx} ${roofY+sag}`,
+      `Q ${rX-10} ${roofY+sag+8} ${rX} ${sill-bH*0.20}`,
     ].join(' ')
-  } else if (bt === 'pickup') {
-    const bedTopY = bodySill - bodyH * 0.55
-    rearPath = [
-      `L ${cabinEndX} ${roofY + sag}`,
-      `L ${cabinEndX} ${bedTopY}`,
-      `L ${rearX - 6} ${bedTopY}`,
-      `Q ${rearX} ${bedTopY} ${rearX} ${bodySill - bodyH*0.16}`,
+  } else if(bt==='pickup') {
+    const bedTopY = sill-bH*0.52
+    rearSVG = [
+      `L ${chx} ${roofY+sag}`,       // cab rear top
+      `L ${chx} ${bedTopY}`,          // cab rear vertical
+      `L ${rX-5} ${bedTopY}`,         // bed rail
+      `Q ${rX} ${bedTopY} ${rX} ${sill-bH*0.14}`,
     ].join(' ')
   } else {
-    // hatchback
-    rearPath = [
-      `Q ${cabinEndX + 12} ${roofY + bodyH*0.12} ${rearX - 16} ${bodySill - bodyH*0.38}`,
-      `Q ${rearX} ${bodySill - bodyH*0.32} ${rearX} ${bodySill - bodyH*0.16}`,
+    // hatchback — steep rear glass
+    rearSVG = [
+      `Q ${chx+14} ${roofY+bH*0.10} ${rX-18} ${sill-bH*0.40}`,
+      `Q ${rX} ${sill-bH*0.32} ${rX} ${sill-bH*0.16}`,
     ].join(' ')
   }
 
-  const hoodY   = bodySill - bodyH * 0.52
-  const frontDipY = bodySill - bodyH * 0.30
-
   const bodyPath = [
-    `M ${x(0.025)} ${groundY - 1}`,
-    `Q ${PAD} ${bodySill + 2} ${PAD} ${frontDipY}`,
-    `L ${PAD} ${bodySill - bodyH * 0.46}`,
-    `Q ${x(0.05)} ${hoodY} ${hoodEndX - bodyLen*0.018} ${hoodY}`,
-    `Q ${hoodEndX} ${hoodY + bodyH*0.02} ${hoodEndX} ${aBaseY}`,
-    `L ${aTopX} ${roofY}`,
-    `Q ${roofMidX} ${roofY - 1} ${cabinEndX} ${roofY + sag}`,
-    rearPath,
-    `L ${rearX} ${bodySill}`,
-    `Q ${rearX - 3} ${bodySill + 2} ${rearX - bodyLen*0.055} ${groundY - 1}`,
-    `L ${x(0.025)} ${groundY - 1}`,
+    `M ${x(0.03)} ${gY-1}`,
+    // Front bumper — curves up to lower fascia
+    `C ${PAD+2} ${sill+4} ${PAD} ${sill-bH*0.18} ${PAD} ${sill-bH*0.32}`,
+    // Fascia up to bonnet line
+    `L ${PAD} ${sill-bH*0.47}`,
+    // Bonnet leading edge / power bulge
+    `Q ${x(0.04)} ${hoodY-bH*0.03} ${x(0.10)} ${hoodY}`,
+    // Bonnet surface to cowl
+    `Q ${x(0.22)} ${hoodY} ${hx} ${cowlY}`,
+    // A-pillar / windscreen (straight ruled line at wsAngleDeg)
+    `L ${aTx} ${roofY}`,
+    // Roofline
+    `Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,
+    // Rear section (body-type specific)
+    rearSVG,
+    // Underbody flat / rear bumper
+    `L ${rX} ${sill}`,
+    `Q ${rX-3} ${sill+2} ${rX-bLen*0.055} ${gY-1}`,
+    `L ${x(0.03)} ${gY-1}`,
     'Z',
   ].join(' ')
 
-  const dloPath = [
-    `M ${hoodEndX + 4} ${aBaseY + 2}`,
-    `L ${aTopX + 3} ${roofY + 4}`,
-    `Q ${roofMidX} ${roofY + 4} ${cabinEndX - 4} ${roofY + sag + 4}`,
-    bt === 'fastback' || bt === 'coupe'
-      ? `Q ${cabinEndX + 14} ${roofY + bodyH*0.18} ${cabinEndX + 24} ${aBaseY + bodyH*0.12}`
-      : bt === 'hatchback'
-        ? `Q ${cabinEndX + 6} ${roofY + bodyH*0.14} ${cabinEndX + 10} ${aBaseY + 4}`
-        : `L ${cabinEndX - 4} ${aBaseY + 4}`,
-    `L ${hoodEndX + 4} ${aBaseY + 2}`,
-    'Z',
-  ].join(' ')
+  // DLO (Day Light Opening) — the glass area
+  const dloPath = (() => {
+    const dloFrontY = aBy
+    const dloRoofL  = roofY+3
+    const dloRoofR  = roofY+sag+3
+    let rear = ''
+    if(bt==='fastback'||bt==='coupe') {
+      rear = `Q ${chx+8} ${roofY+bH*0.14} ${chx+26} ${dloFrontY+bH*0.10}`
+    } else if(bt==='notchback') {
+      rear = `L ${chx-4} ${dloFrontY+2}`  // vertical C-pillar in notchback
+    } else if(bt==='hatchback') {
+      rear = `Q ${chx+10} ${roofY+bH*0.12} ${chx+16} ${dloFrontY+4}`
+    } else {
+      rear = `L ${chx-4} ${dloFrontY+2}`
+    }
+    return [
+      `M ${hx+5} ${dloFrontY}`,
+      `L ${aTx+3} ${dloRoofL}`,
+      `Q ${roofMidX} ${dloRoofL} ${chx-4} ${dloRoofR}`,
+      rear,
+      `L ${hx+5} ${dloFrontY}`,
+      'Z',
+    ].join(' ')
+  })()
 
-  const wR  = bodyH * (bt === 'suv' || bt === 'pickup' ? 0.195 : 0.170)
+  const wR  = bH*(bt==='suv'||bt==='pickup'?0.210:0.178)
   const w1x = x(g.w1), w2x = x(g.w2)
-  const wY  = groundY - wR
+  const wY  = gY - wR
 
-  const N = 18
-  const cpBands = Array.from({length: N}, (_,i) => {
-    const tM = (i + 0.5) / N
-    const cp = cpAtPoint(tM, 0.65, tM < 0.15, g.Cd)
-    return { x0: x(i/N), x1: x((i+1)/N)+1, color: cpToRgb(cp) }
+  // Cp colour bands
+  const N=20
+  const cpBands = Array.from({length:N},(_,i)=>{
+    const tM=(i+0.5)/N
+    return {x0:x(i/N),x1:x((i+1)/N)+1,color:cpToRgb(cpAtPoint(tM,0.65,tM<0.15,g.Cd))}
   })
+
+  // Iso-pressure contour lines (5 Cp levels)
+  const isoLevels = [-1.0,-0.5,0.0,0.35,0.70]
+
+  // Airflow separation markers
+  const sepX = bt==='fastback' ? x(g.hoodRatio+g.cabinRatio*0.88) : x(g.hoodRatio+g.cabinRatio)
+  const sepY = bt==='fastback' ? roofY+bH*0.08 : roofY+sag
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <defs>
         <clipPath id="sc"><path d={bodyPath}/></clipPath>
-        <linearGradient id="edgeG" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="rgba(255,255,255,0.18)"/>
-          <stop offset="35%"  stopColor="rgba(255,255,255,0.04)"/>
-          <stop offset="100%" stopColor="rgba(0,0,0,0.26)"/>
+        <linearGradient id="edgeHi" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor="rgba(255,255,255,0.16)"/>
+          <stop offset="40%"  stopColor="rgba(255,255,255,0.03)"/>
+          <stop offset="100%" stopColor="rgba(0,0,0,0.24)"/>
         </linearGradient>
         <linearGradient id="cpBar" x1="0" y1="1" x2="0" y2="0">
           <stop offset="0%"   stopColor="#2147d9"/>
@@ -431,193 +397,381 @@ function SideView({ g, pressureMode }) {
           <stop offset="75%"  stopColor="#fbbf24"/>
           <stop offset="100%" stopColor="#ef4444"/>
         </linearGradient>
+        <filter id="sep"><feGaussianBlur stdDeviation="1.2"/></filter>
       </defs>
 
-      <ellipse cx={W/2} cy={groundY+6} rx={bodyLen*0.44} ry={8} fill="rgba(0,0,0,0.45)"/>
-      <line x1={6} y1={groundY} x2={W-6} y2={groundY} stroke="#1A2530" strokeWidth="1.5"/>
+      {/* Ground shadow */}
+      <ellipse cx={W/2} cy={gY+6} rx={bLen*0.43} ry={8} fill="rgba(0,0,0,0.45)"/>
+      <line x1={6} y1={gY} x2={W-6} y2={gY} stroke="#182430" strokeWidth="1.5"/>
 
-      {pressureMode && (
-        <g clipPath="url(#sc)">
-          {cpBands.map((b,i) => (
-            <rect key={i} x={b.x0} y={bodyRoof-20} width={b.x1-b.x0} height={bodyH+rideHpx+30} fill={b.color}/>
+      {/* Cp bands clipped to body */}
+      {cpOn && <g clipPath="url(#sc)">
+        {cpBands.map((b,i)=>(
+          <rect key={i} x={b.x0} y={roofY-20} width={b.x1-b.x0} height={bH+rideH+30} fill={b.color}/>
+        ))}
+      </g>}
+
+      {/* Iso-pressure contour lines */}
+      {cpOn && showIso && isoLevels.map((cpLev,li)=>{
+        const tTgt = (cpLev+1.5)/2.5
+        // Approximate x position where this Cp level crosses the roofline
+        // by finding where stagnation+roof Cp = cpLev
+        const pts = []
+        for(let i=0;i<=100;i++) {
+          const t=i/100, cp=cpAtPoint(t,0.65,t<0.15,g.Cd)
+          if(Math.abs(cp-cpLev)<0.08) pts.push({x:x(t),y:roofY+bH*(1-0.65)*0.3})
+        }
+        if(!pts.length) return null
+        return pts.map((p,pi) => (
+          <circle key={`${li}-${pi}`} cx={p.x} cy={p.y} r={1.2}
+            fill={cpToRgb(cpLev)} opacity={0.7}/>
+        ))
+      })}
+
+      {/* Body */}
+      <path d={bodyPath}
+        fill={cpOn ? 'rgba(5,10,18,0.24)' : '#192838'}
+        stroke="#82CFFF" strokeWidth={cpOn?0.75:1.1}/>
+      <path d={bodyPath} fill="url(#edgeHi)"/>
+
+      {/* DLO */}
+      <path d={dloPath} fill={cpOn?'rgba(130,207,255,0.18)':'rgba(130,207,255,0.12)'}
+        stroke="rgba(130,207,255,0.72)" strokeWidth="0.85"/>
+      <path d={dloPath} fill="rgba(0,14,30,0.40)"/>
+
+      {/* B-pillar (solid) */}
+      {bt!=='pickup' && bt!=='fastback' && bt!=='coupe' && (
+        <line
+          x1={x(g.hoodRatio+g.cabinRatio*0.46)} y1={aBy}
+          x2={x(g.hoodRatio+g.cabinRatio*0.46)} y2={sill}
+          stroke="rgba(0,0,0,0.6)" strokeWidth="3.5"/>
+      )}
+
+      {/* Door shut lines */}
+      {bt!=='pickup' && (
+        <line
+          x1={x(g.hoodRatio+g.cabinRatio*0.46)} y1={aBy+1}
+          x2={x(g.hoodRatio+g.cabinRatio*0.46)} y2={sill-1}
+          stroke="rgba(130,207,255,0.20)" strokeWidth="0.8"/>
+      )}
+
+      {/* Wing mirror */}
+      <path d={`M ${hx+9} ${aBy-2} L ${hx+28} ${aBy-9} L ${hx+28} ${aBy+3} Z`}
+        fill="#0A1620" stroke="rgba(130,207,255,0.3)" strokeWidth="0.7"/>
+
+      {/* Headlight DRL strip */}
+      <rect x={PAD+2} y={sill-bH*0.44} width={5} height={bH*0.065} rx="1.5"
+        fill="rgba(255,255,200,0.90)"/>
+      {/* Headlight housing */}
+      <path d={`M ${PAD+2} ${sill-bH*0.46} Q ${x(0.08)} ${sill-bH*0.48} ${x(0.12)} ${sill-bH*0.42} L ${PAD+2} ${sill-bH*0.38} Z`}
+        fill="rgba(255,255,200,0.08)" stroke="rgba(130,207,255,0.4)" strokeWidth="0.6"/>
+
+      {/* Tail lamp */}
+      <rect x={rX-4} y={sill-bH*(bt==='fastback'||bt==='coupe'?0.30:0.22)}
+        width={5} height={bH*0.14} rx="1.5" fill="rgba(220,50,50,0.90)"/>
+
+      {/* Airflow separation marker */}
+      {showSep && (
+        <g>
+          <circle cx={sepX} cy={sepY} r={5} fill="rgba(251,191,36,0.25)" filter="url(#sep)"/>
+          <circle cx={sepX} cy={sepY} r={2.5} fill="#fbbf24" opacity={0.8}/>
+          {[0,40,80,120,160,200,240,280,320].map(a => {
+            const r2=a*Math.PI/180, len=a<90||a>270?10:6
+            return <line key={a}
+              x1={sepX+Math.cos(r2)*2.5} y1={sepY+Math.sin(r2)*2.5}
+              x2={sepX+Math.cos(r2)*(2.5+len)} y2={sepY+Math.sin(r2)*(2.5+len)}
+              stroke="#fbbf24" strokeWidth="0.7" opacity={0.55}/>
+          })}
+          <text x={sepX+8} y={sepY-6} fill="#fbbf24" fontSize="7" fontFamily="monospace">SEP</text>
+        </g>
+      )}
+
+      {/* Flow arrows */}
+      {cpOn && [0.28,0.52,0.76].map((fh,i)=>{
+        const ay=sill-bH*fh
+        return <g key={i} transform={`translate(${PAD-24},${ay})`}>
+          <line x1={0} y1={0} x2={14} y2={0} stroke="#82CFFF" strokeWidth="1.1" opacity={0.65}/>
+          <polygon points="16,0 10,-3.5 10,3.5" fill="#82CFFF" opacity={0.65}/>
+        </g>
+      })}
+
+      {/* Wake turbulence indicator */}
+      {cpOn && (
+        <g opacity={0.45}>
+          {[0.15,0.30,0.45].map((d,i)=>(
+            <ellipse key={i}
+              cx={rX+10+d*30} cy={sill-bH*0.28}
+              rx={4+d*12} ry={3+d*8}
+              fill="none" stroke="#2147d9" strokeWidth="0.8" strokeDasharray="3,3"/>
           ))}
         </g>
       )}
 
-      <path d={bodyPath}
-        fill={pressureMode ? 'rgba(6,12,20,0.22)' : '#1A2C3A'}
-        stroke="#82CFFF" strokeWidth={pressureMode ? 0.75 : 1.1}/>
-      <path d={bodyPath} fill="url(#edgeG)"/>
-
-      <path d={dloPath} fill={pressureMode ? 'rgba(130,207,255,0.20)' : 'rgba(130,207,255,0.13)'}
-        stroke="rgba(130,207,255,0.72)" strokeWidth="0.85"/>
-      <path d={dloPath} fill="rgba(0,16,32,0.40)"/>
-
-      {/* DRL */}
-      <rect x={PAD+1} y={bodySill-bodyH*0.44} width={4} height={bodyH*0.065} rx="1" fill="rgba(255,255,200,0.88)"/>
-      {/* Tail lamp */}
-      <rect x={rearX-3} y={bodySill-bodyH*(bt==='fastback'||bt==='coupe'?0.30:0.20)}
-        width={4} height={bodyH*0.13} rx="1" fill="rgba(220,50,50,0.90)"/>
-
-      {/* Door shut line */}
-      {bt !== 'pickup' && (
-        <line x1={x(g.hoodRatio + g.cabinRatio*0.44)} y1={aBaseY + 2}
-              x2={x(g.hoodRatio + g.cabinRatio*0.44)} y2={bodySill - 1}
-          stroke="rgba(130,207,255,0.22)" strokeWidth="0.7"/>
-      )}
-      {/* Wing mirror */}
-      <path d={`M ${hoodEndX+8} ${aBaseY-1} L ${hoodEndX+24} ${aBaseY-7} L ${hoodEndX+24} ${aBaseY+3} Z`}
-        fill="#0C1820" stroke="rgba(130,207,255,0.28)" strokeWidth="0.7"/>
-
       {/* Wheels */}
-      {[[w1x,wY],[w2x,wY]].map(([cx,cy],i) => (
+      {[[w1x,wY],[w2x,wY]].map(([cx,cy],i)=>(
         <g key={i}>
-          <circle cx={cx} cy={cy} r={wR+4} fill="rgba(0,0,0,0.35)"/>
-          <circle cx={cx} cy={cy} r={wR} fill="#080E14" stroke="#324252" strokeWidth="2.4"/>
-          <circle cx={cx} cy={cy} r={wR*0.72} fill="#0F1C24" stroke="#263442" strokeWidth="1.4"/>
-          {[0,36,72,108,144,180,216,252,288,324].map(a => {
-            const r2 = a*Math.PI/180
-            return <line key={a}
-              x1={cx+Math.cos(r2)*wR*0.30} y1={cy+Math.sin(r2)*wR*0.30}
-              x2={cx+Math.cos(r2)*wR*0.68} y2={cy+Math.sin(r2)*wR*0.68}
-              stroke="#263442" strokeWidth="1.5"/>
+          <circle cx={cx} cy={cy} r={wR+3} fill="rgba(0,0,0,0.38)"/>
+          <circle cx={cx} cy={cy} r={wR} fill="#060C14" stroke="#2E3E50" strokeWidth="2.6"/>
+          <circle cx={cx} cy={cy} r={wR*0.74} fill="#0C1C28" stroke="#223040" strokeWidth="1.5"/>
+          {/* 5-spoke rim */}
+          {[0,72,144,216,288].map(a=>{
+            const r2=a*Math.PI/180
+            return <path key={a}
+              d={`M ${cx+Math.cos(r2)*wR*0.25} ${cy+Math.sin(r2)*wR*0.25}
+                  L ${cx+Math.cos(r2+0.22)*wR*0.70} ${cy+Math.sin(r2+0.22)*wR*0.70}
+                  Q ${cx+Math.cos(r2)*wR*0.73} ${cy+Math.sin(r2)*wR*0.73}
+                    ${cx+Math.cos(r2-0.22)*wR*0.70} ${cy+Math.sin(r2-0.22)*wR*0.70}
+                  Z`}
+              fill="#1A2E3E" stroke="#263C50" strokeWidth="0.8"/>
           })}
-          <circle cx={cx} cy={cy} r={wR*0.13} fill="#324252"/>
+          <circle cx={cx} cy={cy} r={wR*0.15} fill="#2E3E50"/>
+          {/* Brake disc hint */}
+          <circle cx={cx} cy={cy} r={wR*0.42} fill="none" stroke="#1A2A38" strokeWidth="0.6" strokeDasharray="4,4"/>
         </g>
       ))}
-      {[[w1x,wY],[w2x,wY]].map(([cx,cy],i) => (
-        <circle key={i} cx={cx} cy={cy} r={wR+3}
-          fill="none" stroke="#080E14" strokeWidth="5.5"/>
+      {[[w1x,wY],[w2x,wY]].map(([cx,cy],i)=>(
+        <circle key={i} cx={cx} cy={cy} r={wR+3} fill="none" stroke="#060C14" strokeWidth="5.5"/>
       ))}
 
-      {pressureMode && [0.28,0.52,0.76].map((fh,i) => {
-        const ay = bodySill - bodyH*fh
-        return (
-          <g key={i} transform={`translate(${PAD-22},${ay})`}>
-            <line x1={0} y1={0} x2={14} y2={0} stroke="#82CFFF" strokeWidth="1.1" opacity={0.65}/>
-            <polygon points="16,0 10,-3.5 10,3.5" fill="#82CFFF" opacity={0.65}/>
-          </g>
-        )
-      })}
-
-      {pressureMode && (
-        <>
-          <rect x={W-15} y={H*0.14} width={9} height={H*0.62} rx="2" fill="url(#cpBar)"/>
-          <text x={W-21} y={H*0.14+5} textAnchor="end" fill="#5A7A8A" fontSize="7" fontFamily="monospace">+1.0</text>
-          <text x={W-21} y={H*0.76+5} textAnchor="end" fill="#5A7A8A" fontSize="7" fontFamily="monospace">−1.5</text>
-        </>
+      {/* Ground clearance dimension line */}
+      {rideH > bH*0.08 && (
+        <g opacity={0.4}>
+          <line x1={w1x-wR-6} y1={sill} x2={w1x-wR-6} y2={gY} stroke="#82CFFF" strokeWidth="0.6"/>
+          <line x1={w1x-wR-10} y1={sill} x2={w1x-wR-2} y2={sill} stroke="#82CFFF" strokeWidth="0.6"/>
+          <line x1={w1x-wR-10} y1={gY}   x2={w1x-wR-2} y2={gY}   stroke="#82CFFF" strokeWidth="0.6"/>
+          <text x={w1x-wR-14} y={(sill+gY)/2+3} textAnchor="middle" fill="#82CFFF"
+            fontSize="6" fontFamily="monospace" transform={`rotate(-90,${w1x-wR-14},${(sill+gY)/2})`}>
+            RH
+          </text>
+        </g>
       )}
 
+      {/* Cp bar */}
+      {cpOn && <>
+        <rect x={W-16} y={H*0.13} width={10} height={H*0.62} rx="2" fill="url(#cpBar)"/>
+        <text x={W-22} y={H*0.13+5}  textAnchor="end" fill="#6A8A9A" fontSize="7" fontFamily="monospace">+1.0</text>
+        <text x={W-22} y={H*0.75+5}  textAnchor="end" fill="#6A8A9A" fontSize="7" fontFamily="monospace">−1.5</text>
+      </>}
+
       <text x={W/2} y={H-3} textAnchor="middle"
-        fill="#2A3E4E" fontSize="9" fontFamily="monospace" letterSpacing="0.13em">
-        SIDE PROFILE · {g.bodyType.toUpperCase()} · Cd {g.Cd.toFixed(3)}
+        fill="#28404E" fontSize="9" fontFamily="monospace" letterSpacing="0.13em">
+        SIDE PROFILE · {g.bodyType.toUpperCase()} · Cd {g.Cd.toFixed(3)} · WS {g.wsAngleDeg.toFixed(0)}°
       </text>
     </svg>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FRONT VIEW
+// FRONT VIEW — correct automotive geometry
+// Body is WIDEST at shoulder/beltline, tapers NARROWER to roof crown
 // ─────────────────────────────────────────────────────────────────────────────
 
-function FrontView({ g }) {
-  const W=300, H=220, cx=W/2, groundY=H-14
-  const isTall = g.bodyType==='suv' || g.bodyType==='pickup' || g.bodyType==='van'
-  const bh = isTall ? 106 : g.bodyType==='fastback'||g.bodyType==='coupe' ? 86 : 94
-  const bw = isTall ? 104 : 90
-  const rideHpx = bh * g.rideH * 1.4
-  const bodyBot = groundY - rideHpx, bodyTop = bodyBot - bh
-  const roofW = bw * (g.bodyType==='fastback'||g.bodyType==='coupe' ? 0.37 : isTall ? 0.45 : 0.40)
-  const shdW  = bw * 0.50
+function FrontView({ g, cpOn }) {
+  const W=320, H=230, cx=W/2, gY=H-14
+  const isTall = g.bodyType==='suv'||g.bodyType==='pickup'||g.bodyType==='van'
+  const isFast = g.bodyType==='fastback'||g.bodyType==='coupe'
 
-  const frontPath = [
-    `M ${cx} ${bodyTop}`,
-    `Q ${cx-roofW*0.55} ${bodyTop} ${cx-roofW} ${bodyTop+bh*0.08}`,
-    `Q ${cx-shdW*0.94} ${bodyTop+bh*0.50} ${cx-shdW} ${bodyBot-bh*0.09}`,
-    `Q ${cx-bw*0.50} ${bodyBot-3} ${cx-bw*0.42} ${bodyBot}`,
-    `L ${cx+bw*0.42} ${bodyBot}`,
-    `Q ${cx+bw*0.50} ${bodyBot-3} ${cx+shdW} ${bodyBot-bh*0.09}`,
-    `Q ${cx+shdW*0.94} ${bodyTop+bh*0.50} ${cx+roofW} ${bodyTop+bh*0.08}`,
-    `Q ${cx+roofW*0.55} ${bodyTop} ${cx} ${bodyTop}`,
-    'Z',
-  ].join(' ')
+  // Body dimensions — proportional to real vehicles
+  const bh   = isTall ? 112 : isFast ? 84 : 96   // total body height px
+  const bw   = isTall ? 110 : isFast ? 94 : 98   // half-width at widest = bw*0.5
+  const rideHpx = bh*(g.rideH>0.12?0.18:0.08)
+  const bodyBot = gY - rideHpx
+  const bodyTop = bodyBot - bh
 
-  const wsBot = bodyBot - bh*0.36
+  // Key heights as fractions of bh
+  const roofFrac  = 0.00   // roof crown y offset from bodyTop
+  const shoulderFrac = 0.55  // beltline / widest point
+  const sillFrac  = 0.92   // sill
+
+  // Key widths (half-widths from centreline, in px)
+  const roofHW    = bw * (isFast ? 0.34 : isTall ? 0.42 : 0.38)   // roof crown half-width
+  const shoulderHW = bw * 0.50                                       // widest (beltline)
+  const sillHW    = bw * 0.46                                        // sill (narrower than shoulder)
+
+  // Heights in px
+  const roofY     = bodyTop + bh*roofFrac
+  const shoulderY = bodyTop + bh*shoulderFrac
+  const sillY     = bodyTop + bh*sillFrac
+
+  // Body outline — smooth Bezier through roof → shoulder → sill
+  // This gives the correct wide-shoulder-narrow-roof shape
+  const bodyL = [
+    `M ${cx} ${roofY}`,
+    `C ${cx-roofHW*0.6} ${roofY} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,
+    `C ${cx-shoulderHW} ${shoulderY+bh*0.12} ${cx-sillHW} ${sillY} ${cx-sillHW*0.80} ${bodyBot}`,
+  ]
+  const bodyR = [
+    `L ${cx+sillHW*0.80} ${bodyBot}`,
+    `C ${cx+sillHW} ${sillY} ${cx+shoulderHW} ${shoulderY+bh*0.12} ${cx+shoulderHW} ${shoulderY}`,
+    `C ${cx+shoulderHW} ${shoulderY-bh*0.22} ${cx+roofHW*0.6} ${roofY} ${cx} ${roofY}`,
+  ]
+  const frontPath = [...bodyL, ...bodyR, 'Z'].join(' ')
+
+  // Windscreen — spans between A-pillars at the correct height
+  // A-pillar base sits at ~55% of body height, top at ~8%
+  const aPillarBaseY  = bodyTop + bh*0.55
+  const aPillarTopY   = bodyTop + bh*0.08
+  const wsInset = 4   // px inset from A-pillar position
+  // A-pillar x at base height (interpolated from body curve)
+  // At shoulderY the body is shoulderHW; at aPillarBaseY (55%) interpolate
+  const tBase = 0.55 / shoulderFrac
+  const aPillarBaseHW = shoulderHW * 0.88 - wsInset
+  // At top
+  const aPillarTopHW  = roofHW * 0.90 + wsInset
+
   const wscPath = [
-    `M ${cx} ${bodyTop+bh*0.03}`,
-    `Q ${cx-roofW*0.7} ${bodyTop+bh*0.04} ${cx-roofW*0.92} ${bodyTop+bh*0.14}`,
-    `L ${cx-roofW*0.95} ${wsBot}`,
-    `L ${cx+roofW*0.95} ${wsBot}`,
-    `L ${cx+roofW*0.92} ${bodyTop+bh*0.14}`,
-    `Q ${cx+roofW*0.7} ${bodyTop+bh*0.04} ${cx} ${bodyTop+bh*0.03}`,
+    `M ${cx-aPillarTopHW} ${aPillarTopY}`,
+    `Q ${cx-aPillarTopHW*0.96} ${aPillarTopY-2} ${cx} ${aPillarTopY}`,
+    `Q ${cx+aPillarTopHW*0.96} ${aPillarTopY-2} ${cx+aPillarTopHW} ${aPillarTopY}`,
+    `L ${cx+aPillarBaseHW} ${aPillarBaseY}`,
+    `L ${cx-aPillarBaseHW} ${aPillarBaseY}`,
     'Z',
   ].join(' ')
 
-  const wR  = 15 + (isTall ? 3 : 0)
-  const wY  = groundY - wR
+  // Headlights — at upper fascia, between A-pillar and centreline
+  const hlY   = bodyTop + bh*0.27
+  const hlHW  = shoulderHW * 0.72   // headlight outer edge
+  const hlIW  = shoulderHW * 0.30   // headlight inner edge
 
-  const cpBands = Array.from({length:9},(_,i) => {
-    const f = i/8
-    const dist = Math.abs(f-0.5)*2
-    const cp = (0.85*(1-dist*dist) - 0.25) * (g.Cd/0.30)
-    return { xL: cx - bw*(0.50-i*0.11), color: cpToRgb(cp) }
+  // Wheel positions
+  const wR  = 16 + (isTall ? 4 : 0)
+  const w1x = cx - shoulderHW * 1.05
+  const w2x = cx + shoulderHW * 1.05
+  const wY  = gY - wR
+
+  // Cp bands (left→right stagnation in centre)
+  const cpBands = Array.from({length:11},(_,i)=>{
+    const f = i/10, d=Math.abs(f-0.5)*2
+    const cp = (0.85*(1-d*d)-0.25)*(g.Cd/0.30)
+    return {xL: cx-shoulderHW*(1-i*0.18), color:cpToRgb(cp)}
   })
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <defs>
         <clipPath id="fclip"><path d={frontPath}/></clipPath>
-        <radialGradient id="fgrd" cx="50%" cy="38%">
-          <stop offset="0%"   stopColor="#1C3040"/>
-          <stop offset="100%" stopColor="#080E14"/>
+        <radialGradient id="fgrd" cx="50%" cy="35%">
+          <stop offset="0%"   stopColor="#1A3040"/>
+          <stop offset="100%" stopColor="#060C14"/>
         </radialGradient>
       </defs>
-      <ellipse cx={cx} cy={groundY+5} rx={bw*0.65} ry={7} fill="rgba(0,0,0,0.42)"/>
-      <line x1={12} y1={groundY} x2={W-12} y2={groundY} stroke="#1A2530" strokeWidth="1.5"/>
-      <g clipPath="url(#fclip)">
-        {cpBands.map((b,i) => (
-          <rect key={i} x={b.xL} y={bodyTop-4} width={bw*0.11+1} height={bh+8} fill={b.color} opacity={0.82}/>
+
+      {/* Shadow */}
+      <ellipse cx={cx} cy={gY+5} rx={shoulderHW*1.2} ry={7} fill="rgba(0,0,0,0.42)"/>
+      <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="#182430" strokeWidth="1.5"/>
+
+      {/* Cp bands */}
+      {cpOn && <g clipPath="url(#fclip)">
+        {cpBands.map((b,i)=>(
+          <rect key={i} x={b.xL} y={bodyTop-4} width={(shoulderHW*2)/10+2} height={bh+8} fill={b.color} opacity={0.85}/>
         ))}
-      </g>
-      <path d={frontPath} fill="rgba(6,12,20,0.28)" stroke="#82CFFF" strokeWidth="0.95"/>
-      <path d={wscPath} fill="rgba(130,207,255,0.11)" stroke="rgba(130,207,255,0.68)" strokeWidth="0.85"/>
-      <path d={wscPath} fill="rgba(0,16,32,0.42)"/>
-      {[-1,1].map(s => (
+      </g>}
+
+      {/* Body */}
+      <path d={frontPath} fill={cpOn?'rgba(5,10,18,0.28)':'#162435'}
+        stroke="#82CFFF" strokeWidth="0.95"/>
+      {/* Shoulder line highlight */}
+      <path d={`M ${cx-shoulderHW} ${shoulderY} L ${cx+shoulderHW} ${shoulderY}`}
+        stroke="rgba(130,207,255,0.25)" strokeWidth="0.7"/>
+
+      {/* Windscreen */}
+      <path d={wscPath} fill="rgba(130,207,255,0.10)" stroke="rgba(130,207,255,0.65)" strokeWidth="0.9"/>
+      <path d={wscPath} fill="rgba(0,14,28,0.45)"/>
+      {/* Screen reflection streak */}
+      <path d={`M ${cx-aPillarTopHW*0.60} ${aPillarTopY+6} L ${cx-aPillarTopHW*0.20} ${aPillarBaseY-12}`}
+        stroke="rgba(255,255,255,0.08)" strokeWidth="6" strokeLinecap="round"/>
+
+      {/* A-pillars */}
+      {[-1,1].map(s=>(
+        <path key={s}
+          d={`M ${cx+s*aPillarTopHW} ${aPillarTopY} L ${cx+s*aPillarBaseHW} ${aPillarBaseY}`}
+          stroke="rgba(0,0,0,0.5)" strokeWidth="4" strokeLinecap="round"/>
+      ))}
+
+      {/* Headlights */}
+      {[-1,1].map(s=>(
         <g key={s}>
-          <ellipse cx={cx+s*roofW*0.76} cy={bodyTop+bh*0.27} rx={roofW*0.23} ry={bh*0.065}
-            fill="rgba(255,255,200,0.09)" stroke="rgba(130,207,255,0.62)" strokeWidth="0.8"/>
-          <ellipse cx={cx+s*roofW*0.76} cy={bodyTop+bh*0.27} rx={roofW*0.11} ry={bh*0.028}
-            fill="rgba(255,255,220,0.92)"/>
-          <line x1={cx+s*roofW*0.54} y1={bodyTop+bh*0.21}
-                x2={cx+s*roofW*0.95} y2={bodyTop+bh*0.21}
-            stroke="rgba(255,255,200,0.65)" strokeWidth="1.2"/>
+          {/* Outer DRL strip */}
+          <path d={`M ${cx+s*hlIW} ${hlY-bh*0.04} Q ${cx+s*(hlIW+hlHW)/2} ${hlY-bh*0.06} ${cx+s*hlHW} ${hlY}`}
+            stroke="rgba(255,255,200,0.75)" strokeWidth="2" fill="none" strokeLinecap="round"/>
+          {/* Main light housing */}
+          <path d={`M ${cx+s*hlIW} ${hlY-bh*0.025} 
+                    Q ${cx+s*(hlIW+hlHW)/2} ${hlY-bh*0.05} ${cx+s*hlHW} ${hlY}
+                    L ${cx+s*hlHW} ${hlY+bh*0.058}
+                    Q ${cx+s*(hlIW+hlHW)/2} ${hlY+bh*0.07} ${cx+s*hlIW} ${hlY+bh*0.055}
+                    Z`}
+            fill="rgba(255,255,200,0.07)" stroke="rgba(130,207,255,0.55)" strokeWidth="0.8"/>
+          {/* LED projector */}
+          <circle cx={cx+s*(hlIW+hlHW)*0.58} cy={hlY+bh*0.028} r={bh*0.022}
+            fill="rgba(255,255,220,0.85)"/>
         </g>
       ))}
-      <rect x={cx-roofW*0.56} y={bodyBot-bh*0.34} width={roofW*1.12} height={bh*0.22}
-        rx="4" fill="rgba(0,0,0,0.65)" stroke="#263442" strokeWidth="0.9"/>
-      {[0,1,2,3].map(i=>(
+
+      {/* Front fascia — three zones: upper grille, lower air dam, splitter */}
+      {/* Upper grille */}
+      <path d={`M ${cx-shoulderHW*0.48} ${bodyTop+bh*0.50}
+                L ${cx-shoulderHW*0.48} ${bodyTop+bh*0.70}
+                L ${cx+shoulderHW*0.48} ${bodyTop+bh*0.70}
+                L ${cx+shoulderHW*0.48} ${bodyTop+bh*0.50} Z`}
+        fill="rgba(0,0,0,0.65)" stroke="#1E2E3E" strokeWidth="0.9" rx="3"/>
+      {/* Grille bars */}
+      {[0,1,2,3,4].map(i=>(
         <line key={i}
-          x1={cx-roofW*0.53} y1={bodyBot-bh*(0.32-i*0.048)}
-          x2={cx+roofW*0.53} y2={bodyBot-bh*(0.32-i*0.048)}
-          stroke="#1E3040" strokeWidth="0.7"/>
+          x1={cx-shoulderHW*0.46} y1={bodyTop+bh*(0.52+i*0.038)}
+          x2={cx+shoulderHW*0.46} y2={bodyTop+bh*(0.52+i*0.038)}
+          stroke="#182430" strokeWidth="0.7"/>
       ))}
-      <line x1={cx} y1={bodyBot-bh*0.34} x2={cx} y2={bodyBot-bh*0.12} stroke="#1E3040" strokeWidth="0.9"/>
-      {[[cx-bw*0.56,wY],[cx+bw*0.56,wY]].map(([wcx,wcy],i)=>(
+      {/* Central logo bar */}
+      <rect x={cx-shoulderHW*0.12} y={bodyTop+bh*0.56} width={shoulderHW*0.24} height={bh*0.04}
+        rx="2" fill="rgba(130,207,255,0.15)" stroke="#2E4050" strokeWidth="0.6"/>
+      {/* Lower air dam */}
+      <rect x={cx-shoulderHW*0.68} y={bodyTop+bh*0.76} width={shoulderHW*1.36} height={bh*0.10}
+        rx="2" fill="rgba(0,0,0,0.50)" stroke="#1E2E3E" strokeWidth="0.8"/>
+      {/* Fog light recesses */}
+      {[-1,1].map(s=>(
+        <ellipse key={s} cx={cx+s*shoulderHW*0.55} cy={bodyTop+bh*0.81}
+          rx={shoulderHW*0.10} ry={bh*0.035}
+          fill="rgba(255,255,200,0.08)" stroke="#2E4050" strokeWidth="0.7"/>
+      ))}
+      {/* Front splitter */}
+      <rect x={cx-sillHW*0.95} y={bodyBot-bh*0.05} width={sillHW*1.90} height={bh*0.03}
+        rx="1" fill="#0A1820" stroke="#2E4050" strokeWidth="0.7"/>
+
+      {/* Number plate recess */}
+      <rect x={cx-shoulderHW*0.28} y={bodyTop+bh*0.85} width={shoulderHW*0.56} height={bh*0.08}
+        rx="2" fill="rgba(255,255,255,0.06)" stroke="#1E2E3E" strokeWidth="0.7"/>
+
+      {/* Wheels */}
+      {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=>(
         <g key={i}>
-          <circle cx={wcx} cy={wcy} r={wR} fill="#080E14" stroke="#324252" strokeWidth="2.2"/>
-          <circle cx={wcx} cy={wcy} r={wR*0.70} fill="#0F1C24" stroke="#263442" strokeWidth="1.2"/>
-          {[0,60,120,180,240,300].map(a=>{
+          <circle cx={wcx} cy={wcy} r={wR} fill="#060C14" stroke="#2E3E50" strokeWidth="2.5"/>
+          <circle cx={wcx} cy={wcy} r={wR*0.72} fill="#0C1C28" stroke="#1E3040" strokeWidth="1.4"/>
+          {[0,72,144,216,288].map(a=>{
             const r2=a*Math.PI/180
-            return <line key={a}
-              x1={wcx+Math.cos(r2)*wR*0.28} y1={wcy+Math.sin(r2)*wR*0.28}
-              x2={wcx+Math.cos(r2)*wR*0.66} y2={wcy+Math.sin(r2)*wR*0.66}
-              stroke="#263442" strokeWidth="1.4"/>
+            return <path key={a}
+              d={`M ${wcx+Math.cos(r2)*wR*0.24} ${wcy+Math.sin(r2)*wR*0.24}
+                  L ${wcx+Math.cos(r2+0.25)*wR*0.68} ${wcy+Math.sin(r2+0.25)*wR*0.68}
+                  Q ${wcx+Math.cos(r2)*wR*0.72} ${wcy+Math.sin(r2)*wR*0.72}
+                    ${wcx+Math.cos(r2-0.25)*wR*0.68} ${wcy+Math.sin(r2-0.25)*wR*0.68}
+                  Z`}
+              fill="#182838" stroke="#263C50" strokeWidth="0.8"/>
           })}
-          <circle cx={wcx} cy={wcy} r={wR*0.14} fill="#324252"/>
+          <circle cx={wcx} cy={wcy} r={wR*0.15} fill="#2E3E50"/>
         </g>
       ))}
+
+      {/* Front track dimension */}
+      <g opacity={0.35}>
+        <line x1={w1x} y1={gY+4} x2={w2x} y2={gY+4} stroke="#82CFFF" strokeWidth="0.6"/>
+        <line x1={w1x} y1={gY+2} x2={w1x} y2={gY+6} stroke="#82CFFF" strokeWidth="0.6"/>
+        <line x1={w2x} y1={gY+2} x2={w2x} y2={gY+6} stroke="#82CFFF" strokeWidth="0.6"/>
+        <text x={cx} y={gY+10} textAnchor="middle" fill="#82CFFF" fontSize="6" fontFamily="monospace">TRACK</text>
+      </g>
+
       <text x={cx} y={H-3} textAnchor="middle"
-        fill="#2A3E4E" fontSize="9" fontFamily="monospace" letterSpacing="0.12em">FRONT VIEW</text>
+        fill="#28404E" fontSize="9" fontFamily="monospace" letterSpacing="0.12em">
+        FRONT VIEW · {g.bodyType.toUpperCase()}
+      </text>
     </svg>
   )
 }
@@ -626,84 +780,113 @@ function FrontView({ g }) {
 // TOP VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 
-function TopView({ g }) {
-  const W=300, H=220, cx=W/2, cy=H/2+4
-  const isTall = g.bodyType==='suv'||g.bodyType==='pickup'
-  const bw = isTall ? 76 : 68
-  const bl = g.bodyType==='pickup' ? 168 : g.bodyType==='estate' ? 160 : 154
+function TopView({ g, yawAngle }) {
+  const W=320, H=230, cx=W/2, cy=H/2+6
+  const isTall=g.bodyType==='suv'||g.bodyType==='pickup'
+  const bw=isTall?78:70, bl=g.bodyType==='pickup'?172:g.bodyType==='estate'?164:156
 
-  const body = [
+  // Yaw offset for wheels (simulate yaw angle)
+  const yawRad = (yawAngle??0)*Math.PI/180
+  const frontSteerOffset = Math.sin(yawRad)*bw*0.28
+
+  const body=[
     `M ${cx} ${cy-bl/2+5}`,
-    `Q ${cx-bw*0.28} ${cy-bl/2+1} ${cx-bw*0.50} ${cy-bl/2+18}`,
-    `Q ${cx-bw*0.52} ${cy-bl/2+44} ${cx-bw*0.52} ${cy}`,
-    `Q ${cx-bw*0.52} ${cy+bl*0.12} ${cx-bw*0.50} ${cy+bl/2-14}`,
+    `Q ${cx-bw*0.26} ${cy-bl/2+1} ${cx-bw*0.50} ${cy-bl/2+20}`,
+    `Q ${cx-bw*0.52} ${cy-bl/2+50} ${cx-bw*0.52} ${cy}`,
+    `Q ${cx-bw*0.52} ${cy+bl*0.14} ${cx-bw*0.50} ${cy+bl/2-14}`,
     `Q ${cx-bw*0.44} ${cy+bl/2-4} ${cx} ${cy+bl/2-4}`,
     `Q ${cx+bw*0.44} ${cy+bl/2-4} ${cx+bw*0.50} ${cy+bl/2-14}`,
-    `Q ${cx+bw*0.52} ${cy+bl*0.12} ${cx+bw*0.52} ${cy}`,
-    `Q ${cx+bw*0.52} ${cy-bl/2+44} ${cx+bw*0.50} ${cy-bl/2+18}`,
-    `Q ${cx+bw*0.28} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,
+    `Q ${cx+bw*0.52} ${cy+bl*0.14} ${cx+bw*0.52} ${cy}`,
+    `Q ${cx+bw*0.52} ${cy-bl/2+50} ${cx+bw*0.50} ${cy-bl/2+20}`,
+    `Q ${cx+bw*0.26} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,
     'Z',
   ].join(' ')
 
-  const ghFront = cy + bl*(g.hoodRatio - 0.50)
-  const ghRear  = cy + bl*(g.hoodRatio + g.cabinRatio - 0.50)
-  const ghW = bw * (g.bodyType==='fastback'||g.bodyType==='coupe' ? 0.40 : isTall ? 0.44 : 0.41)
+  const ghFront=cy+bl*(g.hoodRatio-0.50)
+  const ghRear =cy+bl*(g.hoodRatio+g.cabinRatio-0.50)
+  const ghW=bw*(g.bodyType==='fastback'||g.bodyType==='coupe'?0.40:isTall?0.44:0.42)
 
-  const ghPath = [
-    `M ${cx} ${ghFront-3}`,
-    `Q ${cx-ghW*0.50} ${ghFront+2} ${cx-ghW*0.52} ${ghFront+15}`,
-    `L ${cx-ghW*0.52} ${ghRear-10}`,
-    `Q ${cx-ghW*0.45} ${ghRear} ${cx} ${ghRear}`,
-    `Q ${cx+ghW*0.45} ${ghRear} ${cx+ghW*0.52} ${ghRear-10}`,
-    `L ${cx+ghW*0.52} ${ghFront+15}`,
-    `Q ${cx+ghW*0.50} ${ghFront+2} ${cx} ${ghFront-3}`,
+  const ghPath=[
+    `M ${cx} ${ghFront-4}`,
+    `Q ${cx-ghW*0.52} ${ghFront+2} ${cx-ghW*0.54} ${ghFront+18}`,
+    `L ${cx-ghW*0.54} ${ghRear-12}`,
+    `Q ${cx-ghW*0.46} ${ghRear} ${cx} ${ghRear}`,
+    `Q ${cx+ghW*0.46} ${ghRear} ${cx+ghW*0.54} ${ghRear-12}`,
+    `L ${cx+ghW*0.54} ${ghFront+18}`,
+    `Q ${cx+ghW*0.52} ${ghFront+2} ${cx} ${ghFront-4}`,
     'Z',
   ].join(' ')
 
-  const frontWheelY = cy + bl*(g.w1-0.50)
-  const rearWheelY  = cy + bl*(g.w2-0.50)
+  const fwy=cy+bl*(g.w1-0.50), rwy=cy+bl*(g.w2-0.50)
 
-  const N=12
-  const cpStrips = Array.from({length:N},(_,i) => {
+  // Cp strips
+  const N=14
+  const cpS=Array.from({length:N},(_,i)=>{
     const tM=(i+0.5)/N
-    return { y0: cy-bl/2+4+i*(bl/N), y1: cy-bl/2+4+(i+1)*(bl/N), color: cpToRgb(cpAtPoint(tM,0.70,tM<0.15,g.Cd)) }
+    return {y0:cy-bl/2+5+i*(bl-9)/N, y1:cy-bl/2+5+(i+1)*(bl-9)/N, c:cpToRgb(cpAtPoint(tM,0.70,tM<0.15,g.Cd))}
   })
+  const defs = `<clipPath id="tc2"><path d="${body}"/></clipPath>`
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <defs><clipPath id="tc2"><path d={body}/></clipPath></defs>
       <g clipPath="url(#tc2)">
-        {cpStrips.map((s,i)=>(
-          <rect key={i} x={cx-bw*0.60} y={s.y0} width={bw*1.20} height={s.y1-s.y0+1} fill={s.color} opacity={0.78}/>
+        {cpS.map((s,i)=>(
+          <rect key={i} x={cx-bw*0.60} y={s.y0} width={bw*1.20} height={s.y1-s.y0+1} fill={s.c} opacity={0.78}/>
         ))}
       </g>
-      <path d={body} fill="rgba(6,12,20,0.28)" stroke="#82CFFF" strokeWidth="0.9"/>
-      <path d={ghPath} fill="rgba(130,207,255,0.10)" stroke="rgba(130,207,255,0.62)" strokeWidth="0.8"/>
-      <path d={ghPath} fill="rgba(0,16,32,0.38)"/>
+      <path d={body} fill="rgba(5,10,18,0.28)" stroke="#82CFFF" strokeWidth="0.9"/>
+      <path d={ghPath} fill="rgba(130,207,255,0.09)" stroke="rgba(130,207,255,0.60)" strokeWidth="0.8"/>
+      <path d={ghPath} fill="rgba(0,14,28,0.38)"/>
+
+      {/* Roof panel lines */}
+      <line x1={cx-ghW*0.48} y1={ghFront+20} x2={cx-ghW*0.48} y2={ghRear-14}
+        stroke="rgba(130,207,255,0.14)" strokeWidth="0.6" strokeDasharray="8,8"/>
+      <line x1={cx+ghW*0.48} y1={ghFront+20} x2={cx+ghW*0.48} y2={ghRear-14}
+        stroke="rgba(130,207,255,0.14)" strokeWidth="0.6" strokeDasharray="8,8"/>
+
+      {/* Pickup bed */}
       {g.bodyType==='pickup' && (
         <rect x={cx-bw*0.48} y={ghRear} width={bw*0.96} height={cy+bl/2-14-ghRear}
-          fill="rgba(0,0,0,0.22)" stroke="#263442" strokeWidth="0.8"/>
+          fill="rgba(0,0,0,0.20)" stroke="#1E2E3E" strokeWidth="0.8"/>
       )}
-      <line x1={cx} y1={cy-bl/2} x2={cx} y2={cy+bl/2} stroke="#1A2530" strokeWidth="0.6" strokeDasharray="5,5"/>
-      <text x={cx} y={cy-bl/2-7} textAnchor="middle" fill="#82CFFF" fontSize="8" fontFamily="monospace">▲ FRONT</text>
-      {[-bw*0.26,0,bw*0.26].map((ox,i)=>(
-        <g key={i} transform={`translate(${cx+ox},${cy-bl/2-18})`}>
-          <line x1={0} y1={-4} x2={0} y2={5} stroke="#82CFFF" strokeWidth="0.9" opacity={0.45}/>
-          <polygon points="0,8 -2.5,3 2.5,3" fill="#82CFFF" opacity={0.45}/>
+
+      {/* Centreline */}
+      <line x1={cx} y1={cy-bl/2} x2={cx} y2={cy+bl/2}
+        stroke="#182430" strokeWidth="0.6" strokeDasharray="6,6"/>
+
+      {/* FRONT indicator */}
+      <text x={cx} y={cy-bl/2-8} textAnchor="middle" fill="#82CFFF" fontSize="8" fontFamily="monospace">▲ FRONT</text>
+
+      {/* Flow arrows */}
+      {[-bw*0.24,0,bw*0.24].map((ox,i)=>(
+        <g key={i} transform={`translate(${cx+ox},${cy-bl/2-20})`}>
+          <line x1={0} y1={-4} x2={0} y2={6} stroke="#82CFFF" strokeWidth="0.9" opacity={0.45}/>
+          <polygon points="0,9 -2.5,4 2.5,4" fill="#82CFFF" opacity={0.45}/>
         </g>
       ))}
-      {[[cx-bw*0.60,frontWheelY],[cx+bw*0.60,frontWheelY],[cx-bw*0.60,rearWheelY],[cx+bw*0.60,rearWheelY]].map(([wx,wy],i)=>(
-        <g key={i}>
-          <rect x={wx-10} y={wy-18} width={20} height={36} rx="4" fill="#080E14" stroke="#324252" strokeWidth="1.4"/>
-          <line x1={wx} y1={wy-12} x2={wx} y2={wy+12} stroke="#1E2E3A" strokeWidth="0.8"/>
-        </g>
-      ))}
+
+      {/* Wing mirrors */}
       {[-1,1].map(s=>{
-        const mx=cx+s*bw*0.56, my=ghFront+10
-        return <path key={s} d={`M ${mx} ${my} L ${mx+s*14} ${my-4} L ${mx+s*14} ${my+5} Z`}
-          fill="#0C1820" stroke="#1E2E3A" strokeWidth="0.7"/>
+        const mx=cx+s*bw*0.56, my=ghFront+12
+        return <path key={s} d={`M ${mx} ${my} L ${mx+s*16} ${my-5} L ${mx+s*16} ${my+6} Z`}
+          fill="#0A1820" stroke="#1E3040" strokeWidth="0.8"/>
       })}
-      <text x={cx} y={H-3} textAnchor="middle" fill="#2A3E4E" fontSize="9" fontFamily="monospace" letterSpacing="0.12em">TOP VIEW</text>
+
+      {/* Wheels — front wheels steered by yaw angle */}
+      {[[cx-bw*0.62,fwy,frontSteerOffset],[cx+bw*0.62,fwy,-frontSteerOffset],
+        [cx-bw*0.62,rwy,0],[cx+bw*0.62,rwy,0]].map(([wx,wy,off],i)=>(
+        <g key={i} transform={`translate(${wx},${wy}) rotate(${i<2?(yawAngle??0)*0.7:0})`}>
+          <rect x={-10} y={-18} width={20} height={36} rx="4"
+            fill="#060C14" stroke="#2E3E50" strokeWidth="1.5"/>
+          <line x1={0} y1={-12} x2={0} y2={12} stroke="#1A2E3E" strokeWidth="0.8"/>
+        </g>
+      ))}
+
+      <text x={cx} y={H-3} textAnchor="middle"
+        fill="#28404E" fontSize="9" fontFamily="monospace" letterSpacing="0.12em">
+        TOP VIEW{(yawAngle??0)!==0?` · YAW ${yawAngle>0?'+':''}${yawAngle}°`:''}
+      </text>
     </svg>
   )
 }
@@ -712,68 +895,149 @@ function TopView({ g }) {
 // UNDERSIDE VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 
-function UnderView({ g }) {
-  const W=300, H=220, cx=W/2, cy=H/2+4
+function UnderView({ g, showGroundEffect }) {
+  const W=320, H=230, cx=W/2, cy=H/2+6
   const isTall=g.bodyType==='suv'||g.bodyType==='pickup'
-  const bw=isTall?76:68, bl=g.bodyType==='pickup'?168:154
+  const bw=isTall?78:70, bl=g.bodyType==='pickup'?172:156
 
-  const body = [
+  const body=[
     `M ${cx} ${cy-bl/2+5}`,
-    `Q ${cx-bw*0.28} ${cy-bl/2+1} ${cx-bw*0.50} ${cy-bl/2+18}`,
+    `Q ${cx-bw*0.26} ${cy-bl/2+1} ${cx-bw*0.50} ${cy-bl/2+20}`,
     `L ${cx-bw*0.52} ${cy+bl*0.08}`,
     `Q ${cx-bw*0.50} ${cy+bl/2-14} ${cx-bw*0.44} ${cy+bl/2-4}`,
     `L ${cx+bw*0.44} ${cy+bl/2-4}`,
     `Q ${cx+bw*0.50} ${cy+bl/2-14} ${cx+bw*0.52} ${cy+bl*0.08}`,
-    `L ${cx+bw*0.50} ${cy-bl/2+18}`,
-    `Q ${cx+bw*0.28} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,
+    `L ${cx+bw*0.50} ${cy-bl/2+20}`,
+    `Q ${cx+bw*0.26} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,
     'Z',
   ].join(' ')
 
-  const N=12
-  const cpStrips = Array.from({length:N},(_,i) => {
+  const N=14
+  const cpS=Array.from({length:N},(_,i)=>{
     const tM=(i+0.5)/N
-    return { y0:cy-bl/2+4+i*(bl/N), y1:cy-bl/2+4+(i+1)*(bl/N), color:cpToRgb(cpAtPoint(tM,0.05,tM<0.15,g.Cd)) }
+    return {y0:cy-bl/2+5+i*(bl-9)/N, y1:cy-bl/2+5+(i+1)*(bl-9)/N, c:cpToRgb(cpAtPoint(tM,0.05,tM<0.15,g.Cd))}
   })
 
-  const frontWheelY=cy+bl*(g.w1-0.50), rearWheelY=cy+bl*(g.w2-0.50)
+  const fwy=cy+bl*(g.w1-0.50), rwy=cy+bl*(g.w2-0.50)
+
+  // Ground effect contours
+  const geContours = showGroundEffect ? [-0.6,-0.4,-0.2,0.0].map((cpLev,li) => {
+    const barWidth = (1-(-cpLev/0.8))*bw*0.40
+    return {y: cy-bl*0.15+li*(bl*0.12), w: barWidth, c: cpToRgb(cpLev)}
+  }) : []
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <defs><clipPath id="uc"><path d={body}/></clipPath></defs>
       <g clipPath="url(#uc)">
-        {cpStrips.map((s,i)=>(
-          <rect key={i} x={cx-bw*0.60} y={s.y0} width={bw*1.20} height={s.y1-s.y0+1} fill={s.color} opacity={0.82}/>
+        {cpS.map((s,i)=>(
+          <rect key={i} x={cx-bw*0.60} y={s.y0} width={bw*1.20} height={s.y1-s.y0+1} fill={s.c} opacity={0.82}/>
         ))}
       </g>
-      <path d={body} fill="rgba(6,12,20,0.30)" stroke="#82CFFF" strokeWidth="0.9"/>
-      <rect x={cx-bw*0.36} y={cy-bl*0.30} width={bw*0.72} height={bl*0.52}
-        rx="3" fill="rgba(0,0,0,0.20)" stroke="#1A2C3A" strokeWidth="0.7"/>
-      <rect x={cx-bw*0.08} y={cy-bl*0.28} width={bw*0.16} height={bl*0.50}
-        rx="5" fill="rgba(0,0,0,0.28)" stroke="#1A2C3A" strokeWidth="0.8"/>
-      {[-bw*0.22,bw*0.22].map((ox,i)=>(
-        <line key={i} x1={cx+ox} y1={cy-bl*0.28} x2={cx+ox} y2={cy+bl*0.20}
-          stroke="#1A2C3A" strokeWidth="2" strokeDasharray="5,8"/>
+      <path d={body} fill="rgba(5,10,18,0.32)" stroke="#82CFFF" strokeWidth="0.9"/>
+
+      {/* Flat floor panel */}
+      <rect x={cx-bw*0.38} y={cy-bl*0.32} width={bw*0.76} height={bl*0.54}
+        rx="4" fill="rgba(0,0,0,0.18)" stroke="#182838" strokeWidth="0.8"/>
+
+      {/* Transmission/driveshaft tunnel */}
+      <path d={`M ${cx-bw*0.09} ${cy-bl*0.30} Q ${cx} ${cy-bl*0.32} ${cx+bw*0.09} ${cy-bl*0.30}
+                L ${cx+bw*0.09} ${cy+bl*0.22} Q ${cx} ${cy+bl*0.24} ${cx-bw*0.09} ${cy+bl*0.22} Z`}
+        fill="rgba(0,0,0,0.30)" stroke="#182838" strokeWidth="0.9"/>
+
+      {/* Fuel tank */}
+      <rect x={cx-bw*0.28} y={cy+bl*0.02} width={bw*0.56} height={bl*0.12}
+        rx="6" fill="rgba(0,0,0,0.25)" stroke="#1E3040" strokeWidth="0.8" strokeDasharray="3,2"/>
+
+      {/* Front subframe */}
+      <rect x={cx-bw*0.36} y={cy-bl*0.40} width={bw*0.72} height={bl*0.16}
+        rx="6" fill="none" stroke="#2A3E50" strokeWidth="1.0" strokeDasharray="4,3"/>
+
+      {/* Rear subframe */}
+      <rect x={cx-bw*0.34} y={cy+bl*0.16} width={bw*0.68} height={bl*0.14}
+        rx="6" fill="none" stroke="#2A3E50" strokeWidth="1.0" strokeDasharray="4,3"/>
+
+      {/* Floor channels / aero strakes */}
+      {[-bw*0.24,-bw*0.08,bw*0.08,bw*0.24].map((ox,i)=>(
+        <line key={i} x1={cx+ox} y1={cy-bl*0.30} x2={cx+ox} y2={cy+bl*0.22}
+          stroke="#182838" strokeWidth={i===1||i===2?3:1.8} strokeDasharray={i===0||i===3?"6,10":undefined}/>
       ))}
-      <rect x={cx-bw*0.35} y={cy-bl*0.38} width={bw*0.70} height={bl*0.15}
-        rx="5" fill="none" stroke="#263442" strokeWidth="0.9" strokeDasharray="4,3"/>
-      <rect x={cx-bw*0.32} y={cy+bl*0.14} width={bw*0.64} height={bl*0.12}
-        rx="5" fill="none" stroke="#263442" strokeWidth="0.9" strokeDasharray="4,3"/>
-      {[-3,-1,1,3].map(f=>(
-        <line key={f} x1={cx+f*bw*0.09} y1={cy+bl*0.22} x2={cx+f*bw*0.09} y2={cy+bl/2-6}
-          stroke="#324252" strokeWidth="1.6"/>
+
+      {/* Rear diffuser fins */}
+      {[-4,-2,0,2,4].map(f=>(
+        <line key={f} x1={cx+f*bw*0.08} y1={cy+bl*0.24} x2={cx+f*bw*0.08} y2={cy+bl/2-6}
+          stroke="#2E4050" strokeWidth="1.8"/>
       ))}
-      {(g.bodyType==='fastback'||g.bodyType==='coupe'?[-bw*0.18,bw*0.18]:[-bw*0.13,bw*0.13]).map((ox,i)=>(
+
+      {/* Exhaust outlets */}
+      {(g.bodyType==='fastback'||g.bodyType==='coupe'?[-bw*0.20,bw*0.20]:[-bw*0.14,bw*0.14]).map((ox,i)=>(
         <g key={i}>
-          <circle cx={cx+ox} cy={cy+bl/2-10} r={5.5} fill="#080E14" stroke="#324252" strokeWidth="1.4"/>
-          <circle cx={cx+ox} cy={cy+bl/2-10} r={2.8} fill="#040810"/>
+          <circle cx={cx+ox} cy={cy+bl/2-11} r={6}
+            fill="#060C14" stroke="#2E4050" strokeWidth="1.6"/>
+          <circle cx={cx+ox} cy={cy+bl/2-11} r={3} fill="#020608"/>
+          {/* Exhaust heat shimmer */}
+          <circle cx={cx+ox} cy={cy+bl/2-11} r={8} fill="none"
+            stroke="rgba(239,68,68,0.15)" strokeWidth="3"/>
         </g>
       ))}
-      {[[cx-bw*0.60,frontWheelY],[cx+bw*0.60,frontWheelY],[cx-bw*0.60,rearWheelY],[cx+bw*0.60,rearWheelY]].map(([wx,wy],i)=>(
-        <rect key={i} x={wx-10} y={wy-18} width={20} height={36} rx="4"
-          fill="#080E14" stroke="#324252" strokeWidth="1.4"/>
+
+      {/* Ground effect pressure contours */}
+      {showGroundEffect && geContours.map((gc,i)=>(
+        <rect key={i} x={cx-gc.w} y={gc.y} width={gc.w*2} height={bl*0.10}
+          rx="3" fill={gc.c} opacity={0.18} stroke={gc.c} strokeWidth="0.5" strokeOpacity={0.5}/>
       ))}
-      <text x={cx} y={cy-bl/2-7} textAnchor="middle" fill="#82CFFF" fontSize="8" fontFamily="monospace">▲ FRONT</text>
-      <text x={cx} y={H-3} textAnchor="middle" fill="#2A3E4E" fontSize="9" fontFamily="monospace" letterSpacing="0.12em">UNDERSIDE VIEW</text>
+
+      {/* Wheels */}
+      {[[cx-bw*0.62,fwy],[cx+bw*0.62,fwy],[cx-bw*0.62,rwy],[cx+bw*0.62,rwy]].map(([wx,wy],i)=>(
+        <rect key={i} x={wx-10} y={wy-18} width={20} height={36} rx="4"
+          fill="#060C14" stroke="#2E4050" strokeWidth="1.5"/>
+      ))}
+
+      <text x={cx} y={cy-bl/2-8} textAnchor="middle" fill="#82CFFF" fontSize="8" fontFamily="monospace">▲ FRONT</text>
+      {showGroundEffect && (
+        <text x={cx} y={cy+bl/2+12} textAnchor="middle" fill="#22d3ee" fontSize="7" fontFamily="monospace">
+          GROUND EFFECT ACTIVE
+        </text>
+      )}
+      <text x={cx} y={H-3} textAnchor="middle"
+        fill="#28404E" fontSize="9" fontFamily="monospace" letterSpacing="0.12em">UNDERSIDE VIEW</text>
+    </svg>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drag breakdown donut chart
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DragDonut({ breakdown }) {
+  const R=44, r=28, cx=60, cy=54
+  let startAngle = -Math.PI/2
+  const slices = breakdown.map(b => {
+    const angle = b.pct * 2 * Math.PI
+    const x1=cx+R*Math.cos(startAngle), y1=cy+R*Math.sin(startAngle)
+    const x2=cx+R*Math.cos(startAngle+angle), y2=cy+R*Math.sin(startAngle+angle)
+    const ix1=cx+r*Math.cos(startAngle), iy1=cy+r*Math.sin(startAngle)
+    const ix2=cx+r*Math.cos(startAngle+angle), iy2=cy+r*Math.sin(startAngle+angle)
+    const large = angle > Math.PI ? 1 : 0
+    const path = `M ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${r} ${r} 0 ${large} 0 ${ix1} ${iy1} Z`
+    startAngle += angle
+    return {...b, path}
+  })
+  return (
+    <svg viewBox="0 0 120 108" style={{width:'100%',height:108}}>
+      {slices.map((s,i)=>(
+        <path key={i} d={s.path} fill={s.c} stroke="#060C14" strokeWidth="0.8"/>
+      ))}
+      <text x={cx} y={cy+4} textAnchor="middle" fill="#82CFFF" fontSize="8" fontFamily="monospace">DRAG</text>
+      {/* Legend */}
+      {breakdown.map((b,i)=>(
+        <g key={i} transform={`translate(${i<3?0:60}, ${90+Math.floor(i/3)*0})`}>
+          <rect x={i<3?2:62} y={88+i%3*13} width={8} height={8} rx="1" fill={b.c}/>
+          <text x={i<3?12:72} y={88+i%3*13+7} fill="#5A7A8A" fontSize="7" fontFamily="monospace">
+            {b.name} {(b.pct*100).toFixed(0)}%
+          </text>
+        </g>
+      ))}
     </svg>
   )
 }
@@ -783,27 +1047,25 @@ function UnderView({ g }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CdGauge({ cd }) {
-  const pct   = Math.min(1, Math.max(0, (cd-0.15)/0.35))
-  const angle = -135 + pct*270
-  const color = cd<0.24?'#30D158':cd<0.27?'#0A84FF':cd<0.32?'#FF9F0A':'#FF453A'
-  const label = cd<0.24?'Exceptional':cd<0.27?'Excellent':cd<0.32?'Average':'High drag'
-  const rad   = d => (d-90)*Math.PI/180
-  const nx = 60 + 46*Math.cos(rad(angle)), ny = 62 + 46*Math.sin(rad(angle))
+  const pct=Math.min(1,Math.max(0,(cd-0.15)/0.35))
+  const angle=-135+pct*270
+  const color=cd<0.24?'#30D158':cd<0.27?'#0A84FF':cd<0.32?'#FF9F0A':'#FF453A'
+  const label=cd<0.24?'Exceptional':cd<0.27?'Excellent':cd<0.32?'Average':'High drag'
+  const rad=d=>(d-90)*Math.PI/180
+  const nx=60+46*Math.cos(rad(angle)), ny=62+46*Math.sin(rad(angle))
   return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
       <svg viewBox="0 0 120 72" style={{width:128,height:80}}>
-        <path d="M10,62 A50,50 0 0,1 110,62" fill="none" stroke="#1A2830" strokeWidth="10" strokeLinecap="round"/>
+        <path d="M10,62 A50,50 0 0,1 110,62" fill="none" stroke="#182430" strokeWidth="10" strokeLinecap="round"/>
         <path d="M10,62 A50,50 0 0,1 110,62" fill="none" stroke={color} strokeWidth="10"
           strokeLinecap="round" strokeDasharray={`${pct*157} 157`}/>
         {[0.20,0.25,0.30,0.35,0.40].map((v,i)=>{
-          const tp=Math.min(1,(v-0.15)/0.35)
-          const ta=-135+tp*270
+          const tp=Math.min(1,(v-0.15)/0.35), ta=-135+tp*270
           return <circle key={i} cx={60+40*Math.cos(rad(ta))} cy={62+40*Math.sin(rad(ta))} r="2" fill="#263442"/>
         })}
         <line x1="60" y1="62" x2={nx} y2={ny} stroke={color} strokeWidth="2.4" strokeLinecap="round"/>
         <circle cx="60" cy="62" r="5" fill={color}/>
-        <text x="60" y="56" textAnchor="middle" fill={color}
-          fontSize="14" fontFamily="monospace" fontWeight="bold">{cd.toFixed(3)}</text>
+        <text x="60" y="56" textAnchor="middle" fill={color} fontSize="14" fontFamily="monospace" fontWeight="bold">{cd.toFixed(3)}</text>
       </svg>
       <span style={{fontSize:11,fontWeight:600,color,letterSpacing:'0.04em'}}>{label}</span>
     </div>
@@ -818,68 +1080,40 @@ const BENCHMARKS=[
 ]
 
 function BenchmarkBar({ cd }) {
-  const pct = v => ((v-0.20)/0.24)*100
+  const pct=v=>((v-0.20)/0.24)*100
   return (
     <div style={{width:'100%'}}>
       <div style={{position:'relative',height:18,borderRadius:4,overflow:'hidden',marginBottom:4}}>
-        <div style={{position:'absolute',inset:0,
-          background:'linear-gradient(to right,#30D158,#0A84FF,#fbbf24,#FF453A)'}}/>
+        <div style={{position:'absolute',inset:0,background:'linear-gradient(to right,#30D158,#0A84FF,#fbbf24,#FF453A)'}}/>
         {BENCHMARKS.map((b,i)=>(
-          <div key={i} style={{position:'absolute',top:0,bottom:0,width:1,
-            background:'rgba(0,0,0,0.5)',left:`${pct(b.Cd)}%`}}/>
+          <div key={i} style={{position:'absolute',top:0,bottom:0,width:1,background:'rgba(0,0,0,0.5)',left:`${pct(b.Cd)}%`}}/>
         ))}
         <div style={{position:'absolute',top:-2,bottom:-2,width:3,background:'white',borderRadius:2,
-          left:`${pct(cd)}%`,transform:'translateX(-1px)',boxShadow:'0 0 6px rgba(255,255,255,0.8)'}}>
-          <div style={{position:'absolute',top:-4,left:'50%',transform:'translateX(-50%) rotate(45deg)',
-            width:6,height:6,background:'white'}}/>
+          left:`${Math.min(98,Math.max(2,pct(cd)))}%`,transform:'translateX(-1px)',boxShadow:'0 0 6px rgba(255,255,255,0.8)'}}>
+          <div style={{position:'absolute',top:-4,left:'50%',transform:'translateX(-50%) rotate(45deg)',width:6,height:6,background:'white'}}/>
         </div>
       </div>
-      <div style={{display:'flex',justifyContent:'space-between',
-        fontSize:9,fontFamily:'monospace',color:'#3A5464',marginBottom:6}}>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:9,fontFamily:'monospace',color:'#3A5464',marginBottom:6}}>
         <span>0.20</span><span>0.30</span><span>0.40+</span>
-      </div>
-      <div style={{display:'flex',flexDirection:'column',gap:4}}>
-        {BENCHMARKS.map((b,i)=>{
-          const barW = Math.max(4,((b.Cd-0.20)/0.24)*100)
-          const clr  = b.Cd<0.26?'#30D158':b.Cd<0.30?'#0A84FF':b.Cd<0.34?'#FF9F0A':'#FF453A'
-          return (
-            <div key={i} style={{display:'flex',alignItems:'center',gap:6}}>
-              <div style={{width:`${barW}%`,maxWidth:'55%',height:3,borderRadius:2,background:clr,flexShrink:0}}/>
-              <span style={{fontSize:9,fontFamily:'monospace',color:clr,width:30,flexShrink:0}}>{b.Cd.toFixed(2)}</span>
-              <span style={{fontSize:9,color:'#3A5464',truncate:true,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{b.name}</span>
-            </div>
-          )
-        })}
       </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Analysis state display
+// Zone density debug bar
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AnalysisReadout({ g }) {
-  const rows = [
-    ['Body type',      g.bodyType],
-    ['Hood ratio',     (g.hoodRatio*100).toFixed(0)+'%'],
-    ['Cabin ratio',    (g.cabinRatio*100).toFixed(0)+'%'],
-    ['Boot/bed ratio', (g.bootRatio*100).toFixed(0)+'%'],
-    ['Windscreen',     g.wsAngleDeg.toFixed(0)+'° rake'],
-    ['Roofline',       g.rooflineType.replace('_',' ')],
-    ['Ride height',    g.rideH > 0.12 ? 'high' : g.rideH > 0.09 ? 'standard' : 'low'],
-    ['Rear type',      g.rearType],
-    ['Cd estimate',    g.Cd.toFixed(3)],
-  ]
+function ZoneBar({ zones }) {
+  if(!zones) return null
   return (
-    <div style={{display:'flex',flexDirection:'column',gap:4}}>
-      {rows.map(([k,v])=>(
-        <div key={k} style={{display:'flex',justifyContent:'space-between',
-          fontSize:10,fontFamily:'monospace',padding:'2px 0',
-          borderBottom:'1px solid rgba(130,207,255,0.08)'}}>
-          <span style={{color:'#3A5464'}}>{k}</span>
-          <span style={{color:'#82CFFF',fontWeight:500}}>{v}</span>
-        </div>
+    <div style={{display:'flex',gap:1,height:20,alignItems:'flex-end',margin:'4px 0'}}>
+      {zones.map((z,i)=>(
+        <div key={i} style={{
+          flex:1,background:`rgba(130,207,255,${0.15+z*0.65})`,
+          height:`${Math.max(4,z*100)}%`,borderRadius:1,
+          position:'relative',
+        }} title={`Zone ${i}: ${(z*100).toFixed(0)}%`}/>
       ))}
     </div>
   )
@@ -905,12 +1139,16 @@ export default function Views2DPage() {
   const [error,      setError]      = useState(null)
   const [activeView, setActiveView] = useState('side')
   const [cpOn,       setCpOn]       = useState(true)
+  const [showSep,    setShowSep]    = useState(true)
+  const [showIso,    setShowIso]    = useState(false)
+  const [showGE,     setShowGE]     = useState(false)
+  const [yawAngle,   setYawAngle]   = useState(0)
+  const svgRef = useRef(null)
   const fileRef = useRef(null)
 
   const acceptFile = useCallback((f) => {
-    if (!f || !f.type.startsWith('image/')) return
-    setFile(f)
-    setPreview(URL.createObjectURL(f))
+    if(!f||!f.type.startsWith('image/')) return
+    setFile(f); setPreview(URL.createObjectURL(f))
     setGeo(null); setError(null); setStage('ready')
   }, [])
 
@@ -920,29 +1158,37 @@ export default function Views2DPage() {
   }, [acceptFile])
 
   const run = async () => {
-    if (!file) return
+    if(!file) return
     setError(null); setGeo(null); setStage('analyzing')
     try {
-      const result = await analyzeImageCanvas(file)
-      setGeo(result)
-      setStage('done')
+      const r = await analyzeImageCanvas(file)
+      setGeo(r); setStage('done')
     } catch(e) {
-      setError(e.message)
-      setStage('error')
+      setError(e.message); setStage('error')
     }
   }
 
-  const isRunning = stage === 'analyzing'
-  const cd = geo?.Cd ?? 0.30
+  const exportSVG = () => {
+    const svg = svgRef.current?.querySelector('svg')
+    if(!svg) return
+    const blob = new Blob([svg.outerHTML], {type:'image/svg+xml'})
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `aeronet_${activeView}_view.svg`
+    a.click()
+  }
 
+  const isRunning = stage==='analyzing'
+  const cd = geo?.Cd??0.30
+  const breakdown = geo ? getDragBreakdown(geo.bodyType) : []
   const improvements = {
-    fastback:  ['Active rear diffuser','Underbody flat floor','Flush wheel covers'],
-    coupe:     ['Active aero rear spoiler','Belly pan','Wider tyres for downforce'],
+    fastback:  ['Active rear diffuser','Underbody flat floor','Rear wing delete'],
+    coupe:     ['Ducktail spoiler','Smooth underbody','Aero wheels'],
     notchback: ['Active grille shutters','Lower ride height','Rear lip spoiler'],
-    hatchback: ['Rear roof spoiler','Underbody diffuser','Tyre aero covers'],
-    estate:    ['Roof aero rails','Active rear spoiler','Flush body cladding'],
-    suv:       ['Lower ride height','Active grille shutters','Air suspension'],
-    pickup:    ['Tonneau cover','Air dam','Bed extender fairings'],
+    hatchback: ['Roof spoiler','Underbody diffuser','Tyre aero covers'],
+    estate:    ['Roof aero rails','Tow hitch fairing','Flush body'],
+    suv:       ['Lower ride height','Air suspension','Active aero'],
+    pickup:    ['Tonneau cover','Air dam','Bed extender fairing'],
   }
   const suggestions = improvements[geo?.bodyType] ?? ['Lower ride height','Reduce frontal area','Active grille shutters']
 
@@ -956,11 +1202,9 @@ export default function Views2DPage() {
           <span className="text-label-lg text-md-primary font-medium tracking-widest uppercase">AeroVision</span>
         </div>
         <span className="text-md-outline">·</span>
-        <span className="text-body-sm text-md-on-surface-variant">
-          Canvas pixel analysis → geometry extraction → 4-view orthographic reconstruction
-        </span>
+        <span className="text-body-sm text-md-on-surface-variant">Canvas Sobel → silhouette → roofline → 4-view CFD reconstruction</span>
         <div className="ml-auto flex items-center gap-2">
-          {['Sobel Edge Detection','Roofline Fitting','Cp Physics'].map(t=>(
+          {['Sobel Edge','Roofline Fit','Cp Physics','Drag Donut'].map(t=>(
             <span key={t} className="text-label-sm text-md-outline-variant px-2 py-0.5 rounded border border-md-outline-variant">{t}</span>
           ))}
         </div>
@@ -968,9 +1212,8 @@ export default function Views2DPage() {
 
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Left — image viewer */}
+        {/* Left panel */}
         <div className="w-64 shrink-0 flex flex-col gap-3 p-4 border-r border-md-outline-variant overflow-y-auto bg-md-surface-container-low">
-
           <div className="flex items-center gap-2">
             <span className="text-label-sm text-md-primary font-mono">01</span>
             <div className="flex-1 h-px bg-md-outline-variant"/>
@@ -979,8 +1222,8 @@ export default function Views2DPage() {
 
           <div
             className={`relative rounded-xl border-2 border-dashed transition-all cursor-pointer overflow-hidden
-              ${dragOver?'border-md-primary bg-md-primary/10 scale-[1.01]':'border-md-outline-variant hover:border-md-primary/50'}`}
-            style={{minHeight:156}}
+              ${dragOver?'border-md-primary bg-md-primary/10':'border-md-outline-variant hover:border-md-primary/50'}`}
+            style={{minHeight:150}}
             onDragOver={e=>{e.preventDefault();setDragOver(true)}}
             onDragLeave={()=>setDragOver(false)}
             onDrop={onDrop}
@@ -990,9 +1233,9 @@ export default function Views2DPage() {
               onChange={e=>acceptFile(e.target.files[0])}/>
             {preview ? (
               <>
-                <img src={preview} alt="preview" className="w-full object-cover rounded-xl" style={{maxHeight:190}}/>
+                <img src={preview} alt="preview" className="w-full object-cover rounded-xl" style={{maxHeight:185}}/>
                 <div className="absolute inset-0 flex items-end justify-center pb-2 pointer-events-none">
-                  <span className="text-label-sm text-white/60 bg-black/50 px-2 py-0.5 rounded backdrop-blur-sm">click to change</span>
+                  <span className="text-label-sm text-white/60 bg-black/50 px-2 py-0.5 rounded">click to change</span>
                 </div>
               </>
             ) : (
@@ -1007,26 +1250,20 @@ export default function Views2DPage() {
           {file && (
             <div className="flex items-center gap-2 px-2 py-1 rounded bg-md-surface-container border border-md-outline-variant">
               <span className="text-label-sm text-md-on-surface-variant truncate flex-1" style={{fontSize:10}}>{file.name}</span>
-              <span className="text-label-sm text-md-outline shrink-0" style={{fontSize:9}}>{(file.size/1024).toFixed(0)}KB</span>
+              <span style={{fontSize:9,color:'#3A5464'}}>{(file.size/1024).toFixed(0)}KB</span>
             </div>
           )}
 
           <button onClick={run} disabled={!file||isRunning}
             className={`w-full py-3 rounded-xl font-medium text-body-md transition-all
-              ${!file||isRunning
-                ?'bg-md-surface-container text-md-on-surface-variant cursor-not-allowed opacity-60'
+              ${!file||isRunning?'bg-md-surface-container text-md-on-surface-variant cursor-not-allowed opacity-60'
                 :'bg-md-primary text-md-on-primary hover:shadow-glow-sm active:scale-[0.98]'}`}>
-            {isRunning
-              ? <span className="flex items-center justify-center gap-2">
-                  <span className="w-3.5 h-3.5 border-2 border-md-on-primary/30 border-t-md-on-primary rounded-full animate-spin"/>
-                  Analysing image…
-                </span>
-              : 'Analyse Vehicle'}
+            {isRunning?<span className="flex items-center justify-center gap-2">
+              <span className="w-3.5 h-3.5 border-2 border-md-on-primary/30 border-t-md-on-primary rounded-full animate-spin"/>Analysing…
+            </span>:'Analyse Vehicle'}
           </button>
 
-          {error && (
-            <div className="rounded-lg bg-md-error/10 border border-md-error/30 p-2 text-label-sm text-md-error">⚠ {error}</div>
-          )}
+          {error && <div className="rounded-lg bg-md-error/10 border border-md-error/30 p-2 text-label-sm text-md-error">⚠ {error}</div>}
 
           {geo && (
             <>
@@ -1035,8 +1272,41 @@ export default function Views2DPage() {
                 <div className="flex-1 h-px bg-md-outline-variant"/>
                 <span className="text-label-sm text-md-on-surface-variant uppercase tracking-wide">Extracted</span>
               </div>
-              <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3">
-                <AnalysisReadout g={geo}/>
+              <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3 space-y-1">
+                {[
+                  ['Type',         geo.bodyType],
+                  ['Aspect ratio', geo.aspectRatio.toFixed(2)],
+                  ['Hood',         (geo.hoodRatio*100).toFixed(0)+'%'],
+                  ['Cabin',        (geo.cabinRatio*100).toFixed(0)+'%'],
+                  ['Boot',         (geo.bootRatio*100).toFixed(0)+'%'],
+                  ['WS rake',      geo.wsAngleDeg.toFixed(0)+'°'],
+                  ['Rear drop',    (geo.rearDrop*100).toFixed(0)+'%'],
+                  ['Ride height',  geo.rideH>0.12?'high':'standard'],
+                ].map(([k,v])=>(
+                  <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,fontFamily:'monospace',padding:'1px 0'}}>
+                    <span style={{color:'#3A5464'}}>{k}</span>
+                    <span style={{color:'#82CFFF'}}>{v}</span>
+                  </div>
+                ))}
+                {/* Confidence bar */}
+                <div style={{marginTop:6}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:9,fontFamily:'monospace',marginBottom:3}}>
+                    <span style={{color:'#3A5464'}}>confidence</span>
+                    <span style={{color:'#82CFFF'}}>{(geo.confidence*100).toFixed(0)}%</span>
+                  </div>
+                  <div style={{height:4,borderRadius:2,background:'#182838',overflow:'hidden'}}>
+                    <div style={{height:'100%',width:`${geo.confidence*100}%`,
+                      background:geo.confidence>0.7?'#30D158':geo.confidence>0.4?'#FF9F0A':'#FF453A',
+                      borderRadius:2}}/>
+                  </div>
+                </div>
+                {/* Zone density debug */}
+                <div style={{marginTop:4}}>
+                  <div style={{fontSize:8,fontFamily:'monospace',color:'#263442',marginBottom:2}}>
+                    VERTICAL EDGE DENSITY
+                  </div>
+                  <ZoneBar zones={geo._zones}/>
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1044,52 +1314,71 @@ export default function Views2DPage() {
                 <div className="flex-1 h-px bg-md-outline-variant"/>
                 <span className="text-label-sm text-md-on-surface-variant uppercase tracking-wide">Drag</span>
               </div>
-              <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3 flex flex-col items-center gap-2">
+              <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3 flex flex-col items-center gap-1">
                 <CdGauge cd={cd}/>
+                <div style={{fontSize:9,fontFamily:'monospace',color:'#3A5464',textAlign:'center'}}>
+                  Estimated · {geo.bodyType} profile
+                </div>
               </div>
             </>
           )}
         </div>
 
-        {/* Centre — 2D views */}
+        {/* Centre panel */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex items-center gap-1 px-4 pt-3 pb-2 border-b border-md-outline-variant shrink-0">
-            <div className="flex gap-1 flex-1">
+          {/* Toolbar */}
+          <div className="flex items-center gap-1 px-3 pt-3 pb-2 border-b border-md-outline-variant shrink-0 flex-wrap">
+            <div className="flex gap-1">
               {VIEWS.map(v=>(
                 <button key={v.id} onClick={()=>setActiveView(v.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-label-md transition-all
-                    ${activeView===v.id
-                      ?'bg-md-primary/15 text-md-primary border border-md-primary/30'
-                      :'text-md-on-surface-variant hover:bg-md-surface-container hover:text-md-on-surface'}`}>
-                  <span className="font-mono text-xs">{v.icon}</span>
-                  <span>{v.label}</span>
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-label-md transition-all
+                    ${activeView===v.id?'bg-md-primary/15 text-md-primary border border-md-primary/30'
+                      :'text-md-on-surface-variant hover:bg-md-surface-container'}`}>
+                  <span className="text-xs">{v.icon}</span><span>{v.label}</span>
                 </button>
               ))}
             </div>
-            <button onClick={()=>setCpOn(p=>!p)}
-              className={`ml-2 px-3 py-1.5 rounded-md text-label-sm border transition-all
-                ${cpOn?'bg-md-primary text-md-on-primary border-md-primary'
-                      :'text-md-on-surface-variant border-md-outline-variant hover:border-md-primary/50'}`}>
-              Cp {cpOn?'ON':'OFF'}
+            <div className="flex gap-1 ml-2 flex-wrap">
+              {[['Cp',cpOn,setCpOn],['Sep',showSep,setShowSep],['Iso',showIso,setShowIso],
+                ['GEffect',showGE,setShowGE]].map(([label,val,set])=>(
+                <button key={label} onClick={()=>set(p=>!p)}
+                  className={`px-2 py-1 rounded text-label-sm border transition-all
+                    ${val?'bg-md-primary text-md-on-primary border-md-primary'
+                        :'text-md-on-surface-variant border-md-outline-variant hover:border-md-primary/50'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* Yaw slider */}
+            {geo && activeView==='top' && (
+              <div className="flex items-center gap-2 ml-2">
+                <span className="text-label-sm text-md-on-surface-variant">Yaw</span>
+                <input type="range" min={-15} max={15} value={yawAngle}
+                  onChange={e=>setYawAngle(Number(e.target.value))}
+                  style={{width:80,accentColor:'#82CFFF'}}/>
+                <span className="text-label-sm text-md-primary font-mono">{yawAngle>0?'+':''}{yawAngle}°</span>
+              </div>
+            )}
+            <button onClick={exportSVG} className="ml-auto px-2.5 py-1.5 rounded-md text-label-sm border
+              border-md-outline-variant text-md-on-surface-variant hover:border-md-primary/50 transition-all">
+              ↓ SVG
             </button>
           </div>
 
-          <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden bg-md-background">
+          <div ref={svgRef} className="flex-1 flex flex-col p-4 gap-4 overflow-hidden bg-md-background">
             {!geo ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-6">
                 <div className="w-20 h-20 rounded-full bg-md-surface-container border-2 border-md-outline-variant flex items-center justify-center text-4xl">🔬</div>
-                <div className="text-center max-w-md">
-                  <div className="text-title-md text-md-on-surface mb-2">Canvas-based vehicle analysis</div>
+                <div className="text-center max-w-lg">
+                  <div className="text-title-md text-md-on-surface mb-2">Canvas Vehicle Analysis</div>
                   <div className="text-body-sm text-md-on-surface-variant">
-                    Upload a vehicle photo. Sobel edge detection extracts the silhouette, roofline fitting measures the body proportions, and windscreen angle is estimated from gradient data — then 4 accurate orthographic views are generated with a Cp pressure field.
+                    Upload any vehicle photo. Sobel edge detection extracts the silhouette, vertical edge density maps pillar positions, roofline fitting measures the slope and rake — then 4 accurate orthographic CFD views are generated with physics-based Cp pressure field, airflow separation markers, and drag breakdown.
                   </div>
                 </div>
                 <div className="flex items-center gap-2 text-label-sm text-md-on-surface-variant flex-wrap justify-center">
-                  {['Edge detect','Silhouette','Roofline fit','Ratio extract','4-view render'].map((s,i,a)=>(
-                    <span key={i} className="flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded border font-mono
-                        ${stage==='analyzing'&&i===0?'bg-md-primary text-md-on-primary border-md-primary animate-pulse'
-                          :'bg-md-surface-container border-md-outline-variant text-md-outline'}`}>{s}</span>
+                  {['Sobel edges','Silhouette bbox','Roofline 4-seg','Pillar peaks','Body classify','Cp physics','4-view render'].map((s,i,a)=>(
+                    <span key={i} className="flex items-center gap-1">
+                      <span className="px-2 py-0.5 rounded border bg-md-surface-container border-md-outline-variant font-mono text-md-outline">{s}</span>
                       {i<a.length-1&&<span className="text-md-outline">→</span>}
                     </span>
                   ))}
@@ -1098,25 +1387,24 @@ export default function Views2DPage() {
             ) : (
               <>
                 <div className="flex-1 rounded-xl bg-md-surface-container border border-md-outline-variant overflow-hidden flex items-center justify-center p-3" style={{minHeight:0}}>
-                  <div style={{width:'100%',height:'100%',maxHeight:285}}>
-                    {activeView==='side'  && <SideView  g={geo} pressureMode={cpOn}/>}
-                    {activeView==='front' && <FrontView g={geo}/>}
-                    {activeView==='top'   && <TopView   g={geo}/>}
-                    {activeView==='under' && <UnderView g={geo}/>}
+                  <div style={{width:'100%',height:'100%',maxHeight:295}}>
+                    {activeView==='side'  && <SideView  g={geo} cpOn={cpOn} showSep={showSep} showIso={showIso}/>}
+                    {activeView==='front' && <FrontView g={geo} cpOn={cpOn}/>}
+                    {activeView==='top'   && <TopView   g={geo} yawAngle={yawAngle}/>}
+                    {activeView==='under' && <UnderView g={geo} showGroundEffect={showGE}/>}
                   </div>
                 </div>
                 <div className="grid grid-cols-4 gap-2 shrink-0">
                   {VIEWS.map(v=>(
                     <button key={v.id} onClick={()=>setActiveView(v.id)}
                       className={`rounded-lg border overflow-hidden transition-all
-                        ${activeView===v.id
-                          ?'border-md-primary bg-md-primary/10 ring-1 ring-md-primary/30'
+                        ${activeView===v.id?'border-md-primary bg-md-primary/10 ring-1 ring-md-primary/30'
                           :'border-md-outline-variant bg-md-surface-container hover:border-md-primary/40'}`}>
                       <div style={{width:'100%',aspectRatio:'5/3',padding:'3px'}}>
-                        {v.id==='side'  && <SideView  g={geo} pressureMode={cpOn}/>}
-                        {v.id==='front' && <FrontView g={geo}/>}
-                        {v.id==='top'   && <TopView   g={geo}/>}
-                        {v.id==='under' && <UnderView g={geo}/>}
+                        {v.id==='side'  && <SideView  g={geo} cpOn={cpOn} showSep={false} showIso={false}/>}
+                        {v.id==='front' && <FrontView g={geo} cpOn={cpOn}/>}
+                        {v.id==='top'   && <TopView   g={geo} yawAngle={0}/>}
+                        {v.id==='under' && <UnderView g={geo} showGroundEffect={false}/>}
                       </div>
                       <div className="text-label-sm text-md-on-surface-variant text-center py-1">{v.label}</div>
                     </button>
@@ -1127,10 +1415,10 @@ export default function Views2DPage() {
           </div>
         </div>
 
-        {/* Right — results */}
+        {/* Right panel */}
         <div className="w-72 shrink-0 flex flex-col gap-4 p-4 border-l border-md-outline-variant overflow-y-auto bg-md-surface-container-low">
 
-          {geo && (
+          {geo ? (
             <>
               <div className="flex items-center gap-2">
                 <span className="text-label-sm text-md-primary font-mono">04</span>
@@ -1139,35 +1427,56 @@ export default function Views2DPage() {
               </div>
               <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3">
                 <BenchmarkBar cd={cd}/>
+                <div className="flex flex-col gap-1.5 mt-2">
+                  {BENCHMARKS.map((b,i)=>{
+                    const diff=cd-b.Cd
+                    const clr=diff<=0?'#30D158':'#FF9F0A'
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <div style={{width:`${((b.Cd-0.20)/0.24)*55}%`,height:3,borderRadius:2,flexShrink:0,
+                          background:b.Cd<0.26?'#30D158':b.Cd<0.30?'#0A84FF':b.Cd<0.34?'#FF9F0A':'#FF453A'}}/>
+                        <span style={{fontSize:9,fontFamily:'monospace',color:'#82CFFF',width:28,flexShrink:0}}>{b.Cd.toFixed(2)}</span>
+                        <span style={{fontSize:9,color:'#3A5464',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.name}</span>
+                        <span style={{fontSize:9,fontFamily:'monospace',color:clr,flexShrink:0}}>
+                          {diff>0?'+':''}{diff.toFixed(3)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
                 <span className="text-label-sm text-md-primary font-mono">05</span>
                 <div className="flex-1 h-px bg-md-outline-variant"/>
-                <span className="text-label-sm text-md-on-surface-variant uppercase tracking-wide">Reasoning</span>
+                <span className="text-label-sm text-md-on-surface-variant uppercase tracking-wide">Drag Breakdown</span>
               </div>
-              <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3 space-y-2">
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-2xl font-bold text-md-primary">{cd.toFixed(3)}</span>
-                  <div>
-                    <div className="text-label-sm text-md-on-surface-variant">Estimated from</div>
-                    <div className="text-label-sm text-md-primary">{geo.bodyType} profile</div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {['Front fascia','Greenhouse','Rear wake'].map(c=>(
-                    <span key={c} className="text-label-sm px-2 py-0.5 rounded-full bg-md-error/10 border border-md-error/30 text-md-on-surface-variant">{c}</span>
-                  ))}
-                </div>
-                <p className="text-body-sm text-md-on-surface-variant leading-relaxed">
-                  Canvas edge analysis classified the body as <span className="text-md-primary">{geo.bodyType}</span> from
-                  aspect ratio {geo.aspectRatio.toFixed(2)} and rear-drop {(geo.rearDrop*100).toFixed(0)}%.
-                  Windscreen rake {geo.wsAngleDeg.toFixed(0)}° from vertical.
-                </p>
+              <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-2">
+                <DragDonut breakdown={breakdown}/>
               </div>
 
               <div className="flex items-center gap-2">
                 <span className="text-label-sm text-md-primary font-mono">06</span>
+                <div className="flex-1 h-px bg-md-outline-variant"/>
+                <span className="text-label-sm text-md-on-surface-variant uppercase tracking-wide">Aero Forces</span>
+              </div>
+              <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3 grid grid-cols-2 gap-3">
+                {[
+                  ['Front Lift',  'CL_f', (cd*0.06).toFixed(3), '#22d3ee'],
+                  ['Rear Lift',   'CL_r', (-cd*0.02).toFixed(3), '#84cc16'],
+                  ['Side Force',  'Cs',   '0.000', '#fbbf24'],
+                  ['Drag (1 atm)','Cd·q', (cd*0.5*1.225*40*40*2.4).toFixed(0)+'N', '#ef4444'],
+                ].map(([name,sym,val,clr])=>(
+                  <div key={name} style={{background:'rgba(0,0,0,0.2)',borderRadius:6,padding:'8px 10px'}}>
+                    <div style={{fontSize:8,fontFamily:'monospace',color:'#3A5464',marginBottom:3}}>{name}</div>
+                    <div style={{fontSize:13,fontFamily:'monospace',color:clr,fontWeight:600}}>{val}</div>
+                    <div style={{fontSize:8,fontFamily:'monospace',color:'#263442'}}>{sym}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-label-sm text-md-primary font-mono">07</span>
                 <div className="flex-1 h-px bg-md-outline-variant"/>
                 <span className="text-label-sm text-md-on-surface-variant uppercase tracking-wide">Optimise</span>
               </div>
@@ -1182,21 +1491,20 @@ export default function Views2DPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-label-sm text-md-primary font-mono">07</span>
+                <span className="text-label-sm text-md-primary font-mono">08</span>
                 <div className="flex-1 h-px bg-md-outline-variant"/>
                 <span className="text-label-sm text-md-on-surface-variant uppercase tracking-wide">Compare</span>
               </div>
               <div className="rounded-lg bg-md-surface-container border border-md-outline-variant p-3">
                 <div className="flex flex-col gap-2">
                   {BENCHMARKS.slice(0,5).map((b,i)=>{
-                    const diff = (cd - b.Cd).toFixed(3)
-                    const clr  = cd <= b.Cd ? '#30D158' : '#FF9F0A'
+                    const diff=cd-b.Cd, clr=diff<=0?'#30D158':'#FF9F0A'
                     return (
                       <div key={i} className="flex items-center gap-2 text-body-sm">
                         <span className="font-mono text-md-primary w-10 shrink-0">{b.Cd.toFixed(2)}</span>
-                        <span className="text-md-on-surface font-medium shrink-0 truncate flex-1">{b.name}</span>
+                        <span className="text-md-on-surface flex-1 truncate">{b.name}</span>
                         <span className="font-mono text-label-sm shrink-0" style={{color:clr}}>
-                          {cd<=b.Cd?'-':'+'}{ Math.abs(cd - b.Cd).toFixed(3) }
+                          {diff>0?'+':''}{Math.abs(diff).toFixed(3)}
                         </span>
                       </div>
                     )
@@ -1204,12 +1512,10 @@ export default function Views2DPage() {
                 </div>
               </div>
             </>
-          )}
-
-          {!geo && (
+          ) : (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center py-12">
               <div className="text-4xl opacity-20">📊</div>
-              <div className="text-body-sm text-md-on-surface-variant">Analysis output appears here.</div>
+              <div className="text-body-sm text-md-on-surface-variant">Upload and analyse a vehicle to see results.</div>
             </div>
           )}
         </div>
