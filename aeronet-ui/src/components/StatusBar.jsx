@@ -33,9 +33,9 @@ export default function StatusBar({ result, history }) {
 }
 
 const S = {
-  dim:  { color: 'rgba(235,235,245,0.28)', fontFamily: "'IBM Plex Sans', sans-serif" },
+  dim:  { color: 'rgba(255,255,255,0.28)', fontFamily: "'IBM Plex Sans', sans-serif" },
   blue: { color: 'var(--blue)', fontFamily: "'IBM Plex Mono', monospace", fontVariantNumeric: 'tabular-nums' },
-  mono: { color: 'rgba(235,235,245,0.28)', fontFamily: "'IBM Plex Mono', monospace" },
+  mono: { color: 'rgba(255,255,255,0.28)', fontFamily: "'IBM Plex Mono', monospace" },
 }
 
 function SI({ children }) {
