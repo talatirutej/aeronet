@@ -148,6 +148,11 @@ export async function getSurrogateStatus() {
   return res.json()
 }
 
+// ── Backwards-compatibility aliases ──────────────────────────────────────────
+// The existing predict.js in the repo imports these names — keep them working.
+
+export const predictRemote = predictFullCar
+
 // ── Image analysis (REAL Moondream2) ─────────────────────────────────────────
 
 export async function analyzeImage(imageFile) {
