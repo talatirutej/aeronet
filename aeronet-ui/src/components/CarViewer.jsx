@@ -1,5 +1,5 @@
 // CarViewer.jsx — 3D pressure viewer for full cars AND car parts.
-// Auto-scales camera and point size from the result bbox.
+// Uses project CSS variables only — no Tailwind, no M3 tokens.
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 
 import { useMemo, useRef, useEffect } from 'react'
@@ -8,16 +8,13 @@ import { OrbitControls, GizmoHelper, GizmoViewport, Grid } from '@react-three/dr
 import * as THREE from 'three'
 import { cpToColor } from '../lib/predict'
 
-// ── Cp → RGB colour (unchanged) ───────────────────────────────────────────────
-// Imported from predict.js so the colour ramp stays in one place.
-
-// ── Auto-scaling camera based on bbox ─────────────────────────────────────────
+// ── Auto-scaling camera ───────────────────────────────────────────────────────
 
 function CameraRig({ bbox }) {
   const { camera, controls } = useThree()
   useEffect(() => {
     if (!bbox) return
-    const size   = new THREE.Vector3(
+    const size = new THREE.Vector3(
       bbox.max[0] - bbox.min[0],
       bbox.max[1] - bbox.min[1],
       bbox.max[2] - bbox.min[2],
@@ -29,12 +26,7 @@ function CameraRig({ bbox }) {
     )
     const maxDim = Math.max(size.x, size.y, size.z)
     const dist   = maxDim * 2.2
-
-    camera.position.set(
-      centre.x + dist * 0.7,
-      centre.y + dist * 0.5,
-      centre.z + dist * 0.6,
-    )
+    camera.position.set(centre.x + dist * 0.7, centre.y + dist * 0.5, centre.z + dist * 0.6)
     camera.near = maxDim * 0.001
     camera.far  = maxDim * 50
     camera.updateProjectionMatrix()
@@ -48,7 +40,6 @@ function CameraRig({ bbox }) {
 function PointCloudMesh({ positions, pressures, bbox }) {
   const ref = useRef()
 
-  // Point size: smaller for parts (bbox diagonal < 1m), larger for full cars
   const pointSize = useMemo(() => {
     if (!bbox) return 0.025
     const diag = Math.sqrt(
@@ -72,7 +63,6 @@ function PointCloudMesh({ positions, pressures, bbox }) {
     return geom
   }, [positions, pressures])
 
-  // Slow auto-rotate only when not interacting
   useFrame((state, delta) => {
     if (ref.current && !state.controls?.isInteracting)
       ref.current.rotation.z += delta * 0.025
@@ -85,18 +75,18 @@ function PointCloudMesh({ positions, pressures, bbox }) {
   )
 }
 
-// ── Empty state (wireframe placeholder) ───────────────────────────────────────
+// ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState() {
   return (
     <group>
       <mesh position={[0, 0, 0.5]}>
         <boxGeometry args={[4.5, 1.8, 1.2]} />
-        <meshBasicMaterial wireframe color="#40484C" transparent opacity={0.45} />
+        <meshBasicMaterial wireframe color="#3A3A3C" transparent opacity={0.45} />
       </mesh>
       <mesh position={[0.3, 0, 1.3]}>
         <boxGeometry args={[2.2, 1.5, 0.8]} />
-        <meshBasicMaterial wireframe color="#40484C" transparent opacity={0.3} />
+        <meshBasicMaterial wireframe color="#3A3A3C" transparent opacity={0.3} />
       </mesh>
     </group>
   )
@@ -120,17 +110,23 @@ function FlowArrow({ scale = 1 }) {
   )
 }
 
+// ── Shared overlay card style ─────────────────────────────────────────────────
+
+const OC = {
+  background: 'rgba(28,28,30,0.85)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+  border: '0.5px solid rgba(255,255,255,0.08)',
+  borderRadius: 10,
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function CarViewer({ data, isLoading }) {
-  // data can be:
-  //   result.pointCloud  (older shape, full car)
-  //   result.viewer.points (newer shape, both car and part)
   const pointsData = data?.viewer?.points ?? data?.pointCloud ?? null
   const bbox       = pointsData?.bbox ?? null
   const isPart     = data?.partType != null
 
-  // Determine camera starting position from bbox diagonal
   const camPos = useMemo(() => {
     if (!bbox) return [6, 5, 4]
     const diag = Math.sqrt(
@@ -143,87 +139,112 @@ export default function CarViewer({ data, isLoading }) {
   }, [bbox])
 
   return (
-    <div className="relative w-full h-full overflow-hidden cfd-grid" style={{ background: '#0A0A0A' }}>
+    <div className="cfd-grid" style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#0A0A0A' }}>
 
-      {/* Scan animation during inference */}
+      {/* Scan animation */}
       {isLoading && (
-        <div className="absolute inset-0 z-10 pointer-events-none">
-          <div className="absolute inset-x-0 h-px animate-scan"
-            style={{ background: '#82CFFF', boxShadow: '0 0 20px 4px rgba(130,207,255,0.6)' }} />
-          <div className="absolute inset-0 animate-pulse" style={{ background: 'rgba(130,207,255,0.03)' }} />
+        <div style={{ position: 'absolute', inset: 0, zIndex: 10, pointerEvents: 'none' }}>
+          <div className="anim-scan" style={{
+            position: 'absolute', left: 0, right: 0, height: 1,
+            background: 'var(--teal)',
+            boxShadow: '0 0 20px 4px rgba(64,203,224,0.5)',
+          }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(64,203,224,0.025)' }} />
         </div>
       )}
 
-      {/* Axis legend */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10
-                      bg-m3-surface1 rounded-full px-4 h-8 flex items-center gap-3
-                      border border-m3-outlineVar shadow-elev1">
-        <span className="text-label-md text-m3-primary uppercase tracking-wider">
+      {/* Axis legend — top centre */}
+      <div style={{
+        ...OC,
+        position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 10, display: 'flex', alignItems: 'center', gap: 10,
+        padding: '0 16px', height: 32,
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--blue)' }}>
           {isPart ? 'Part' : 'Inflow'}
         </span>
-        <span className="text-body-sm text-m3-onSurfVar">→ +X</span>
-        <span className="w-px h-3 bg-m3-outlineVar" />
-        <span className="text-label-md text-m3-onSurfVar uppercase tracking-wider">Up</span>
-        <span className="text-body-sm text-m3-onSurfVar">+Z</span>
+        <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>→ +X</span>
+        <div style={{ width: 0.5, height: 12, background: 'var(--sep)' }} />
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>Up</span>
+        <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>+Z</span>
       </div>
 
-      {/* Part label badge */}
+      {/* Part label badge — top left */}
       {isPart && data?.partType && (
-        <div className="absolute top-3 left-3 z-10
-                        bg-m3-surface1 rounded-lg px-3 py-1.5 border border-m3-outlineVar">
-          <div className="text-label-sm text-m3-primary uppercase tracking-wider">Part Mode</div>
-          <div className="text-body-sm text-m3-onBg capitalize font-medium">
+        <div style={{ ...OC, position: 'absolute', top: 12, left: 12, zIndex: 10, padding: '8px 12px' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--blue)', marginBottom: 3 }}>
+            Part Mode
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500, textTransform: 'capitalize' }}>
             {data.partType.replace(/_/g, ' ')}
           </div>
           {data.deltaCd !== undefined && (
-            <div className={`text-label-sm font-mono font-bold mt-0.5
-              ${data.deltaCd < 0 ? 'text-m3-ok' : 'text-m3-err'}`}>
+            <div style={{
+              fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, marginTop: 3,
+              color: data.deltaCd < 0 ? 'var(--green)' : 'var(--red)',
+            }}>
               ΔCd {data.deltaCd > 0 ? '+' : ''}{data.deltaCd.toFixed(4)}
             </div>
           )}
         </div>
       )}
 
-      {/* Cp colorbar */}
+      {/* Cp colorbar — right centre */}
       {pointsData && (
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 z-10 animate-fade-in
-                        bg-m3-surface1 rounded-lg p-3 flex flex-col items-center gap-2
-                        border border-m3-outlineVar shadow-elev1">
-          <span className="text-label-sm text-m3-onSurfVar uppercase tracking-wider">Cp</span>
-          <div className="w-3 h-36 rounded"
-            style={{ background: 'linear-gradient(to bottom, #ef4444, #fbbf24, #84cc16, #22d3ee, #2147d9)' }} />
-          <div className="flex flex-col items-center text-label-sm text-m3-onSurfVar font-mono gap-1">
-            <span>+1.0</span>
-            <div className="flex-1 h-6" />
-            <span>-1.5</span>
+        <div style={{
+          ...OC,
+          position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+          zIndex: 10, padding: 12,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+          animation: 'fadeIn 0.3s ease both',
+        }}>
+          <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>Cp</span>
+          <div style={{
+            width: 10, height: 140, borderRadius: 5,
+            background: 'linear-gradient(to bottom, #ef4444, #fbbf24, #84cc16, #22d3ee, #2147d9)',
+          }} />
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontFamily: "'IBM Plex Mono', monospace" }}>+1.0</span>
+            <div style={{ height: 20 }} />
+            <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontFamily: "'IBM Plex Mono', monospace" }}>-1.5</span>
           </div>
         </div>
       )}
 
-      {/* Status chip */}
-      <div className="absolute bottom-3 left-3 z-10
-                      bg-m3-surface1 rounded-full px-3 h-7 flex items-center gap-2
-                      border border-m3-outlineVar">
-        <span className={`w-2 h-2 rounded-full ${pointsData ? 'animate-pulse-slow' : ''}`}
-          style={{ background: pointsData ? '#34D399' : '#8A9296' }} />
-        <span className="text-label-sm text-m3-onSurfVar uppercase tracking-wider">
+      {/* Status chip — bottom left */}
+      <div style={{
+        ...OC,
+        position: 'absolute', bottom: 12, left: 12, zIndex: 10,
+        display: 'flex', alignItems: 'center', gap: 7,
+        padding: '0 12px', height: 28, borderRadius: 14,
+      }}>
+        <span style={{
+          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+          background: pointsData ? 'var(--green)' : 'var(--bg4)',
+          boxShadow: pointsData ? '0 0 5px var(--green)' : 'none',
+          ...(pointsData ? { animation: 'pulse 2.5s ease-in-out infinite' } : {}),
+        }} />
+        <span style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>
           {isLoading ? 'Inferring' : pointsData ? (isPart ? 'Part · Live' : 'Live') : 'Idle'}
         </span>
       </div>
 
       {/* Corner marks */}
-      {['top-3 left-3', 'top-3 right-3 rotate-90', 'bottom-3 right-3 rotate-180', 'bottom-3 left-3 -rotate-90'].map((cls, i) => (
-        <div key={i} className={`absolute z-10 pointer-events-none ${cls}`}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M2 7L2 2L7 2" stroke="#82CFFF" strokeWidth="1.5" opacity="0.4" strokeLinecap="round" />
+      {[
+        { style: { top: 12, left: 12 },  rotate: '0deg'   },
+        { style: { top: 12, right: 12 }, rotate: '90deg'  },
+        { style: { bottom: 12, right: 12 }, rotate: '180deg' },
+        { style: { bottom: 12, left: 12 }, rotate: '270deg' },
+      ].map(({ style, rotate }, i) => (
+        <div key={i} style={{ position: 'absolute', zIndex: 10, pointerEvents: 'none', ...style }}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: `rotate(${rotate})` }}>
+            <path d="M2 7L2 2L7 2" stroke="var(--teal)" strokeWidth="1.5" opacity="0.35" strokeLinecap="round" />
           </svg>
         </div>
       ))}
 
-      <Canvas
-        camera={{ position: camPos, fov: 38, near: 0.001, far: 500 }}
-        dpr={[1, 2]}
-      >
+      {/* Three.js canvas */}
+      <Canvas camera={{ position: camPos, fov: 38, near: 0.001, far: 500 }} dpr={[1, 2]}>
         <color attach="background" args={['#0A0A0A']} />
         <ambientLight intensity={0.4} />
         <directionalLight position={[5, 5, 5]} intensity={0.6} />
@@ -235,26 +256,19 @@ export default function CarViewer({ data, isLoading }) {
         />
 
         {pointsData
-          ? <PointCloudMesh
-              positions={pointsData.positions}
-              pressures={pointsData.pressures}
-              bbox={bbox}
-            />
+          ? <PointCloudMesh positions={pointsData.positions} pressures={pointsData.pressures} bbox={bbox} />
           : <EmptyState />
         }
 
-        <FlowArrow scale={bbox
-          ? Math.max(0.2, (bbox.max[0]-bbox.min[0]) * 0.6)
-          : 1}
-        />
+        <FlowArrow scale={bbox ? Math.max(0.2, (bbox.max[0]-bbox.min[0]) * 0.6) : 1} />
 
-        <OrbitControls enablePan enableZoom enableRotate minDistance={0.05} maxDistance={200}
+        <OrbitControls
+          enablePan enableZoom enableRotate minDistance={0.05} maxDistance={200}
           target={bbox
             ? [(bbox.min[0]+bbox.max[0])/2, (bbox.min[1]+bbox.max[1])/2, (bbox.min[2]+bbox.max[2])/2]
             : [0, 0, 0.7]}
         />
 
-        {/* Camera auto-adjustment when bbox changes */}
         <CameraRig bbox={bbox} />
 
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
