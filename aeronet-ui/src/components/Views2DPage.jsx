@@ -540,7 +540,7 @@ export default function Views2DPage() {
       setUrlMode(false)
       setStage('ready')
     } catch(e) {
-      setUrlError(\`Could not load image: \${e.message}\`)
+      setUrlError(`Could not load image: ${e.message}`)
       setStage('idle')
     }
   }, [])
