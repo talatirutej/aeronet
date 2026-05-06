@@ -28,6 +28,12 @@ export default function StatusBar({ result, history }) {
           <span style={{ color: 'var(--green)' }}>Ready</span>
         </SI>
       </div>
+      {/* copyright */}
+      <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', top: 0, bottom: 0, display: 'flex', alignItems: 'center', pointerEvents: 'none' }}>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Sans', sans-serif", whiteSpace: 'nowrap' }}>
+          © 2026 Rutej Talati
+        </span>
+      </div>
     </footer>
   )
 }
@@ -44,3 +50,4 @@ function SI({ children }) {
 function V() {
   return <span style={{ width: 0.5, height: 10, background: 'var(--sep)', display: 'inline-block', flexShrink: 0 }} />
 }
+
