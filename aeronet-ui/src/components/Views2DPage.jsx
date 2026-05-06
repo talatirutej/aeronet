@@ -81,7 +81,113 @@ function cpToRgb(cp){const t=Math.max(0,Math.min(1,(cp+1.5)/2.5));const stops=[[
 function getDragBreakdown(bt){const d={fastback:[{name:'Pressure',pct:0.38,c:'#FF453A'},{name:'Friction',pct:0.22,c:'#FF9F0A'},{name:'Induced',pct:0.16,c:'#30D158'},{name:'Wheels',pct:0.14,c:'#40CBE0'},{name:'Cooling',pct:0.10,c:'#0A84FF'}],notchback:[{name:'Pressure',pct:0.40,c:'#FF453A'},{name:'Friction',pct:0.20,c:'#FF9F0A'},{name:'Induced',pct:0.18,c:'#30D158'},{name:'Wheels',pct:0.14,c:'#40CBE0'},{name:'Cooling',pct:0.08,c:'#0A84FF'}]};return d[bt]??d.notchback}
 
 // ── SVG views (kept exactly — only label text updated) ─────────────────────
-function SideView({g,cpOn,showSep,showIso}){const W=620,H=240,PAD=32;const bLen=W-PAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=H*0.52,gY=H-18,sill=gY-rideH,roofY=sill-bH;const x=f=>PAD+f*bLen;const hx=x(g.hoodRatio),chx=x(g.hoodRatio+g.cabinRatio),rX=x(1.0);const wsH=bH*g.cabinH,wsRad=(90-g.wsAngleDeg)*Math.PI/180,wsRun=wsH/Math.tan(Math.max(0.1,wsRad));const aTx=hx+wsRun,aBy=sill-bH*0.74,hoodY=sill-bH*0.50,cowlY=sill-bH*0.72,roofMidX=(aTx+chx)*0.50,sag=g.bodyType==='suv'?bH*0.01:g.bodyType==='estate'?0:bH*0.015;const bt=g.bodyType;let rearSVG='';if(bt==='fastback'||bt==='coupe'){const c1=x(g.hoodRatio+g.cabinRatio*0.82),c2=x(g.hoodRatio+g.cabinRatio*1.05);rearSVG=[`Q ${c1} ${roofY+sag} ${chx+8} ${roofY+bH*0.10}`,`C ${c2} ${sill-bH*0.38} ${rX-10} ${sill-bH*0.28} ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='notchback'){const deckY=sill-bH*0.56;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${x(g.hoodRatio+g.cabinRatio+0.02)} ${roofY+sag}`,`Q ${rX-14} ${roofY+sag+4} ${rX} ${deckY}`,`L ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='estate'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-5} ${roofY+sag+3} ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='suv'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-10} ${roofY+sag+8} ${rX} ${sill-bH*0.20}`].join(' ')}else if(bt==='pickup'){const bedTopY=sill-bH*0.52;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${chx} ${bedTopY}`,`L ${rX-5} ${bedTopY}`,`Q ${rX} ${bedTopY} ${rX} ${sill-bH*0.14}`].join(' ')}else{rearSVG=[`Q ${chx+14} ${roofY+bH*0.10} ${rX-18} ${sill-bH*0.40}`,`Q ${rX} ${sill-bH*0.32} ${rX} ${sill-bH*0.16}`].join(' ')}
+function SideView({g,cpOn,showSep,showIso}){
+  // If we have real contour points from the backend, render them directly
+  const contourPts   = g?._contourPts
+  const keypoints    = g?._keypoints
+  const W=620,H=260,PAD=28
+
+  if (contourPts && contourPts.length > 10) {
+    // Render real SVG path from contour data
+    const scale_x = (W - PAD*2)
+    const scale_y = (H - 40)
+    const off_x   = PAD
+    const off_y   = 20
+
+    // Build SVG path from normalised points
+    const pts = contourPts.map(([nx, ny]) => [
+      off_x + nx * scale_x,
+      off_y + ny * scale_y
+    ])
+    const pathD = pts.map((p, i) => `${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z'
+
+    // Cp color bands (vertical slices, same as before)
+    const cpBands = Array.from({length:14}, (_,i) => {
+      const f=i/14, cp=(0.9*(1-Math.pow(f-0.3,2)*3)-0.15)*(g.Cd/0.30)
+      return { x: off_x + f*scale_x, w: scale_x/14+1, color: cpToRgb(cp) }
+    })
+
+    // Wheel circles from keypoints
+    const wheels = (keypoints?.wheels ?? []).map(w => ({
+      cx: off_x + w.nx * scale_x,
+      cy: off_y + w.ny * scale_y,
+      r:  Math.max(8, w.r / 800 * scale_x),
+    }))
+
+    // Roofline accent from keypoints
+    const roofPts = (keypoints?.roofline ?? [])
+    const roofPath = roofPts.length > 1
+      ? roofPts.map((p,i) => `${i===0?'M':'L'}${(off_x+p.nx*scale_x).toFixed(1)},${(off_y+p.ny*scale_y).toFixed(1)}`).join(' ')
+      : null
+
+    const gY = H - 16
+
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <clipPath id="sclip"><path d={pathD}/></clipPath>
+          <linearGradient id="bodygrd" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgba(255,255,255,0.08)"/>
+            <stop offset="100%" stopColor="rgba(0,0,0,0)"/>
+          </linearGradient>
+        </defs>
+
+        {/* Shadow */}
+        <ellipse cx={W/2} cy={gY+5} rx={scale_x*0.48} ry={7} fill="rgba(0,0,0,0.45)"/>
+        <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>
+
+        {/* Cp bands clipped to real contour */}
+        {cpOn && (
+          <g clipPath="url(#sclip)">
+            {cpBands.map((b,i) => <rect key={i} x={b.x} y={0} width={b.w} height={H} fill={b.color} opacity={0.88}/>)}
+          </g>
+        )}
+
+        {/* Main body — real contour */}
+        <path d={pathD} fill={cpOn?'rgba(4,8,16,0.25)':'#0e1a24'} stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
+
+        {/* Gloss highlight overlay */}
+        <path d={pathD} fill="url(#bodygrd)" clipPath="url(#sclip)" opacity="0.4"/>
+
+        {/* Roofline accent */}
+        {roofPath && (
+          <path d={roofPath} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="1.5" strokeDasharray="4 3"/>
+        )}
+
+        {/* Wheels from Hough detection */}
+        {wheels.map((w,i) => (
+          <g key={i}>
+            <circle cx={w.cx} cy={w.cy} r={w.r} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/>
+            <circle cx={w.cx} cy={w.cy} r={w.r*0.65} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>
+            {[0,72,144,216,288].map(a => {
+              const rad=a*Math.PI/180
+              return <path key={a} d={`M ${w.cx+Math.cos(rad)*w.r*0.22} ${w.cy+Math.sin(rad)*w.r*0.22} L ${w.cx+Math.cos(rad+0.28)*w.r*0.62} ${w.cy+Math.sin(rad+0.28)*w.r*0.62} Q ${w.cx+Math.cos(rad)*w.r*0.65} ${w.cy+Math.sin(rad)*w.r*0.65} ${w.cx+Math.cos(rad-0.28)*w.r*0.62} ${w.cy+Math.sin(rad-0.28)*w.r*0.62} Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>
+            })}
+            <circle cx={w.cx} cy={w.cy} r={w.r*0.14} fill="#1E3040"/>
+          </g>
+        ))}
+
+        {/* Separation line indicator */}
+        {showSep && keypoints?.bumpers?.rear && (
+          <line
+            x1={off_x + keypoints.bumpers.rear.nx * scale_x}
+            y1={off_y}
+            x2={off_x + keypoints.bumpers.rear.nx * scale_x}
+            y2={gY}
+            stroke="rgba(255,100,80,0.5)" strokeWidth="1" strokeDasharray="3 2"
+          />
+        )}
+
+        {/* Labels */}
+        <text x={W/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
+          SIDE · {(g.bodyType??'').toUpperCase()} · {contourPts.length}pts
+        </text>
+      </svg>
+    )
+  }
+
+  // ── Fallback: geometric SVG (original code, when no contour available) ──
+  const W2=620,H2=240,PAD2=32; // renamed to avoid conflictconst bLen=W-PAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=H*0.52,gY=H-18,sill=gY-rideH,roofY=sill-bH;const x=f=>PAD+f*bLen;const hx=x(g.hoodRatio),chx=x(g.hoodRatio+g.cabinRatio),rX=x(1.0);const wsH=bH*g.cabinH,wsRad=(90-g.wsAngleDeg)*Math.PI/180,wsRun=wsH/Math.tan(Math.max(0.1,wsRad));const aTx=hx+wsRun,aBy=sill-bH*0.74,hoodY=sill-bH*0.50,cowlY=sill-bH*0.72,roofMidX=(aTx+chx)*0.50,sag=g.bodyType==='suv'?bH*0.01:g.bodyType==='estate'?0:bH*0.015;const bt=g.bodyType;let rearSVG='';if(bt==='fastback'||bt==='coupe'){const c1=x(g.hoodRatio+g.cabinRatio*0.82),c2=x(g.hoodRatio+g.cabinRatio*1.05);rearSVG=[`Q ${c1} ${roofY+sag} ${chx+8} ${roofY+bH*0.10}`,`C ${c2} ${sill-bH*0.38} ${rX-10} ${sill-bH*0.28} ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='notchback'){const deckY=sill-bH*0.56;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${x(g.hoodRatio+g.cabinRatio+0.02)} ${roofY+sag}`,`Q ${rX-14} ${roofY+sag+4} ${rX} ${deckY}`,`L ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='estate'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-5} ${roofY+sag+3} ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='suv'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-10} ${roofY+sag+8} ${rX} ${sill-bH*0.20}`].join(' ')}else if(bt==='pickup'){const bedTopY=sill-bH*0.52;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${chx} ${bedTopY}`,`L ${rX-5} ${bedTopY}`,`Q ${rX} ${bedTopY} ${rX} ${sill-bH*0.14}`].join(' ')}else{rearSVG=[`Q ${chx+14} ${roofY+bH*0.10} ${rX-18} ${sill-bH*0.40}`,`Q ${rX} ${sill-bH*0.32} ${rX} ${sill-bH*0.16}`].join(' ')}
 const bodyPath=[`M ${x(0.03)} ${gY-1}`,`C ${PAD+2} ${sill+4} ${PAD} ${sill-bH*0.18} ${PAD} ${sill-bH*0.32}`,`L ${PAD} ${sill-bH*0.47}`,`Q ${x(0.04)} ${hoodY-bH*0.03} ${x(0.10)} ${hoodY}`,`Q ${x(0.22)} ${hoodY} ${hx} ${cowlY}`,`L ${aTx} ${roofY}`,`Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,rearSVG,`L ${rX} ${sill}`,`Q ${rX-3} ${sill+2} ${rX-bLen*0.055} ${gY-1}`,`L ${x(0.03)} ${gY-1}`,'Z'].join(' ')
 const dloPath=(()=>{const dloFrontY=aBy,dloRoofL=roofY+3,dloRoofR=roofY+sag+3;let rear='';if(bt==='fastback'||bt==='coupe')rear=`Q ${chx+8} ${roofY+bH*0.14} ${chx+26} ${dloFrontY+bH*0.10}`;else if(bt==='notchback')rear=`L ${chx-4} ${dloFrontY+2}`;else if(bt==='hatchback')rear=`Q ${chx+10} ${roofY+bH*0.12} ${chx+16} ${dloFrontY+4}`;else rear=`L ${chx-4} ${dloFrontY+2}`;return[`M ${hx+5} ${dloFrontY}`,`L ${aTx+3} ${dloRoofL}`,`Q ${roofMidX} ${dloRoofL} ${chx-4} ${dloRoofR}`,rear,`L ${hx+5} ${dloFrontY}`,'Z'].join(' ')})()
 const wR=bH*(bt==='suv'||bt==='pickup'?0.210:0.178),w1x=x(g.w1),w2x=x(g.w2),wY=gY-wR
@@ -120,7 +226,8 @@ export default function Views2DPage() {
   const [file,     setFile]       = useState(null)
   const [preview,  setPreview]    = useState(null)
   const [stage,    setStage]      = useState('idle')
-  const [aiInsight, setAiInsight] = useState(null)
+  const [aiInsight,   setAiInsight]   = useState(null)
+  const [contourData, setContourData] = useState(null)
   const [geo,      setGeo]        = useState(null)
   const [error,    setError]      = useState(null)
   const [activeView, setActiveView] = useState('side')
@@ -167,7 +274,7 @@ export default function Views2DPage() {
       setUrlMode(false)
       setStage('ready')
     } catch(e) {
-      setUrlError(`Could not load image: ${e.message}`)
+      setUrlError(\`Could not load image: \${e.message}\`)
       setStage('idle')
     }
   }, [])
@@ -207,6 +314,15 @@ export default function Views2DPage() {
         return await res.json()
       } catch { return null }
     })()
+    // Contour analysis — real CV outline
+    const contourPromise = (async () => {
+      try {
+        const fd = new FormData(); fd.append('file', file)
+        const res = await fetch(`${BACKEND}/analyze-contour`, { method: 'POST', body: fd })
+        if (!res.ok) return null
+        return await res.json()
+      } catch { return null }
+    })()
 
     // Canvas finishes first — show preliminary geometry immediately
     const canvasResult = await canvasPromise
@@ -215,8 +331,11 @@ export default function Views2DPage() {
       setStage('refining') // show "AI enhancing…" state
     }
 
-    // Wait for Moondream2
-    const aiResult = await backendPromise
+    // Wait for contour data and AI in parallel
+    const [aiResult, contourResult] = await Promise.all([backendPromise, contourPromise])
+    if (contourResult?.outline_pts) {
+      setContourData(contourResult)
+    }
     const canvas = canvasResult._error ? null : canvasResult
 
     if (aiResult?.image_type === 'full_car' && aiResult.analysis) {
@@ -271,6 +390,29 @@ export default function Views2DPage() {
     } else if (!canvas) {
       setError('Image analysis failed. Try a clearer side-on photo of the vehicle.')
     }
+    // Merge contour geometry into the result if we have it
+    if (contourResult?.geometry) {
+      const cg = contourResult.geometry
+      setGeo(prev => prev ? {
+        ...prev,
+        // Override with accurate contour-derived measurements
+        bodyType:    cg.bodyType    ?? prev.bodyType,
+        aspectRatio: cg.aspectRatio ?? prev.aspectRatio,
+        hoodRatio:   cg.hoodRatio   ?? prev.hoodRatio,
+        cabinRatio:  cg.cabinRatio  ?? prev.cabinRatio,
+        bootRatio:   cg.bootRatio   ?? prev.bootRatio,
+        wsAngleDeg:  cg.wsAngleDeg  ?? prev.wsAngleDeg,
+        rearDrop:    cg.rearDrop    ?? prev.rearDrop,
+        cabinH:      cg.cabinH      ?? prev.cabinH,
+        rideH:       cg.rideH       ?? prev.rideH,
+        w1:          cg.w1          ?? prev.w1,
+        w2:          cg.w2          ?? prev.w2,
+        confidence:  cg.confidence  ?? prev.confidence,
+        _contourPts: contourResult.outline_pts,
+        _keypoints:  contourResult.keypoints,
+      } : { ...cg, _contourPts: contourResult.outline_pts, _keypoints: contourResult.keypoints })
+    }
+
     setStage('done')
   }
 
