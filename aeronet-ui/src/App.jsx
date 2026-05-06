@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
+// StatCFD — by statinsite.com
 
 import { useState, useCallback } from 'react'
 import AppBar          from './components/AppBar'
@@ -11,6 +12,7 @@ import SweepPage       from './components/SweepPage'
 import SensitivityPage from './components/SensitivityPage'
 import ReportPage      from './components/ReportPage'
 import RoadmapPage     from './components/RoadmapPage'
+import GlobalAIChat    from './components/GlobalAIChat'
 import { predict }     from './lib/predict'
 
 export default function App() {
@@ -22,6 +24,9 @@ export default function App() {
   const [uploadedFile, setUploadedFile] = useState(null)
   const [activeModel,  setActiveModel]  = useState('GradBoost-DrivAerML')
   const [backendStatus]                 = useState(null)
+
+  // meshStats lifted from CarViewer so GlobalAIChat can use them
+  const [meshStats, setMeshStats] = useState(null)
 
   const switchTab = useCallback((id) => {
     if (id === activeTab) return
@@ -37,26 +42,26 @@ export default function App() {
       const data = await predict(file, params)
       setResult(data)
       setHistory(h => [{
-        id: Date.now(),
-        label: `${file.name.replace(/\.[^.]+$/, '')} · ${params.bodyType}`,
-        Cd: data.Cd,
+        id:          Date.now(),
+        label:       `${file.name.replace(/\.[^.]+$/, '')} · ${params.bodyType ?? params.partType ?? 'unknown'}`,
+        Cd:          data.Cd,
         inferenceMs: data.inferenceMs,
       }, ...h])
     } catch (e) { console.error(e) }
     finally { setIsLoading(false) }
   }, [])
 
-  // Pass the full result to CarViewer — it reads result.pointCloud or result.viewer.points internally.
   const viewerData = result ?? null
 
   return (
     <div style={{
       height: '100vh',
       display: 'flex',
-      flexDirection: 'row',   // ← horizontal: sidebar + content
+      flexDirection: 'row',
       background: 'var(--bg0)',
       overflow: 'hidden',
     }}>
+
       {/* ── Left sidebar ── */}
       <AppBar
         backendStatus={backendStatus}
@@ -66,30 +71,31 @@ export default function App() {
         onModelChange={setActiveModel}
       />
 
-      {/* ── Right: main content + status bar ── */}
+      {/* ── Main content ── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
-        {/* Page content */}
+        {/* Page */}
         <div style={{
-          flex: 1,
-          overflow: 'hidden',
-          position: 'relative',
+          flex: 1, overflow: 'hidden', position: 'relative',
           animation: animating ? 'pageSlideIn 0.26s cubic-bezier(0.22,1,0.36,1) both' : 'none',
         }}>
           {activeTab === 'cfd' && (
             <main style={{
-              display: 'grid',
-              height: '100%',
+              display: 'grid', height: '100%',
               gridTemplateColumns: '300px 1fr 300px',
-              overflow: 'hidden',
-              gap: '0.5px',
-              background: 'var(--sep)',
+              overflow: 'hidden', gap: '0.5px', background: 'var(--sep)',
             }}>
               <aside style={{ background: 'var(--bg0)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 <InputPanel onSubmit={handleSubmit} isLoading={isLoading} />
               </aside>
               <section style={{ background: '#000', position: 'relative', overflow: 'hidden' }}>
-                <CarViewer data={viewerData} isLoading={isLoading} uploadedFile={uploadedFile} />
+                {/* Pass onMeshStats up so GlobalAIChat gets mesh context */}
+                <CarViewer
+                  data={viewerData}
+                  isLoading={isLoading}
+                  uploadedFile={uploadedFile}
+                  onMeshStats={setMeshStats}
+                />
               </section>
               <aside style={{ background: 'var(--bg0)', overflow: 'hidden' }}>
                 <ResultsPanel result={result} history={history} isLoading={isLoading} />
@@ -105,6 +111,13 @@ export default function App() {
 
         <StatusBar result={result} history={history} />
       </div>
+
+      {/* ── Global AI chat — bottom right, all pages ── */}
+      <GlobalAIChat
+        result={result}
+        meshStats={meshStats}
+        activeTab={activeTab}
+      />
 
       <style>{`
         @keyframes pageSlideIn {
