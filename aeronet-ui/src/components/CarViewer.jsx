@@ -13,7 +13,7 @@
 
 import { useMemo, useRef, useEffect, useState, useCallback, Suspense } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, GizmoHelper, GizmoViewport, Grid, Environment } from '@react-three/drei'
+import { OrbitControls, GizmoHelper, GizmoViewport, Grid } from '@react-three/drei'
 import * as THREE from 'three'
 import { cpToColor } from '../lib/predict'
 
@@ -202,12 +202,12 @@ function MeshObject({ meshData, cpField, renderMode, onStats }) {
     <group>
       {(renderMode==='solid'||renderMode==='both') && (
         <mesh geometry={geometry}>
-          <meshStandardMaterial vertexColors side={THREE.DoubleSide} roughness={0.5} metalness={0.08} />
+          <meshStandardMaterial vertexColors side={THREE.DoubleSide} roughness={0.35} metalness={0.05} color="#e8eaec" />
         </mesh>
       )}
       {(renderMode==='wire'||renderMode==='both') && (
         <mesh geometry={geometry}>
-          <meshBasicMaterial wireframe color="#4dd8e8" transparent opacity={renderMode==='both'?0.1:0.55} />
+          <meshBasicMaterial wireframe color="#ffffff" transparent opacity={renderMode==='both'?0.15:0.75} />
         </mesh>
       )}
     </group>
@@ -277,10 +277,10 @@ function EmptyState() {
   useFrame(({clock})=>{if(g.current)g.current.rotation.y=Math.sin(clock.getElapsedTime()*0.28)*0.12})
   return(
     <group ref={g}>
-      <mesh position={[0,0,0.3]}><boxGeometry args={[4,1.6,1.0]}/><meshBasicMaterial wireframe color="#1e2830" transparent opacity={0.5}/></mesh>
-      <mesh position={[0.2,0,1.0]}><boxGeometry args={[2.0,1.3,0.7]}/><meshBasicMaterial wireframe color="#1e2830" transparent opacity={0.3}/></mesh>
+      <mesh position={[0,0,0.3]}><boxGeometry args={[4,1.6,1.0]}/><meshBasicMaterial wireframe color="#ffffff" transparent opacity={0.55}/></mesh>
+      <mesh position={[0.2,0,1.0]}><boxGeometry args={[2.0,1.3,0.7]}/><meshBasicMaterial wireframe color="#ffffff" transparent opacity={0.3}/></mesh>
       {[-1.5,-0.8,0.8,1.5].map((xp,i)=>(
-        <mesh key={i} position={[xp,i%2===0?0.72:-0.72,-0.08]}><cylinderGeometry args={[0.36,0.36,0.24,24]}/><meshBasicMaterial wireframe color="#1e2830" transparent opacity={0.3}/></mesh>
+        <mesh key={i} position={[xp,i%2===0?0.72:-0.72,-0.08]}><cylinderGeometry args={[0.36,0.36,0.24,24]}/><meshBasicMaterial wireframe color="#ffffff" transparent opacity={0.3}/></mesh>
       ))}
     </group>
   )
@@ -527,21 +527,94 @@ export default function CarViewer({data,isLoading,uploadedFile,onMeshStats}) {
   }
 
   return(
-    <div style={{position:'relative',width:'100%',height:'100%',overflow:'hidden',background:'#050608'}} className="cfd-grid">
+    <div style={{position:'relative',width:'100%',height:'100%',overflow:'hidden',background:'#000000'}} className="cfd-grid">
 
-      {/* Toolbar */}
-      <div style={{position:'absolute',top:10,left:'50%',transform:'translateX(-50%)',zIndex:30,display:'flex',alignItems:'center',gap:2,...OC,padding:'4px 7px',boxShadow:'0 4px 24px rgba(0,0,0,0.45)'}}>
-        {[{id:'solid',l:'Surface'},{id:'wire',l:'Wire'},{id:'both',l:'Both'},{id:'cloud',l:'Cloud'}].map(m=>(
-          <TB key={m.id} icon={I[m.id]} label={m.l} active={renderMode===m.id} onClick={()=>setRenderMode(m.id)}/>
-        ))}
-        <Sep/>
-        <TB icon={I.flow}  label="Flow"     active={showFlow}  onClick={()=>setShowFlow(f=>!f)}  title="Toggle streamlines"/>
-        <TB icon={I.grid}  label="Grid"     active={showGrid}  onClick={()=>setShowGrid(g=>!g)}  title="Toggle ground grid"/>
-        <TB icon={I.env}   label="Env"      active={envLight}  onClick={()=>setEnvLight(e=>!e)}  title="Environment lighting"/>
-        <Sep/>
-        <TB icon={I.stats} label="Stats"    active={showStats} onClick={()=>setShowStats(s=>!s)} title="Mesh statistics"/>
-        <TB icon={I.ai}    label="AeroMind" active={showAI}    onClick={()=>setShowAI(a=>!a)}    title="AI assistant"/>
-        <TB icon={I.cam}                    onClick={screenshot}                                  title="Save screenshot"/>
+      {/* ── Viewer Navbar ── */}
+      <div style={{
+        position:'absolute',top:10,left:'50%',transform:'translateX(-50%)',
+        zIndex:30,display:'flex',alignItems:'center',gap:0,
+        background:'rgba(0,0,0,0.82)',backdropFilter:'blur(16px)',
+        border:'0.5px solid rgba(255,255,255,0.12)',borderRadius:12,
+        boxShadow:'0 4px 28px rgba(0,0,0,0.6)',overflow:'hidden',
+        userSelect:'none',
+      }}>
+        {/* Section: View Mode */}
+        <div style={{display:'flex',alignItems:'center',padding:'0 6px',gap:1,borderRight:'0.5px solid rgba(255,255,255,0.08)'}}>
+          <span style={{fontSize:9,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:'rgba(255,255,255,0.28)',padding:'0 6px',whiteSpace:'nowrap'}}>View</span>
+          {[
+            {id:'solid',label:'Surface'},
+            {id:'wire', label:'Wire'},
+            {id:'both', label:'Both'},
+            {id:'cloud',label:'Points'},
+          ].map(m=>(
+            <button key={m.id} onClick={()=>setRenderMode(m.id)} style={{
+              height:30,padding:'0 10px',border:'none',cursor:'pointer',borderRadius:7,
+              background:renderMode===m.id?'rgba(255,255,255,0.14)':'transparent',
+              color:renderMode===m.id?'#ffffff':'rgba(255,255,255,0.45)',
+              fontSize:12,fontWeight:renderMode===m.id?600:400,
+              fontFamily:"'IBM Plex Sans',sans-serif",
+              transition:'all 0.12s',whiteSpace:'nowrap',
+            }}
+            onMouseEnter={e=>{if(renderMode!==m.id)e.currentTarget.style.color='rgba(255,255,255,0.75)'}}
+            onMouseLeave={e=>{if(renderMode!==m.id)e.currentTarget.style.color='rgba(255,255,255,0.45)'}}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+        {/* Section: Overlays */}
+        <div style={{display:'flex',alignItems:'center',padding:'0 6px',gap:1,borderRight:'0.5px solid rgba(255,255,255,0.08)'}}>
+          <span style={{fontSize:9,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:'rgba(255,255,255,0.28)',padding:'0 6px',whiteSpace:'nowrap'}}>Show</span>
+          {[
+            {key:'flow', label:'Flow',    val:showFlow,  set:()=>setShowFlow(f=>!f)},
+            {key:'grid', label:'Grid',    val:showGrid,  set:()=>setShowGrid(g=>!g)},
+            {key:'light',label:'Lights',  val:envLight,  set:()=>setEnvLight(e=>!e)},
+          ].map(o=>(
+            <button key={o.key} onClick={o.set} style={{
+              height:30,padding:'0 10px',border:'none',cursor:'pointer',borderRadius:7,
+              background:o.val?'rgba(10,132,255,0.2)':'transparent',
+              color:o.val?'var(--blue)':'rgba(255,255,255,0.45)',
+              fontSize:12,fontWeight:o.val?600:400,
+              border:`0.5px solid ${o.val?'rgba(10,132,255,0.35)':'transparent'}`,
+              fontFamily:"'IBM Plex Sans',sans-serif",
+              transition:'all 0.12s',whiteSpace:'nowrap',
+            }}
+            onMouseEnter={e=>{if(!o.val)e.currentTarget.style.color='rgba(255,255,255,0.75)'}}
+            onMouseLeave={e=>{if(!o.val)e.currentTarget.style.color='rgba(255,255,255,0.45)'}}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {/* Section: Tools */}
+        <div style={{display:'flex',alignItems:'center',padding:'0 6px',gap:1}}>
+          <span style={{fontSize:9,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:'rgba(255,255,255,0.28)',padding:'0 6px',whiteSpace:'nowrap'}}>Tools</span>
+          {[
+            {key:'stats',label:'Stats',   val:showStats, set:()=>setShowStats(s=>!s)},
+            {key:'ai',   label:'AI Chat', val:showAI,    set:()=>setShowAI(a=>!a)},
+          ].map(o=>(
+            <button key={o.key} onClick={o.set} style={{
+              height:30,padding:'0 10px',border:'none',cursor:'pointer',borderRadius:7,
+              background:o.val?'rgba(10,132,255,0.2)':'transparent',
+              color:o.val?'var(--blue)':'rgba(255,255,255,0.45)',
+              fontSize:12,fontWeight:o.val?600:400,
+              border:`0.5px solid ${o.val?'rgba(10,132,255,0.35)':'transparent'}`,
+              fontFamily:"'IBM Plex Sans',sans-serif",
+              transition:'all 0.12s',whiteSpace:'nowrap',
+            }}
+            onMouseEnter={e=>{if(!o.val)e.currentTarget.style.color='rgba(255,255,255,0.75)'}}
+            onMouseLeave={e=>{if(!o.val)e.currentTarget.style.color='rgba(255,255,255,0.45)'}}>
+              {o.label}
+            </button>
+          ))}
+          <button onClick={screenshot} title="Save screenshot" style={{
+            height:30,padding:'0 10px',border:'none',cursor:'pointer',borderRadius:7,
+            background:'transparent',color:'rgba(255,255,255,0.45)',
+            fontSize:12,fontFamily:"'IBM Plex Sans',sans-serif",transition:'all 0.12s',
+          }}
+          onMouseEnter={e=>e.currentTarget.style.color='rgba(255,255,255,0.75)'}
+          onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,0.45)'}>
+            Save PNG
+          </button>
+        </div>
       </div>
 
       {/* Scan line / loading */}
@@ -613,13 +686,13 @@ export default function CarViewer({data,isLoading,uploadedFile,onMeshStats}) {
       {/* Canvas */}
       <div id="cfd-canvas" style={{position:'absolute',inset:0}}>
         <Canvas camera={{position:[5,3.5,4],fov:38,near:0.001,far:500}} dpr={[1,2]} gl={{preserveDrawingBuffer:true}}>
-          <color attach="background" args={['#050608']}/>
-          <ambientLight intensity={envLight?0.15:0.45}/>
-          <directionalLight position={[5,8,5]} intensity={envLight?0.25:0.75} castShadow/>
-          <directionalLight position={[-3,-2,-3]} intensity={0.18}/>
-          <pointLight position={[0,4,0]} intensity={0.25} color="#4dd8e8"/>
-          {envLight&&<Environment preset="night"/>}
-          {showGrid&&<Grid args={[20,20]} cellSize={0.3} cellThickness={0.3} cellColor="#191e22" sectionSize={1.5} sectionThickness={0.5} sectionColor="#1d2530" fadeDistance={12} fadeStrength={1} infiniteGrid/>}
+          <color attach="background" args={['#000000']}/>
+          <ambientLight intensity={envLight?0.6:0.8}/>
+          <directionalLight position={[5,8,5]} intensity={envLight?1.2:1.0} color="#ffffff" castShadow/>
+          <directionalLight position={[-3,-2,-3]} intensity={0.4} color="#aaccff"/>
+          <pointLight position={[0,4,0]} intensity={0.35} color="#ffffff"/>
+          {envLight&&<><rectAreaLight position={[0,5,3]} width={8} height={4} intensity={2} color="#ffffff"/><rectAreaLight position={[0,5,-3]} width={8} height={4} intensity={1} color="#4488cc"/></>}
+          {showGrid&&<Grid args={[20,20]} cellSize={0.3} cellThickness={0.3} cellColor="#1a1a1a" sectionSize={1.5} sectionThickness={0.8} sectionColor="#2a2a2a" fadeDistance={12} fadeStrength={1} infiniteGrid/>}
           <Suspense fallback={null}>
             {hasRealMesh&&renderMode!=='cloud'&&<MeshObject meshData={meshData} cpField={cpField} renderMode={renderMode} onStats={handleMeshStats}/>}
             {(showGrid||!hasRealMesh||renderMode==='cloud')&&pointsData&&!hasRealMesh&&<PointCloudMesh pointsData={pointsData}/>}
