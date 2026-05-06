@@ -89,13 +89,15 @@ export default function App() {
                 <InputPanel onSubmit={handleSubmit} isLoading={isLoading} />
               </aside>
               <section style={{ background: '#000', position: 'relative', overflow: 'hidden' }}>
-                {/* Pass onMeshStats up so GlobalAIChat gets mesh context */}
-                <CarViewer
-                  data={viewerData}
-                  isLoading={isLoading}
-                  uploadedFile={uploadedFile}
-                  onMeshStats={setMeshStats}
-                />
+                {/* Only mount WebGL canvas when CFD tab is active — prevents Context Lost */}
+                {activeTab === 'cfd' && (
+                  <CarViewer
+                    data={viewerData}
+                    isLoading={isLoading}
+                    uploadedFile={uploadedFile}
+                    onMeshStats={setMeshStats}
+                  />
+                )}
               </section>
               <aside style={{ background: 'var(--bg0)', overflow: 'hidden' }}>
                 <ResultsPanel result={result} history={history} isLoading={isLoading} />
