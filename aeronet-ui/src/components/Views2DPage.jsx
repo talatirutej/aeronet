@@ -451,6 +451,10 @@ export default function Views2DPage() {
           </div>
         )}
       </div>
+      {/* Copyright footer */}
+      <div style={{ textAlign: 'center', padding: '10px 0 14px', fontSize: 11, color: 'rgba(255,255,255,0.18)' }}>
+        © 2026 Rutej Talati · All rights reserved
+      </div>
     </div>
   )
 }
