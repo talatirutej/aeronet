@@ -85,13 +85,13 @@ function SideView({g,cpOn,showSep,showIso}){
   // If we have real contour points from the backend, render them directly
   const contourPts   = g?._contourPts
   const keypoints    = g?._keypoints
-  const W=620,H=260,PAD=28
+  const CW=620,CH=260,CPAD=28
 
   if (contourPts && contourPts.length > 10) {
     // Render real SVG path from contour data
-    const scale_x = (W - PAD*2)
-    const scale_y = (H - 40)
-    const off_x   = PAD
+    const scale_x = (CW - CPAD*2)
+    const scale_y = (CH - 40)
+    const off_x   = CPAD
     const off_y   = 20
 
     // Build SVG path from normalised points
@@ -123,7 +123,7 @@ function SideView({g,cpOn,showSep,showIso}){
     const gY = H - 16
 
     return (
-      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
         <defs>
           <clipPath id="sclip"><path d={pathD}/></clipPath>
           <linearGradient id="bodygrd" x1="0" y1="0" x2="0" y2="1">
@@ -133,8 +133,8 @@ function SideView({g,cpOn,showSep,showIso}){
         </defs>
 
         {/* Shadow */}
-        <ellipse cx={W/2} cy={gY+5} rx={scale_x*0.48} ry={7} fill="rgba(0,0,0,0.45)"/>
-        <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>
+        <ellipse cx={CW/2} cy={gY+5} rx={scale_x*0.48} ry={7} fill="rgba(0,0,0,0.45)"/>
+        <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>
 
         {/* Cp bands clipped to real contour */}
         {cpOn && (
@@ -179,7 +179,7 @@ function SideView({g,cpOn,showSep,showIso}){
         )}
 
         {/* Labels */}
-        <text x={W/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
+        <text x={CW/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
           SIDE · {(g.bodyType??'').toUpperCase()} · {contourPts.length}pts
         </text>
       </svg>
@@ -187,9 +187,9 @@ function SideView({g,cpOn,showSep,showIso}){
   }
 
   // ── Fallback: geometric SVG (when no real contour available) ──
-  const W=620,H=240,PAD=32
-  const bLen=W-PAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=H*0.52,gY=H-18,sill=gY-rideH,roofY=sill-bH
-  const xp=f=>PAD+f*bLen
+  const FW=620,FH=240,FPAD=32
+  const bLen=FW-FPAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=FH*0.52,gY=FH-18,sill=gY-rideH,roofY=sill-bH
+  const xp=f=>FPAD+f*bLen
   const hx=xp(g.hoodRatio),chx=xp(g.hoodRatio+g.cabinRatio),rX=xp(1.0)
   const wsH=bH*g.cabinH,wsRad=(90-g.wsAngleDeg)*Math.PI/180,wsRun=wsH/Math.tan(Math.max(0.1,wsRad))
   const aTx=hx+wsRun,hoodY=sill-bH*0.50,cowlY=sill-bH*0.72,roofMidX=(aTx+chx)*0.50
@@ -206,7 +206,7 @@ function SideView({g,cpOn,showSep,showIso}){
   const wR=bLen*0.082,w1x=xp(g.w1),w2x=xp(g.w2),wY=sill
   const N=16,cpBands=Array.from({length:N},(_,i)=>{const f=(i+0.5)/N;return{x:PAD+i*(bLen/N),w:bLen/N+1,c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd))}})
   const bodyPath=[
-    `M ${PAD} ${sill-bH*0.18}`,
+    `M ${FPAD} ${sill-bH*0.18}`,
     `Q ${PAD} ${sill-bH*0.55} ${hx} ${hoodY}`,
     `Q ${hx+wsRun*0.3} ${cowlY} ${aTx} ${roofY}`,
     `Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,
@@ -228,10 +228,10 @@ function SideView({g,cpOn,showSep,showIso}){
   const cpBandsSide = cpOn ? cpBands : []
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+    <svg viewBox={`0 0 ${FW} ${FH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <defs><clipPath id="sclip2"><path d={bodyPath}/></clipPath></defs>
-      <ellipse cx={W/2} cy={gY+6} rx={bLen*0.46} ry={8} fill="rgba(0,0,0,0.45)"/>
-      <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
+      <ellipse cx={FW/2} cy={gY+6} rx={bLen*0.46} ry={8} fill="rgba(0,0,0,0.45)"/>
+      <line x1={12} y1={gY} x2={FW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
       {cpOn&&<g clipPath="url(#sclip2)">{cpBandsSide.map((b,i)=><rect key={i} x={b.x} y={0} width={b.w} height={H} fill={b.c} opacity={0.85}/>)}</g>}
       <path d={bodyPath} fill={cpOn?'rgba(4,8,16,0.22)':'#0e1a24'} stroke="rgba(10,132,255,0.65)" strokeWidth="1.2"/>
       <path d={wsPath} fill="rgba(0,14,28,0.55)" stroke="rgba(10,132,255,0.45)" strokeWidth="0.9"/>
@@ -244,7 +244,7 @@ function SideView({g,cpOn,showSep,showIso}){
           <circle cx={wcx} cy={wcy} r={wR*0.14} fill="#1E3040"/>
         </g>
       ))}
-      <text x={W/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">SIDE · {g.bodyType?.toUpperCase()} · Cd {g.Cd?.toFixed(3)} · WS {g.wsAngleDeg?.toFixed(0)}°</text>
+      <text x={FW/2} y={FH-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">SIDE · {g.bodyType?.toUpperCase()} · Cd {g.Cd?.toFixed(3)} · WS {g.wsAngleDeg?.toFixed(0)}°</text>
     </svg>
   )
 }
