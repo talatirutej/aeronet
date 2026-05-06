@@ -39,9 +39,11 @@ CHAT_MODELS = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "meta-llama/llama-3.1-8b-instruct:free",
     "google/gemma-3-12b-it:free",
+    "google/gemma-3-4b-it:free",
     "mistralai/mistral-7b-instruct:free",
     "deepseek/deepseek-r1-distill-llama-70b:free",
-    "qwen/qwen3-8b:free",
+    "deepseek/deepseek-chat-v3-0324:free",
+    "microsoft/phi-4-reasoning:free",
 ]
 
 STATCFD_SYSTEM = """You are StatCFD AI — an expert automotive aerodynamics and CFD assistant \
