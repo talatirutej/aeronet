@@ -39,11 +39,9 @@ CHAT_MODELS = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "meta-llama/llama-3.1-8b-instruct:free",
     "google/gemma-3-12b-it:free",
-    "google/gemma-3-4b-it:free",
     "mistralai/mistral-7b-instruct:free",
     "deepseek/deepseek-r1-distill-llama-70b:free",
-    "deepseek/deepseek-chat-v3-0324:free",
-    "microsoft/phi-4-reasoning:free",
+    "qwen/qwen3-8b:free",
 ]
 
 STATCFD_SYSTEM = """You are StatCFD AI — an expert automotive aerodynamics and CFD assistant \
@@ -343,6 +341,31 @@ async def predict_mesh(
         raise HTTPException(413, "File too large (max 25 MB)")
     return JSONResponse(_stub_predict(data, file.filename, yaw, speed, groundClearance, frontalArea, bodyType))
 
+
+
+# ── Contour analysis endpoint ─────────────────────────────────────────────────
+
+@app.post("/analyze-contour")
+async def analyze_contour_endpoint(file: UploadFile = File(...)):
+    """
+    Real computer-vision contour extraction from a side-view car image.
+    Uses OpenCV: background removal → bilateral filter → Canny → findContours
+    → Hough circles (wheels) → keypoint detection.
+    Returns normalised outline points and keypoints for SVG rendering.
+    """
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 20 MB)")
+    try:
+        from contour_analysis import analyse_contour
+        result = analyse_contour(data)
+        return JSONResponse(result)
+    except ImportError:
+        raise HTTPException(501, "opencv-python not installed. Add it to requirements.txt.")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Contour analysis failed: {e}")
 
 # ── Moondream2 image analysis ─────────────────────────────────────────────────
 
