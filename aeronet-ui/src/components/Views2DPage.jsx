@@ -195,16 +195,282 @@ const N=20,cpBands=Array.from({length:N},(_,i)=>{const tM=(i+0.5)/N;return{x0:x(
 const sepX=bt==='fastback'?x(g.hoodRatio+g.cabinRatio*0.88):x(g.hoodRatio+g.cabinRatio),sepY=bt==='fastback'?roofY+bH*0.08:roofY+sag
 return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet"><defs><clipPath id="sc"><path d={bodyPath}/></clipPath><linearGradient id="edgeHi" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="rgba(255,255,255,0.14)"/><stop offset="40%" stopColor="rgba(255,255,255,0.02)"/><stop offset="100%" stopColor="rgba(0,0,0,0.22)"/></linearGradient><linearGradient id="cpBar" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stopColor="#2147d9"/><stop offset="25%" stopColor="#22d3ee"/><stop offset="50%" stopColor="#84cc16"/><stop offset="75%" stopColor="#fbbf24"/><stop offset="100%" stopColor="#ef4444"/></linearGradient><filter id="sep"><feGaussianBlur stdDeviation="1.2"/></filter></defs><ellipse cx={W/2} cy={gY+6} rx={bLen*0.43} ry={8} fill="rgba(0,0,0,0.4)"/><line x1={6} y1={gY} x2={W-6} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>{cpOn&&<g clipPath="url(#sc)">{cpBands.map((b,i)=><rect key={i} x={b.x0} y={roofY-20} width={b.x1-b.x0} height={bH+rideH+30} fill={b.color}/>)}</g>}<path d={bodyPath} fill={cpOn?'rgba(5,10,18,0.24)':'#111E28'} stroke="rgba(10,132,255,0.65)" strokeWidth={cpOn?0.75:1.1}/><path d={bodyPath} fill="url(#edgeHi)"/><path d={dloPath} fill={cpOn?'rgba(10,132,255,0.16)':'rgba(10,132,255,0.10)'} stroke="rgba(10,132,255,0.55)" strokeWidth="0.85"/><path d={dloPath} fill="rgba(0,14,30,0.40)"/>{bt!=='pickup'&&bt!=='fastback'&&bt!=='coupe'&&<line x1={x(g.hoodRatio+g.cabinRatio*0.46)} y1={aBy} x2={x(g.hoodRatio+g.cabinRatio*0.46)} y2={sill} stroke="rgba(0,0,0,0.6)" strokeWidth="3.5"/>}<path d={`M ${hx+9} ${aBy-2} L ${hx+28} ${aBy-9} L ${hx+28} ${aBy+3} Z`} fill="#0A1620" stroke="rgba(10,132,255,0.25)" strokeWidth="0.7"/><rect x={PAD+2} y={sill-bH*0.44} width={5} height={bH*0.065} rx="1.5" fill="rgba(255,255,200,0.90)"/><rect x={rX-4} y={sill-bH*(bt==='fastback'||bt==='coupe'?0.30:0.22)} width={5} height={bH*0.14} rx="1.5" fill="rgba(255,69,58,0.90)"/>{showSep&&<g><circle cx={sepX} cy={sepY} r={5} fill="rgba(255,214,10,0.2)" filter="url(#sep)"/><circle cx={sepX} cy={sepY} r={2.5} fill="#FFD60A" opacity={0.8}/>{[0,40,80,120,160,200,240,280,320].map(a=>{const r2=a*Math.PI/180,len=a<90||a>270?10:6;return<line key={a} x1={sepX+Math.cos(r2)*2.5} y1={sepY+Math.sin(r2)*2.5} x2={sepX+Math.cos(r2)*(2.5+len)} y2={sepY+Math.sin(r2)*(2.5+len)} stroke="#FFD60A" strokeWidth="0.7" opacity={0.5}/>})}<text x={sepX+8} y={sepY-6} fill="#FFD60A" fontSize="7" fontFamily="'IBM Plex Mono',monospace">SEP</text></g>}{cpOn&&[0.28,0.52,0.76].map((fh,i)=>{const ay=sill-bH*fh;return<g key={i} transform={`translate(${PAD-24},${ay})`}><line x1={0} y1={0} x2={14} y2={0} stroke="rgba(10,132,255,0.55)" strokeWidth="1.1"/><polygon points="16,0 10,-3.5 10,3.5" fill="rgba(10,132,255,0.55)"/></g>})}{cpOn&&<g opacity={0.4}>{[0.15,0.30,0.45].map((d,i)=><ellipse key={i} cx={rX+10+d*30} cy={sill-bH*0.28} rx={4+d*12} ry={3+d*8} fill="none" stroke="#2147d9" strokeWidth="0.8" strokeDasharray="3,3"/>)}</g>}{[[w1x,wY],[w2x,wY]].map(([cx,cy],i)=><g key={i}><circle cx={cx} cy={cy} r={wR+3} fill="rgba(0,0,0,0.35)"/><circle cx={cx} cy={cy} r={wR} fill="#060C14" stroke="#1E3040" strokeWidth="2.6"/><circle cx={cx} cy={cy} r={wR*0.74} fill="#0C1824" stroke="#162C38" strokeWidth="1.5"/>{[0,72,144,216,288].map(a=>{const r2=a*Math.PI/180;return<path key={a} d={`M ${cx+Math.cos(r2)*wR*0.25} ${cy+Math.sin(r2)*wR*0.25} L ${cx+Math.cos(r2+0.22)*wR*0.70} ${cy+Math.sin(r2+0.22)*wR*0.70} Q ${cx+Math.cos(r2)*wR*0.73} ${cy+Math.sin(r2)*wR*0.73} ${cx+Math.cos(r2-0.22)*wR*0.70} ${cy+Math.sin(r2-0.22)*wR*0.70} Z`} fill="#162434" stroke="#1E3040" strokeWidth="0.8"/>})}<circle cx={cx} cy={cy} r={wR*0.15} fill="#1E3040"/><circle cx={cx} cy={cy} r={wR*0.42} fill="none" stroke="#162434" strokeWidth="0.6" strokeDasharray="4,4"/></g>)}{[[w1x,wY],[w2x,wY]].map(([cx,cy],i)=><circle key={i} cx={cx} cy={cy} r={wR+3} fill="none" stroke="#060C14" strokeWidth="5.5"/>)}{cpOn&&<><rect x={W-16} y={H*0.13} width={10} height={H*0.62} rx="2" fill="url(#cpBar)"/><text x={W-22} y={H*0.13+5} textAnchor="end" fill="rgba(255,255,255,0.25)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">+1.0</text><text x={W-22} y={H*0.75+5} textAnchor="end" fill="rgba(255,255,255,0.25)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">−1.5</text></>}<text x={W/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">SIDE · {g.bodyType.toUpperCase()} · Cd {g.Cd.toFixed(3)} · WS {g.wsAngleDeg.toFixed(0)}°</text></svg>)}
 
-function FrontView({g,cpOn}){const W=320,H=230,cx=W/2,gY=H-14;const isTall=g.bodyType==='suv'||g.bodyType==='pickup',isFast=g.bodyType==='fastback'||g.bodyType==='coupe';const bh=isTall?112:isFast?84:96,bw=isTall?110:isFast?94:98;const rideHpx=bh*(g.rideH>0.12?0.18:0.08),bodyBot=gY-rideHpx,bodyTop=bodyBot-bh;const shoulderFrac=0.55,roofHW=bw*(isFast?0.34:isTall?0.42:0.38),shoulderHW=bw*0.50,sillHW=bw*0.46;const roofY=bodyTop,shoulderY=bodyTop+bh*shoulderFrac,sillY=bodyTop+bh*0.92;const bodyL=[`M ${cx} ${roofY}`,`C ${cx-roofHW*0.6} ${roofY} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,`C ${cx-shoulderHW} ${shoulderY+bh*0.12} ${cx-sillHW} ${sillY} ${cx-sillHW*0.80} ${bodyBot}`];const bodyR=[`L ${cx+sillHW*0.80} ${bodyBot}`,`C ${cx+sillHW} ${sillY} ${cx+shoulderHW} ${shoulderY+bh*0.12} ${cx+shoulderHW} ${shoulderY}`,`C ${cx+shoulderHW} ${shoulderY-bh*0.22} ${cx+roofHW*0.6} ${roofY} ${cx} ${roofY}`];const frontPath=[...bodyL,...bodyR,'Z'].join(' ');const aPillarBaseY=bodyTop+bh*0.55,aPillarTopY=bodyTop+bh*0.08,wsInset=4,aPillarBaseHW=shoulderHW*0.88-wsInset,aPillarTopHW=roofHW*0.90+wsInset;const wscPath=[`M ${cx-aPillarTopHW} ${aPillarTopY}`,`Q ${cx-aPillarTopHW*0.96} ${aPillarTopY-2} ${cx} ${aPillarTopY}`,`Q ${cx+aPillarTopHW*0.96} ${aPillarTopY-2} ${cx+aPillarTopHW} ${aPillarTopY}`,`L ${cx+aPillarBaseHW} ${aPillarBaseY}`,`L ${cx-aPillarBaseHW} ${aPillarBaseY}`,'Z'].join(' ');const hlY=bodyTop+bh*0.27,hlHW=shoulderHW*0.72,hlIW=shoulderHW*0.30;const wR=16+(isTall?4:0),w1x=cx-shoulderHW*1.05,w2x=cx+shoulderHW*1.05,wY=gY-wR;const cpBands=Array.from({length:11},(_,i)=>{const f=i/10,d=Math.abs(f-0.5)*2;const cp=(0.85*(1-d*d)-0.25)*(g.Cd/0.30);return{xL:cx-shoulderHW*(1-i*0.18),color:cpToRgb(cp)}});
-return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet"><defs><clipPath id="fclip"><path d={frontPath}/></clipPath></defs><ellipse cx={cx} cy={gY+5} rx={shoulderHW*1.2} ry={7} fill="rgba(0,0,0,0.4)"/><line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>{cpOn&&<g clipPath="url(#fclip)">{cpBands.map((b,i)=><rect key={i} x={b.xL} y={bodyTop-4} width={(shoulderHW*2)/10+2} height={bh+8} fill={b.color} opacity={0.85}/>)}</g>}<path d={frontPath} fill={cpOn?'rgba(5,10,18,0.28)':'#111E28'} stroke="rgba(10,132,255,0.6)" strokeWidth="0.95"/><path d={wscPath} fill="rgba(10,132,255,0.08)" stroke="rgba(10,132,255,0.55)" strokeWidth="0.9"/><path d={wscPath} fill="rgba(0,14,28,0.45)"/>{[-1,1].map(s=><path key={s} d={`M ${cx+s*aPillarTopHW} ${aPillarTopY} L ${cx+s*aPillarBaseHW} ${aPillarBaseY}`} stroke="rgba(0,0,0,0.5)" strokeWidth="4" strokeLinecap="round"/>)}{[-1,1].map(s=><g key={s}><path d={`M ${cx+s*hlIW} ${hlY-bh*0.04} Q ${cx+s*(hlIW+hlHW)/2} ${hlY-bh*0.06} ${cx+s*hlHW} ${hlY}`} stroke="rgba(255,255,200,0.7)" strokeWidth="2" fill="none" strokeLinecap="round"/><path d={`M ${cx+s*hlIW} ${hlY-bh*0.025} Q ${cx+s*(hlIW+hlHW)/2} ${hlY-bh*0.05} ${cx+s*hlHW} ${hlY} L ${cx+s*hlHW} ${hlY+bh*0.058} Q ${cx+s*(hlIW+hlHW)/2} ${hlY+bh*0.07} ${cx+s*hlIW} ${hlY+bh*0.055} Z`} fill="rgba(255,255,200,0.06)" stroke="rgba(10,132,255,0.5)" strokeWidth="0.8"/><circle cx={cx+s*(hlIW+hlHW)*0.58} cy={hlY+bh*0.028} r={bh*0.022} fill="rgba(255,255,220,0.85)"/></g>)}<path d={`M ${cx-shoulderHW*0.48} ${bodyTop+bh*0.50} L ${cx-shoulderHW*0.48} ${bodyTop+bh*0.70} L ${cx+shoulderHW*0.48} ${bodyTop+bh*0.70} L ${cx+shoulderHW*0.48} ${bodyTop+bh*0.50} Z`} fill="rgba(0,0,0,0.65)" stroke="rgba(255,255,255,0.06)" strokeWidth="0.9" rx="3"/>{[0,1,2,3,4].map(i=><line key={i} x1={cx-shoulderHW*0.46} y1={bodyTop+bh*(0.52+i*0.038)} x2={cx+shoulderHW*0.46} y2={bodyTop+bh*(0.52+i*0.038)} stroke="rgba(255,255,255,0.04)" strokeWidth="0.7"/>)}<rect x={cx-shoulderHW*0.12} y={bodyTop+bh*0.56} width={shoulderHW*0.24} height={bh*0.04} rx="2" fill="rgba(10,132,255,0.12)" stroke="rgba(10,132,255,0.2)" strokeWidth="0.6"/><rect x={cx-shoulderHW*0.68} y={bodyTop+bh*0.76} width={shoulderHW*1.36} height={bh*0.10} rx="2" fill="rgba(0,0,0,0.50)" stroke="rgba(255,255,255,0.06)" strokeWidth="0.8"/>{[-1,1].map(s=><ellipse key={s} cx={cx+s*shoulderHW*0.55} cy={bodyTop+bh*0.81} rx={shoulderHW*0.10} ry={bh*0.035} fill="rgba(255,255,200,0.06)" stroke="rgba(255,255,255,0.08)" strokeWidth="0.7"/>)}<rect x={cx-sillHW*0.95} y={bodyBot-bh*0.05} width={sillHW*1.90} height={bh*0.03} rx="1" fill="#0A1820" stroke="rgba(255,255,255,0.06)" strokeWidth="0.7"/><rect x={cx-shoulderHW*0.28} y={bodyTop+bh*0.85} width={shoulderHW*0.56} height={bh*0.08} rx="2" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.08)" strokeWidth="0.7"/>{[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=><g key={i}><circle cx={wcx} cy={wcy} r={wR} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/><circle cx={wcx} cy={wcy} r={wR*0.72} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>{[0,72,144,216,288].map(a=>{const r2=a*Math.PI/180;return<path key={a} d={`M ${wcx+Math.cos(r2)*wR*0.24} ${wcy+Math.sin(r2)*wR*0.24} L ${wcx+Math.cos(r2+0.25)*wR*0.68} ${wcy+Math.sin(r2+0.25)*wR*0.68} Q ${wcx+Math.cos(r2)*wR*0.72} ${wcy+Math.sin(r2)*wR*0.72} ${wcx+Math.cos(r2-0.25)*wR*0.68} ${wcy+Math.sin(r2-0.25)*wR*0.68} Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>})}<circle cx={wcx} cy={wcy} r={wR*0.15} fill="#1E3040"/></g>)}<text x={cx} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">FRONT · {g.bodyType.toUpperCase()}</text></svg>)}
+function FrontView({g,cpOn}){
+  const W=320,H=240,cx=W/2,gY=H-16
+  const kp = g?._keypoints
 
-function TopView({g,yawAngle}){const W=320,H=230,cx=W/2,cy=H/2+6;const isTall=g.bodyType==='suv'||g.bodyType==='pickup';const bw=isTall?78:70,bl=g.bodyType==='pickup'?172:g.bodyType==='estate'?164:156;const yawRad=(yawAngle??0)*Math.PI/180,frontSteerOffset=Math.sin(yawRad)*bw*0.28;const body=[`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.26} ${cy-bl/2+1} ${cx-bw*0.50} ${cy-bl/2+20}`,`Q ${cx-bw*0.52} ${cy-bl/2+50} ${cx-bw*0.52} ${cy}`,`Q ${cx-bw*0.52} ${cy+bl*0.14} ${cx-bw*0.50} ${cy+bl/2-14}`,`Q ${cx-bw*0.44} ${cy+bl/2-4} ${cx} ${cy+bl/2-4}`,`Q ${cx+bw*0.44} ${cy+bl/2-4} ${cx+bw*0.50} ${cy+bl/2-14}`,`Q ${cx+bw*0.52} ${cy+bl*0.14} ${cx+bw*0.52} ${cy}`,`Q ${cx+bw*0.52} ${cy-bl/2+50} ${cx+bw*0.50} ${cy-bl/2+20}`,`Q ${cx+bw*0.26} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ');const ghFront=cy+bl*(g.hoodRatio-0.50),ghRear=cy+bl*(g.hoodRatio+g.cabinRatio-0.50),ghW=bw*(g.bodyType==='fastback'||g.bodyType==='coupe'?0.40:isTall?0.44:0.42);const ghPath=[`M ${cx} ${ghFront-4}`,`Q ${cx-ghW*0.52} ${ghFront+2} ${cx-ghW*0.54} ${ghFront+18}`,`L ${cx-ghW*0.54} ${ghRear-12}`,`Q ${cx-ghW*0.46} ${ghRear} ${cx} ${ghRear}`,`Q ${cx+ghW*0.46} ${ghRear} ${cx+ghW*0.54} ${ghRear-12}`,`L ${cx+ghW*0.54} ${ghFront+18}`,`Q ${cx+ghW*0.52} ${ghFront+2} ${cx} ${ghFront-4}`,'Z'].join(' ');const fwy=cy+bl*(g.w1-0.50),rwy=cy+bl*(g.w2-0.50);const N=14,cpS=Array.from({length:N},(_,i)=>{const tM=(i+0.5)/N;return{y0:cy-bl/2+5+i*(bl-9)/N,y1:cy-bl/2+5+(i+1)*(bl-9)/N,c:cpToRgb(cpAtPoint(tM,0.70,tM<0.15,g.Cd))}});
-return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet"><defs><clipPath id="tc2"><path d={body}/></clipPath></defs><g clipPath="url(#tc2)">{cpS.map((s,i)=><rect key={i} x={cx-bw*0.60} y={s.y0} width={bw*1.20} height={s.y1-s.y0+1} fill={s.c} opacity={0.78}/>)}</g><path d={body} fill="rgba(5,10,18,0.28)" stroke="rgba(10,132,255,0.6)" strokeWidth="0.9"/><path d={ghPath} fill="rgba(10,132,255,0.08)" stroke="rgba(10,132,255,0.5)" strokeWidth="0.8"/><path d={ghPath} fill="rgba(0,14,28,0.38)"/><line x1={cx-ghW*0.48} y1={ghFront+20} x2={cx-ghW*0.48} y2={ghRear-14} stroke="rgba(10,132,255,0.12)" strokeWidth="0.6" strokeDasharray="8,8"/><line x1={cx+ghW*0.48} y1={ghFront+20} x2={cx+ghW*0.48} y2={ghRear-14} stroke="rgba(10,132,255,0.12)" strokeWidth="0.6" strokeDasharray="8,8"/>{g.bodyType==='pickup'&&<rect x={cx-bw*0.48} y={ghRear} width={bw*0.96} height={cy+bl/2-14-ghRear} fill="rgba(0,0,0,0.20)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.8"/>}<line x1={cx} y1={cy-bl/2} x2={cx} y2={cy+bl/2} stroke="rgba(255,255,255,0.05)" strokeWidth="0.6" strokeDasharray="6,6"/><text x={cx} y={cy-bl/2-8} textAnchor="middle" fill="rgba(10,132,255,0.5)" fontSize="8" fontFamily="'IBM Plex Mono',monospace">FRONT</text>{[-bw*0.24,0,bw*0.24].map((ox,i)=><g key={i} transform={`translate(${cx+ox},${cy-bl/2-20})`}><line x1={0} y1={-4} x2={0} y2={6} stroke="rgba(10,132,255,0.35)" strokeWidth="0.9"/><polygon points="0,9 -2.5,4 2.5,4" fill="rgba(10,132,255,0.35)"/></g>)}{[-1,1].map(s=>{const mx=cx+s*bw*0.56,my=ghFront+12;return<path key={s} d={`M ${mx} ${my} L ${mx+s*16} ${my-5} L ${mx+s*16} ${my+6} Z`} fill="#0A1820" stroke="rgba(255,255,255,0.08)" strokeWidth="0.8"/>})}{ [[cx-bw*0.62,fwy,frontSteerOffset],[cx+bw*0.62,fwy,-frontSteerOffset],[cx-bw*0.62,rwy,0],[cx+bw*0.62,rwy,0]].map(([wx,wy,off],i)=><g key={i} transform={`translate(${wx},${wy}) rotate(${i<2?(yawAngle??0)*0.7:0})`}><rect x={-10} y={-18} width={20} height={36} rx="4" fill="#060C14" stroke="#1E3040" strokeWidth="1.5"/><line x1={0} y1={-12} x2={0} y2={12} stroke="#162434" strokeWidth="0.8"/></g>)}<text x={cx} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">TOP{(yawAngle??0)!==0?` · YAW ${yawAngle>0?'+':''}${yawAngle}°`:''}</text></svg>)}
+  // Derive real dimensions from keypoints when available
+  const isTall = g.bodyType==='suv'||g.bodyType==='pickup'
+  const isFast = g.bodyType==='fastback'||g.bodyType==='coupe'
 
-function UnderView({g,showGroundEffect}){const W=320,H=230,cx=W/2,cy=H/2+6;const isTall=g.bodyType==='suv'||g.bodyType==='pickup';const bw=isTall?78:70,bl=g.bodyType==='pickup'?172:156;const body=[`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.26} ${cy-bl/2+1} ${cx-bw*0.50} ${cy-bl/2+20}`,`L ${cx-bw*0.52} ${cy+bl*0.08}`,`Q ${cx-bw*0.50} ${cy+bl/2-14} ${cx-bw*0.44} ${cy+bl/2-4}`,`L ${cx+bw*0.44} ${cy+bl/2-4}`,`Q ${cx+bw*0.50} ${cy+bl/2-14} ${cx+bw*0.52} ${cy+bl*0.08}`,`L ${cx+bw*0.50} ${cy-bl/2+20}`,`Q ${cx+bw*0.26} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ');const N=14,cpS=Array.from({length:N},(_,i)=>{const tM=(i+0.5)/N;return{y0:cy-bl/2+5+i*(bl-9)/N,y1:cy-bl/2+5+(i+1)*(bl-9)/N,c:cpToRgb(cpAtPoint(tM,0.05,tM<0.15,g.Cd))}});const fwy=cy+bl*(g.w1-0.50),rwy=cy+bl*(g.w2-0.50);const geC=showGroundEffect?[-0.6,-0.4,-0.2,0.0].map((cp,li)=>({y:cy-bl*0.15+li*(bl*0.12),w:(1-(-cp/0.8))*bw*0.40,c:cpToRgb(cp)})):[];
-return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet"><defs><clipPath id="uc"><path d={body}/></clipPath></defs><g clipPath="url(#uc)">{cpS.map((s,i)=><rect key={i} x={cx-bw*0.60} y={s.y0} width={bw*1.20} height={s.y1-s.y0+1} fill={s.c} opacity={0.82}/>)}</g><path d={body} fill="rgba(5,10,18,0.32)" stroke="rgba(10,132,255,0.6)" strokeWidth="0.9"/><rect x={cx-bw*0.38} y={cy-bl*0.32} width={bw*0.76} height={bl*0.54} rx="4" fill="rgba(0,0,0,0.18)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.8"/><path d={`M ${cx-bw*0.09} ${cy-bl*0.30} Q ${cx} ${cy-bl*0.32} ${cx+bw*0.09} ${cy-bl*0.30} L ${cx+bw*0.09} ${cy+bl*0.22} Q ${cx} ${cy+bl*0.24} ${cx-bw*0.09} ${cy+bl*0.22} Z`} fill="rgba(0,0,0,0.30)" stroke="rgba(255,255,255,0.04)" strokeWidth="0.9"/><rect x={cx-bw*0.28} y={cy+bl*0.02} width={bw*0.56} height={bl*0.12} rx="6" fill="rgba(0,0,0,0.25)" stroke="rgba(255,255,255,0.06)" strokeWidth="0.8" strokeDasharray="3,2"/><rect x={cx-bw*0.36} y={cy-bl*0.40} width={bw*0.72} height={bl*0.16} rx="6" fill="none" stroke="rgba(10,132,255,0.15)" strokeWidth="1.0" strokeDasharray="4,3"/><rect x={cx-bw*0.34} y={cy+bl*0.16} width={bw*0.68} height={bl*0.14} rx="6" fill="none" stroke="rgba(10,132,255,0.15)" strokeWidth="1.0" strokeDasharray="4,3"/>{[-bw*0.24,-bw*0.08,bw*0.08,bw*0.24].map((ox,i)=><line key={i} x1={cx+ox} y1={cy-bl*0.30} x2={cx+ox} y2={cy+bl*0.22} stroke="rgba(255,255,255,0.06)" strokeWidth={i===1||i===2?3:1.8} strokeDasharray={i===0||i===3?"6,10":undefined}/>)}{[-4,-2,0,2,4].map(f=><line key={f} x1={cx+f*bw*0.08} y1={cy+bl*0.24} x2={cx+f*bw*0.08} y2={cy+bl/2-6} stroke="rgba(10,132,255,0.15)" strokeWidth="1.8"/>)}{(g.bodyType==='fastback'||g.bodyType==='coupe'?[-bw*0.20,bw*0.20]:[-bw*0.14,bw*0.14]).map((ox,i)=><g key={i}><circle cx={cx+ox} cy={cy+bl/2-11} r={6} fill="#060C14" stroke="rgba(255,255,255,0.08)" strokeWidth="1.6"/><circle cx={cx+ox} cy={cy+bl/2-11} r={3} fill="#020608"/><circle cx={cx+ox} cy={cy+bl/2-11} r={8} fill="none" stroke="rgba(255,69,58,0.12)" strokeWidth="3"/></g>)}{showGroundEffect&&geC.map((gc,i)=><rect key={i} x={cx-gc.w} y={gc.y} width={gc.w*2} height={bl*0.10} rx="3" fill={gc.c} opacity={0.18} stroke={gc.c} strokeWidth="0.5" strokeOpacity={0.5}/>)}{[[cx-bw*0.62,fwy],[cx+bw*0.62,fwy],[cx-bw*0.62,rwy],[cx+bw*0.62,rwy]].map(([wx,wy],i)=><rect key={i} x={wx-10} y={wy-18} width={20} height={36} rx="4" fill="#060C14" stroke="rgba(10,132,255,0.2)" strokeWidth="1.5"/>)}<text x={cx} y={cy-bl/2-8} textAnchor="middle" fill="rgba(10,132,255,0.45)" fontSize="8" fontFamily="'IBM Plex Mono',monospace">FRONT</text>{showGroundEffect&&<text x={cx} y={cy+bl/2+12} textAnchor="middle" fill="rgba(64,203,224,0.6)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">GROUND EFFECT ACTIVE</text>}<text x={cx} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">UNDERSIDE</text></svg>)}
+  // Width: use wheel track from keypoints (distance between wheels × 0.7 for perspective)
+  // or fall back to body-type defaults
+  const wheels = kp?.wheels ?? []
+  const hasWheels = wheels.length >= 2
+  const trackFrac = hasWheels
+    ? Math.abs(wheels[1].nx - wheels[0].nx)  // normalised wheel separation
+    : (isTall ? 0.52 : isFast ? 0.44 : 0.48)
 
-// ── Drag donut ────────────────────────────────────────────────────────────────
+  // Height: from roofline top to sill
+  const roofPts   = kp?.roofline ?? []
+  const roofTopNY = roofPts.length ? Math.min(...roofPts.map(p=>p.ny)) : (isTall?0.08:0.15)
+  const sillPts   = kp?.sill ?? []
+  const sillNY    = sillPts.length ? (sillPts.reduce((s,p)=>s+p.ny,0)/sillPts.length) : 0.80
+
+  // Map to pixel dimensions — front view is narrower than side
+  const bw = Math.round(Math.min(110, Math.max(70, trackFrac * W * 1.1)))
+  const bh = Math.round(Math.min(130, Math.max(75, (sillNY - roofTopNY) * H * 1.15)))
+
+  const rideHpx  = bh * (g.rideH > 0.12 ? 0.16 : 0.08)
+  const bodyBot  = gY - rideHpx
+  const bodyTop  = bodyBot - bh
+
+  // Windscreen rake affects shoulder width relative to roof
+  const wsAngle  = g.wsAngleDeg ?? 58
+  const roofNarrow = Math.max(0.28, Math.min(0.46, 0.38 - (wsAngle - 55) * 0.003))
+  const roofHW   = bw * roofNarrow
+  const shoulderHW = bw * 0.50
+  const sillHW   = bw * 0.46
+  const shoulderY  = bodyTop + bh * 0.55
+  const sillY      = bodyTop + bh * 0.92
+
+  const frontPath = [
+    `M ${cx} ${bodyTop}`,
+    `C ${cx-roofHW*0.6} ${bodyTop} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,
+    `C ${cx-shoulderHW} ${shoulderY+bh*0.12} ${cx-sillHW} ${sillY} ${cx-sillHW*0.80} ${bodyBot}`,
+    `L ${cx+sillHW*0.80} ${bodyBot}`,
+    `C ${cx+sillHW} ${sillY} ${cx+shoulderHW} ${shoulderY+bh*0.12} ${cx+shoulderHW} ${shoulderY}`,
+    `C ${cx+shoulderHW} ${shoulderY-bh*0.22} ${cx+roofHW*0.6} ${bodyTop} ${cx} ${bodyTop}`,
+    'Z'
+  ].join(' ')
+
+  // Windscreen shape — scaled by real A-pillar angle
+  const wsAngleRad   = (90 - wsAngle) * Math.PI / 180
+  const aPillarBaseY = bodyTop + bh * 0.55
+  const aPillarTopY  = bodyTop + bh * 0.08
+  const aPillarBaseHW = shoulderHW * 0.86
+  const aPillarTopHW  = roofHW * 0.92
+  const wscPath = [
+    `M ${cx-aPillarTopHW} ${aPillarTopY}`,
+    `Q ${cx} ${aPillarTopY-2} ${cx+aPillarTopHW} ${aPillarTopY}`,
+    `L ${cx+aPillarBaseHW} ${aPillarBaseY}`,
+    `L ${cx-aPillarBaseHW} ${aPillarBaseY}`,
+    'Z'
+  ].join(' ')
+
+  // Headlights — scaled to real bw
+  const hlY = bodyTop + bh * 0.27
+  const hlHW = shoulderHW * 0.72
+  const hlIW = shoulderHW * 0.30
+
+  // Wheel radius from real detection
+  const wR = hasWheels
+    ? Math.max(12, Math.min(24, wheels[0].r / 800 * W * 0.9))
+    : 16 + (isTall ? 4 : 0)
+  const w1x = cx - shoulderHW * 1.05
+  const w2x = cx + shoulderHW * 1.05
+  const wY  = gY - wR
+
+  // Cp bands
+  const cpBands = Array.from({length:11},(_,i)=>{
+    const f=i/10, d=Math.abs(f-0.5)*2
+    const cp=(0.85*(1-d*d)-0.25)*(g.Cd/0.30)
+    return{xL:cx-shoulderHW*(1-i*0.18),color:cpToRgb(cp)}
+  })
+
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <defs><clipPath id="fclip"><path d={frontPath}/></clipPath></defs>
+      <ellipse cx={cx} cy={gY+5} rx={shoulderHW*1.2} ry={7} fill="rgba(0,0,0,0.4)"/>
+      <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>
+      {cpOn&&<g clipPath="url(#fclip)">{cpBands.map((b,i)=><rect key={i} x={b.xL} y={bodyTop-4} width={(shoulderHW*2)/10+2} height={bh+8} fill={b.color} opacity={0.85}/>)}</g>}
+      <path d={frontPath} fill={cpOn?'rgba(5,10,18,0.28)':'#111E28'} stroke="rgba(10,132,255,0.6)" strokeWidth="0.95"/>
+      <path d={wscPath} fill="rgba(10,132,255,0.08)" stroke="rgba(10,132,255,0.55)" strokeWidth="0.9"/>
+      <path d={wscPath} fill="rgba(0,14,28,0.45)"/>
+      {[-1,1].map(s=><path key={s} d={`M ${cx+s*aPillarTopHW} ${aPillarTopY} L ${cx+s*aPillarBaseHW} ${aPillarBaseY}`} stroke="rgba(0,0,0,0.5)" strokeWidth="4" strokeLinecap="round"/>)}
+      {[-1,1].map(s=><g key={s}>
+        <path d={`M ${cx+s*hlIW} ${hlY-bh*0.04} Q ${cx+s*(hlIW+hlHW)/2} ${hlY-bh*0.06} ${cx+s*hlHW} ${hlY}`} stroke="rgba(255,255,200,0.7)" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        <path d={`M ${cx+s*hlIW} ${hlY-bh*0.025} Q ${cx+s*(hlIW+hlHW)/2} ${hlY-bh*0.05} ${cx+s*hlHW} ${hlY} L ${cx+s*hlHW} ${hlY+bh*0.058} Q ${cx+s*(hlIW+hlHW)/2} ${hlY+bh*0.07} ${cx+s*hlIW} ${hlY+bh*0.055} Z`} fill="rgba(255,255,200,0.06)" stroke="rgba(10,132,255,0.5)" strokeWidth="0.8"/>
+        <circle cx={cx+s*(hlIW+hlHW)*0.58} cy={hlY+bh*0.028} r={bh*0.022} fill="rgba(255,255,220,0.85)"/>
+      </g>)}
+      <path d={`M ${cx-shoulderHW*0.48} ${bodyTop+bh*0.50} L ${cx-shoulderHW*0.48} ${bodyTop+bh*0.70} L ${cx+shoulderHW*0.48} ${bodyTop+bh*0.70} L ${cx+shoulderHW*0.48} ${bodyTop+bh*0.50} Z`} fill="rgba(0,0,0,0.65)" stroke="rgba(255,255,255,0.06)" strokeWidth="0.9"/>
+      {[0,1,2,3,4].map(i=><line key={i} x1={cx-shoulderHW*0.46} y1={bodyTop+bh*(0.52+i*0.038)} x2={cx+shoulderHW*0.46} y2={bodyTop+bh*(0.52+i*0.038)} stroke="rgba(255,255,255,0.04)" strokeWidth="0.7"/>)}
+      <rect x={cx-shoulderHW*0.68} y={bodyTop+bh*0.76} width={shoulderHW*1.36} height={bh*0.10} rx="2" fill="rgba(0,0,0,0.50)" stroke="rgba(255,255,255,0.06)" strokeWidth="0.8"/>
+      <rect x={cx-shoulderHW*0.95} y={bodyBot-bh*0.05} width={shoulderHW*1.90} height={bh*0.03} rx="1" fill="#0A1820" stroke="rgba(255,255,255,0.06)" strokeWidth="0.7"/>
+      {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=><g key={i}>
+        <circle cx={wcx} cy={wcy} r={wR} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/>
+        <circle cx={wcx} cy={wcy} r={wR*0.72} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>
+        {[0,72,144,216,288].map(a=>{const r2=a*Math.PI/180;return<path key={a} d={`M ${wcx+Math.cos(r2)*wR*0.24} ${wcy+Math.sin(r2)*wR*0.24} L ${wcx+Math.cos(r2+0.25)*wR*0.68} ${wcy+Math.sin(r2+0.25)*wR*0.68} Q ${wcx+Math.cos(r2)*wR*0.72} ${wcy+Math.sin(r2)*wR*0.72} ${wcx+Math.cos(r2-0.25)*wR*0.68} ${wcy+Math.sin(r2-0.25)*wR*0.68} Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>})}
+        <circle cx={wcx} cy={wcy} r={wR*0.15} fill="#1E3040"/>
+      </g>)}
+      <text x={cx} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">FRONT · {g.bodyType?.toUpperCase()}</text>
+    </svg>
+  )
+}
+
+function TopView({g,yawAngle}){
+  const W=320,H=240,cx=W/2,cy=H/2+6
+  const kp     = g?._keypoints
+  const wheels = kp?.wheels ?? []
+
+  // Real proportions from keypoint-derived geometry
+  const isTall = g.bodyType==='suv'||g.bodyType==='pickup'
+
+  // Body length: proportional to aspect ratio (clamped to canvas)
+  const bl = Math.round(Math.min(180, Math.max(130, g.aspectRatio * 72)))
+  // Body width: narrower for fastback, wider for SUV
+  const bw = isTall ? 82 : g.bodyType==='fastback'||g.bodyType==='coupe' ? 64 : 70
+
+  const yawRad = (yawAngle??0)*Math.PI/180
+
+  // Hood/cabin boundary positions along length axis
+  const hoodEnd  = cy + bl * (g.hoodRatio  - 0.50)
+  const cabinEnd = cy + bl * (g.hoodRatio + g.cabinRatio - 0.50)
+
+  // Roof glass width — narrower for fastback
+  const ghW = bw * (g.bodyType==='fastback'||g.bodyType==='coupe' ? 0.38 : isTall ? 0.44 : 0.41)
+
+  // Wheel positions from real keypoints or geometry
+  const fwy = wheels.length>=1 ? cy + bl*(wheels[0].nx*1.1-0.55) : cy + bl*(g.w1-0.50)
+  const rwy = wheels.length>=2 ? cy + bl*(wheels[1].nx*1.1-0.55) : cy + bl*(g.w2-0.50)
+  const wR  = wheels.length>=1
+    ? Math.max(8, Math.min(18, wheels[0].r/800*W*0.9))
+    : 10 + (isTall?2:0)
+  const wTrack = bw * (isTall ? 0.54 : 0.52)
+
+  // Roof drop for fastback — rear narrows more
+  const rearNarrow = g.bodyType==='fastback' ? 0.35 : g.bodyType==='estate' ? 0.48 : 0.44
+
+  const body = [
+    `M ${cx} ${cy-bl/2+5}`,
+    `Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,
+    `Q ${cx-bw*0.50} ${cy-bl/2+52} ${cx-bw*0.50} ${cy}`,
+    `Q ${cx-bw*0.50} ${cy+bl*0.12} ${cx-bw*rearNarrow} ${cy+bl/2-10}`,
+    `Q ${cx-bw*0.30} ${cy+bl/2-2} ${cx} ${cy+bl/2-2}`,
+    `Q ${cx+bw*0.30} ${cy+bl/2-2} ${cx+bw*rearNarrow} ${cy+bl/2-10}`,
+    `Q ${cx+bw*0.50} ${cy+bl*0.12} ${cx+bw*0.50} ${cy}`,
+    `Q ${cx+bw*0.50} ${cy-bl/2+52} ${cx+bw*0.48} ${cy-bl/2+22}`,
+    `Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,
+    'Z'
+  ].join(' ')
+
+  const ghPath = [
+    `M ${cx} ${hoodEnd-4}`,
+    `Q ${cx-ghW*0.50} ${hoodEnd+2} ${cx-ghW*0.52} ${hoodEnd+16}`,
+    `L ${cx-ghW*0.52} ${cabinEnd-10}`,
+    `Q ${cx-ghW*0.44} ${cabinEnd} ${cx} ${cabinEnd}`,
+    `Q ${cx+ghW*0.44} ${cabinEnd} ${cx+ghW*0.52} ${cabinEnd-10}`,
+    `L ${cx+ghW*0.52} ${hoodEnd+16}`,
+    `Q ${cx+ghW*0.50} ${hoodEnd+2} ${cx} ${hoodEnd-4}`,
+    'Z'
+  ].join(' ')
+
+  // Cp stripes along length
+  const N=14
+  const cpS = Array.from({length:N},(_,i)=>{
+    const tM=(i+0.5)/N
+    return{y0:cy-bl/2+5+i*(bl-7)/N, y1:cy-bl/2+5+(i+1)*(bl-7)/N, c:cpToRgb(cpAtPoint(tM,0.70,tM<0.15,g.Cd))}
+  })
+
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <defs><clipPath id="tclip"><path d={body}/></clipPath></defs>
+      <g clipPath="url(#tclip)">{cpS.map((s,i)=><rect key={i} x={cx-bw*0.52} y={s.y0} width={bw*1.04} height={s.y1-s.y0+1} fill={s.c} opacity={0.88}/>)}</g>
+      <path d={body} fill={cpS?'rgba(4,8,16,0.25)':'#0e1a24'} stroke="rgba(10,132,255,0.65)" strokeWidth="1.1"/>
+      <path d={ghPath} fill="rgba(0,14,28,0.60)" stroke="rgba(10,132,255,0.40)" strokeWidth="0.9"/>
+      {/* Hood crease line */}
+      <line x1={cx-bw*0.26} y1={cy-bl/2+22} x2={cx+bw*0.26} y2={cy-bl/2+22} stroke="rgba(255,255,255,0.06)" strokeWidth="0.8"/>
+      {/* Wheels — 4 positions */}
+      {[[-wTrack,fwy],[wTrack,fwy],[-wTrack,rwy],[wTrack,rwy]].map(([wx,wy],i)=>(
+        <g key={i}>
+          <ellipse cx={cx+wx} cy={wy} rx={wR*0.45} ry={wR} fill="#060C14" stroke="#1E3040" strokeWidth="1.5"/>
+        </g>
+      ))}
+      {/* A-pillar lines */}
+      {[-1,1].map(s=>(
+        <line key={s} x1={cx+s*ghW*0.52} y1={hoodEnd+16} x2={cx+s*bw*0.46} y2={hoodEnd-10} stroke="rgba(255,255,255,0.08)" strokeWidth="1.2"/>
+      ))}
+      <text x={cx} y={H-4} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">TOP · {g.bodyType?.toUpperCase()}</text>
+    </svg>
+  )
+}
+
+function UnderView({g,showGroundEffect}){
+  const W=320,H=240,cx=W/2,cy=H/2+6
+  const kp     = g?._keypoints
+  const wheels = kp?.wheels ?? []
+  const isTall = g.bodyType==='suv'||g.bodyType==='pickup'
+
+  const bl = Math.round(Math.min(180, Math.max(130, g.aspectRatio * 72)))
+  const bw = isTall ? 82 : g.bodyType==='fastback'||g.bodyType==='coupe' ? 64 : 70
+
+  const fwy = wheels.length>=1 ? cy + bl*(wheels[0].nx*1.1-0.55) : cy + bl*(g.w1-0.50)
+  const rwy = wheels.length>=2 ? cy + bl*(wheels[1].nx*1.1-0.55) : cy + bl*(g.w2-0.50)
+  const wR  = wheels.length>=1 ? Math.max(8, Math.min(18, wheels[0].r/800*W*0.9)) : 10+(isTall?2:0)
+  const wTrack = bw * (isTall ? 0.54 : 0.52)
+
+  // Ride height affects underbody detail visibility
+  const rh = g.rideH ?? 0.08
+  const diffuserLength = bl * 0.14
+  const diffuserY = cy + bl/2 - diffuserLength
+
+  const body = [
+    `M ${cx} ${cy-bl/2+5}`,
+    `Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,
+    `L ${cx-bw*0.50} ${cy+bl*0.08}`,
+    `Q ${cx-bw*0.48} ${cy+bl/2-12} ${cx-bw*0.42} ${cy+bl/2-3}`,
+    `L ${cx+bw*0.42} ${cy+bl/2-3}`,
+    `Q ${cx+bw*0.48} ${cy+bl/2-12} ${cx+bw*0.50} ${cy+bl*0.08}`,
+    `L ${cx+bw*0.48} ${cy-bl/2+22}`,
+    `Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,
+    'Z'
+  ].join(' ')
+
+  const N=14
+  const cpS = Array.from({length:N},(_,i)=>{
+    const tM=(i+0.5)/N
+    return{y0:cy-bl/2+5+i*(bl-7)/N, y1:cy-bl/2+5+(i+1)*(bl-7)/N, c:cpToRgb(cpAtPoint(tM,0.05,tM<0.15,g.Cd))}
+  })
+
+  // Ground effect channels — more pronounced with lower ride height
+  const geChannels = showGroundEffect ? [-0.55,-0.35,-0.15,0.05].map((cp,li)=>({
+    y: cy - bl*0.12 + li*(bl*0.10),
+    w: (1-Math.abs(cp)/0.8) * bw * 0.38,
+    c: cpToRgb(cp)
+  })) : []
+
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <defs><clipPath id="uclip"><path d={body}/></clipPath></defs>
+      <g clipPath="url(#uclip)">{cpS.map((s,i)=><rect key={i} x={cx-bw*0.52} y={s.y0} width={bw*1.04} height={s.y1-s.y0+1} fill={s.c} opacity={0.85}/>)}</g>
+      <path d={body} fill={cpS?'rgba(4,8,16,0.25)':'#0e1a24'} stroke="rgba(10,132,255,0.65)" strokeWidth="1.1"/>
+      {/* Floor pan — large central rectangle */}
+      <rect x={cx-bw*0.28} y={cy-bl*0.35} width={bw*0.56} height={bl*0.62} rx="3" fill="rgba(0,0,0,0.3)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.8"/>
+      {/* Driveshaft tunnel */}
+      <rect x={cx-bw*0.05} y={cy-bl*0.30} width={bw*0.10} height={bl*0.52} rx="2" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.07)" strokeWidth="0.6"/>
+      {/* Ground effect channels */}
+      {geChannels.map((ch,i)=>(
+        <rect key={i} x={cx-ch.w/2} y={ch.y} width={ch.w} height={bl*0.08} rx="2" fill={ch.c} opacity={0.5}/>
+      ))}
+      {/* Rear diffuser */}
+      <path d={`M ${cx-bw*0.38} ${diffuserY} L ${cx-bw*0.42} ${cy+bl/2-3} L ${cx+bw*0.42} ${cy+bl/2-3} L ${cx+bw*0.38} ${diffuserY} Z`} fill="rgba(10,132,255,0.08)" stroke="rgba(10,132,255,0.3)" strokeWidth="0.9"/>
+      {/* Diffuser fins */}
+      {[-2,-1,0,1,2].map(i=>(
+        <line key={i} x1={cx+i*bw*0.07} y1={diffuserY} x2={cx+i*bw*0.075} y2={cy+bl/2-3} stroke="rgba(10,132,255,0.2)" strokeWidth="0.7"/>
+      ))}
+      {/* Exhaust tips */}
+      {(g.bodyType!=='suv'&&g.bodyType!=='pickup') && [-1,1].map(s=>(
+        <ellipse key={s} cx={cx+s*bw*0.30} cy={cy+bl/2-5} rx={bw*0.04} ry={bw*0.025} fill="rgba(40,40,40,0.8)" stroke="rgba(255,255,255,0.12)" strokeWidth="0.8"/>
+      ))}
+      {/* Wheels */}
+      {[[-wTrack,fwy],[wTrack,fwy],[-wTrack,rwy],[wTrack,rwy]].map(([wx,wy],i)=>(
+        <ellipse key={i} cx={cx+wx} cy={wy} rx={wR*0.45} ry={wR} fill="#060C14" stroke="#1E3040" strokeWidth="1.5"/>
+      ))}
+      <text x={cx} y={H-4} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">UNDERSIDE · {g.bodyType?.toUpperCase()}</text>
+    </svg>
+  )
+}
+
 function DragDonut({breakdown}){const R=44,r=28,cx=60,cy=54;let sa=-Math.PI/2;const slices=breakdown.map(b=>{const a=b.pct*2*Math.PI,x1=cx+R*Math.cos(sa),y1=cy+R*Math.sin(sa),x2=cx+R*Math.cos(sa+a),y2=cy+R*Math.sin(sa+a),ix1=cx+r*Math.cos(sa),iy1=cy+r*Math.sin(sa),ix2=cx+r*Math.cos(sa+a),iy2=cy+r*Math.sin(sa+a),lg=a>Math.PI?1:0,path=`M ${x1} ${y1} A ${R} ${R} 0 ${lg} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${r} ${r} 0 ${lg} 0 ${ix1} ${iy1} Z`;sa+=a;return{...b,path}});return(<svg viewBox="0 0 120 108" style={{width:'100%',height:108}}>{slices.map((s,i)=><path key={i} d={s.path} fill={s.c} stroke="#030608" strokeWidth="0.8"/>)}<text x={cx} y={cy+4} textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="8" fontFamily="'IBM Plex Mono',monospace">DRAG</text>{breakdown.map((b,i)=><g key={i}><rect x={i<3?2:62} y={88+i%3*13} width={8} height={8} rx="1" fill={b.c}/><text x={i<3?12:72} y={88+i%3*13+7} fill="rgba(255,255,255,0.3)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">{b.name} {(b.pct*100).toFixed(0)}%</text></g>)}</svg>)}
 
 // ── Cd gauge ──────────────────────────────────────────────────────────────────
