@@ -33,11 +33,15 @@ OPENROUTER_BASE    = "https://openrouter.ai/api/v1"
 
 # Model priority list — first available free model wins.
 # Add your preferred model at the top if you have credits.
+# Current free models on OpenRouter (verified May 2026)
+# Full list: https://openrouter.ai/models?q=free
 CHAT_MODELS = [
-    "meta-llama/llama-3.1-70b-instruct:free",
-    "google/gemma-2-9b-it:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "google/gemma-3-12b-it:free",
     "mistralai/mistral-7b-instruct:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "deepseek/deepseek-r1-distill-llama-70b:free",
+    "qwen/qwen3-8b:free",
 ]
 
 STATCFD_SYSTEM = """You are StatCFD AI — an expert automotive aerodynamics and CFD assistant \
@@ -58,69 +62,84 @@ Rules:
 - Keep answers to 200-350 words unless the user asks for more detail."""
 
 
-async def chat_openrouter(messages: list[dict], stream: bool = True):
+async def chat_openrouter(messages: list[dict]):
     """
-    Send messages to OpenRouter. Returns a streaming response or full text.
-    Uses the first model in CHAT_MODELS that responds successfully.
+    Stream tokens from OpenRouter. Tries each model in CHAT_MODELS in order.
+    Uses non-streaming first to check for errors, then switches to SSE streaming.
     """
     if not OPENROUTER_API_KEY:
-        yield "StatCFD AI is not configured. Set the OPENROUTER_API_KEY environment variable on your HuggingFace Space to enable AI chat. Get a free key at openrouter.ai/keys"
+        yield "StatCFD AI is not configured. Please set the OPENROUTER_API_KEY secret in your HuggingFace Space settings."
         return
 
     headers = {
-        "Authorization":   f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type":    "application/json",
-        "HTTP-Referer":    "https://statinsite.com",
-        "X-Title":         "StatCFD",
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type":  "application/json",
+        "HTTP-Referer":  "https://statinsite.com",
+        "X-Title":       "StatCFD",
     }
 
+    last_error = "unknown"
+
     for model in CHAT_MODELS:
-        payload = {
-            "model":    model,
-            "messages": messages,
-            "stream":   stream,
-            "max_tokens": 600,
-            "temperature": 0.65,
-        }
+        print(f"[StatCFD] Trying model: {model}")
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                if stream:
-                    async with client.stream(
-                        "POST",
-                        f"{OPENROUTER_BASE}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                    ) as resp:
-                        if resp.status_code != 200:
-                            continue  # try next model
-                        async for line in resp.aiter_lines():
-                            if not line.startswith("data: "):
-                                continue
-                            chunk = line[6:]
-                            if chunk.strip() == "[DONE]":
-                                return
-                            try:
-                                data = json.loads(chunk)
-                                token = data["choices"][0]["delta"].get("content", "")
-                                if token:
-                                    yield token
-                            except Exception:
-                                continue
-                    return  # success — don't try next model
-                else:
-                    resp = await client.post(
-                        f"{OPENROUTER_BASE}/chat/completions",
-                        headers=headers,
-                        json={**payload, "stream": False},
-                    )
-                    if resp.status_code == 200:
-                        yield resp.json()["choices"][0]["message"]["content"]
-                        return
+            async with httpx.AsyncClient(timeout=90) as client:
+                async with client.stream(
+                    "POST",
+                    f"{OPENROUTER_BASE}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model":       model,
+                        "messages":    messages,
+                        "stream":      True,
+                        "max_tokens":  600,
+                        "temperature": 0.65,
+                    },
+                ) as resp:
+                    # Read first chunk to detect errors before yielding
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        last_error = f"HTTP {resp.status_code}: {body.decode()[:200]}"
+                        print(f"[StatCFD] {model} failed: {last_error}")
+                        continue
+
+                    got_content = False
+                    async for raw_line in resp.aiter_lines():
+                        line = raw_line.strip()
+                        if not line or not line.startswith("data: "):
+                            continue
+                        chunk = line[6:]
+                        if chunk == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(chunk)
+                            # Handle error object inside SSE stream
+                            if "error" in data:
+                                last_error = str(data["error"])
+                                print(f"[StatCFD] {model} stream error: {last_error}")
+                                break
+                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            token = delta.get("content", "")
+                            if token:
+                                got_content = True
+                                yield token
+                        except json.JSONDecodeError:
+                            continue
+
+                    if got_content:
+                        return  # success
+
+        except httpx.TimeoutException:
+            last_error = "timeout"
+            print(f"[StatCFD] {model} timed out")
+            continue
         except Exception as e:
-            print(f"[StatCFD] OpenRouter {model} error: {e}")
+            last_error = str(e)
+            print(f"[StatCFD] {model} exception: {e}")
             continue
 
-    yield "All AI models are currently unavailable. Please try again in a moment."
+    # All models failed
+    yield f"StatCFD AI is temporarily unavailable (tried {len(CHAT_MODELS)} models, last error: {last_error}). Check that your OPENROUTER_API_KEY is valid and has credits."
 
 
 # ── App setup ─────────────────────────────────────────────────────────────────
@@ -217,7 +236,7 @@ async def chat(
     messages.append({"role": "user", "content": message})
 
     async def generate():
-        async for token in chat_openrouter(messages, stream=True):
+        async for token in chat_openrouter(messages):
             yield token
 
     return StreamingResponse(generate(), media_type="text/plain")
