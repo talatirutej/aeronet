@@ -374,49 +374,107 @@ export default function GlobalAIChat({ result, meshStats, activeTab }) {
       )}
 
       {/* ── Floating trigger button ── */}
+      <style>{`
+        .statcfd-fab {
+          position: fixed;
+          bottom: 28px;
+          right: 20px;
+          width: 52px;
+          height: 52px;
+          border-radius: 16px;
+          border: none;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1001;
+          outline: none;
+          /* Blue gradient background */
+          background: linear-gradient(135deg, #0A84FF 0%, #0055cc 100%);
+          box-shadow:
+            0 0 0 0 rgba(10,132,255,0),
+            0 6px 20px rgba(10,132,255,0.45),
+            0 2px 6px rgba(0,0,0,0.4);
+          transition:
+            transform 0.18s cubic-bezier(0.34,1.56,0.64,1),
+            box-shadow 0.18s ease,
+            background 0.18s ease;
+          transform-origin: center bottom;
+        }
+        .statcfd-fab:hover {
+          transform: translateY(-3px) scale(1.06);
+          box-shadow:
+            0 0 0 5px rgba(10,132,255,0.18),
+            0 12px 28px rgba(10,132,255,0.55),
+            0 4px 10px rgba(0,0,0,0.35);
+          background: linear-gradient(135deg, #2196ff 0%, #0068ff 100%);
+        }
+        .statcfd-fab:active {
+          transform: translateY(1px) rotate(-6deg) scale(0.94);
+          box-shadow:
+            0 0 0 3px rgba(10,132,255,0.2),
+            0 3px 10px rgba(10,132,255,0.4);
+          transition: transform 0.08s cubic-bezier(0.3,0,0.6,1), box-shadow 0.08s ease;
+        }
+        .statcfd-fab.open {
+          background: linear-gradient(135deg, #1a1a2e 0%, #0d1117 100%);
+          border: 0.5px solid rgba(10,132,255,0.45);
+          box-shadow:
+            0 0 0 4px rgba(10,132,255,0.12),
+            0 8px 24px rgba(0,0,0,0.5);
+          transform: rotate(0deg) scale(1);
+        }
+        .statcfd-fab.open:hover {
+          transform: translateY(-2px) scale(1.04);
+        }
+        .statcfd-fab.pulse-anim {
+          animation: fab-pulse 0.6s cubic-bezier(0.34,1.56,0.64,1);
+        }
+        @keyframes fab-pulse {
+          0%   { transform: scale(1); }
+          40%  { transform: scale(1.18) rotate(4deg); }
+          70%  { transform: scale(0.95) rotate(-2deg); }
+          100% { transform: scale(1); }
+        }
+        .statcfd-fab-dot {
+          position: absolute;
+          top: 9px; right: 9px;
+          width: 9px; height: 9px;
+          border-radius: 50%;
+          background: #ff453a;
+          border: 2px solid #0A84FF;
+          box-shadow: 0 0 6px rgba(255,69,58,0.8);
+          animation: dot-pulse 2s ease-in-out infinite;
+        }
+        @keyframes dot-pulse {
+          0%,100% { opacity:1; transform:scale(1); }
+          50%      { opacity:0.6; transform:scale(0.8); }
+        }
+        /* Ripple on click */
+        .statcfd-fab::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: 16px;
+          background: rgba(255,255,255,0.15);
+          opacity: 0;
+          transition: opacity 0.15s;
+        }
+        .statcfd-fab:active::after {
+          opacity: 1;
+        }
+      `}</style>
+
       <button
         onClick={() => setOpen(o => !o)}
         title="StatCFD AI Assistant"
-        style={{
-          position: 'fixed',
-          bottom: 16,
-          right: 16,
-          width: 48,
-          height: 48,
-          borderRadius: 14,
-          border: `0.5px solid ${open ? 'rgba(10,132,255,0.5)' : 'rgba(255,255,255,0.12)'}`,
-          cursor: 'pointer',
-          background: open
-            ? 'rgba(10,132,255,0.22)'
-            : 'rgba(14,16,18,0.95)',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1001,
-          transition: 'all 0.18s cubic-bezier(0.22,1,0.36,1)',
-          boxShadow: open
-            ? '0 0 0 3px rgba(10,132,255,0.15), 0 8px 32px rgba(0,0,0,0.5)'
-            : '0 4px 24px rgba(0,0,0,0.5)',
-          transform: pulse ? 'scale(1.1)' : open ? 'scale(1.04)' : 'scale(1)',
-        }}
-        onMouseEnter={e => { if (!open) e.currentTarget.style.borderColor='rgba(10,132,255,0.4)' }}
-        onMouseLeave={e => { if (!open) e.currentTarget.style.borderColor='rgba(255,255,255,0.12)' }}
+        className={`statcfd-fab${open ? ' open' : ''}${pulse ? ' pulse-anim' : ''}`}
       >
         {open
-          ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          : <StatCFDMark size={20} color={hasNew ? '#0A84FF' : 'rgba(255,255,255,0.7)'} />
+          ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="2.2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          : <StatCFDMark size={21} color="#ffffff" />
         }
-
-        {/* Unread dot */}
-        {hasNew && !open && (
-          <span style={{
-            position: 'absolute', top: 8, right: 8,
-            width: 8, height: 8, borderRadius: '50%',
-            background: 'var(--blue)',
-            boxShadow: '0 0 6px var(--blue)',
-            animation: 'pulse 2s ease-in-out infinite',
-          }} />
-        )}
+        {hasNew && !open && <span className="statcfd-fab-dot" />}
       </button>
     </>
   )
