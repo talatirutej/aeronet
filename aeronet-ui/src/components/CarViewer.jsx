@@ -411,7 +411,6 @@ function AIAssistant({result,meshStats,open,onClose}) {
           style={{flex:1,background:'rgba(255,255,255,0.05)',border:'0.5px solid rgba(255,255,255,0.1)',borderRadius:9,padding:'8px 11px',color:'var(--text-primary)',fontSize:12,outline:'none',fontFamily:"'IBM Plex Sans',sans-serif"}}
           onFocus={e=>e.target.style.borderColor='rgba(10,132,255,0.5)'}
           onBlur={e=>e.target.style.borderColor='rgba(255,255,255,0.1)'}/>
-        <button onClick={()=>send()} disabled={!input.trim()||busy} style={{width:33,height:33,borderRadius:9,border:'none',cursor:'pointer',background:input.trim()&&!busy?'var(--blue)':'rgba(255,255,255,0.06)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',transition:'background 0.15s',flexShrink:0}}>
           {busy?<span style={{width:11,height:11,borderRadius:'50%',border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'#fff',animation:'spin 0.85s linear infinite'}}/>:<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>}
         </button>
       </div>
@@ -570,11 +569,10 @@ export default function CarViewer({data,isLoading,uploadedFile,onMeshStats}) {
             {key:'light',label:'Lights',  val:envLight,  set:()=>setEnvLight(e=>!e)},
           ].map(o=>(
             <button key={o.key} onClick={o.set} style={{
-              height:30,padding:'0 10px',border:'none',cursor:'pointer',borderRadius:7,
               background:o.val?'rgba(10,132,255,0.2)':'transparent',
               color:o.val?'var(--blue)':'rgba(255,255,255,0.45)',
               fontSize:12,fontWeight:o.val?600:400,
-              border:`0.5px solid ${o.val?'rgba(10,132,255,0.35)':'transparent'}`,
+              border:o.val?'0.5px solid rgba(10,132,255,0.35)':'0.5px solid transparent',
               fontFamily:"'IBM Plex Sans',sans-serif",
               transition:'all 0.12s',whiteSpace:'nowrap',
             }}
@@ -592,11 +590,10 @@ export default function CarViewer({data,isLoading,uploadedFile,onMeshStats}) {
             {key:'ai',   label:'AI Chat', val:showAI,    set:()=>setShowAI(a=>!a)},
           ].map(o=>(
             <button key={o.key} onClick={o.set} style={{
-              height:30,padding:'0 10px',border:'none',cursor:'pointer',borderRadius:7,
               background:o.val?'rgba(10,132,255,0.2)':'transparent',
               color:o.val?'var(--blue)':'rgba(255,255,255,0.45)',
               fontSize:12,fontWeight:o.val?600:400,
-              border:`0.5px solid ${o.val?'rgba(10,132,255,0.35)':'transparent'}`,
+              border:o.val?'0.5px solid rgba(10,132,255,0.35)':'0.5px solid transparent',
               fontFamily:"'IBM Plex Sans',sans-serif",
               transition:'all 0.12s',whiteSpace:'nowrap',
             }}
