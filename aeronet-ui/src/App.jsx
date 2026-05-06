@@ -46,7 +46,8 @@ export default function App() {
     finally { setIsLoading(false) }
   }, [])
 
-  const viewerData = result?.pointCloud ?? null
+  // Pass the full result to CarViewer — it reads result.pointCloud or result.viewer.points internally.
+  const viewerData = result ?? null
 
   return (
     <div style={{
