@@ -1,0 +1,14 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+numpy==2.2.5
+scikit-learn==1.6.1
+joblib==1.5.1
+Pillow==11.2.1
+httpx==0.28.1
+scipy==1.15.3
+trimesh==4.6.4
+# torch + torchvision installed separately in Dockerfile (CPU wheel index)
+einops==0.8.0
+transformers==4.47.0
+accelerate==1.2.1
