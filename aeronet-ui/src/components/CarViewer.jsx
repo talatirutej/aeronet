@@ -462,11 +462,12 @@ const Sep=()=><div style={{width:0.5,height:14,background:'rgba(84,84,88,0.4)',m
 // MAIN
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function CarViewer({data,isLoading,uploadedFile}) {
+export default function CarViewer({data,isLoading,uploadedFile,onMeshStats}) {
   const[meshData,  setMeshData]  = useState(null)
   const[parsing,   setParsing]   = useState(false)
   const[parseErr,  setParseErr]  = useState(null)
   const[meshStats, setMeshStats] = useState(null)
+  const handleMeshStats = useCallback((s) => { setMeshStats(s); if (onMeshStats) onMeshStats(s) }, [onMeshStats])
   const[renderMode,setRenderMode]= useState('solid')
   const[showFlow,  setShowFlow]  = useState(false)
   const[showStats, setShowStats] = useState(false)
@@ -620,7 +621,7 @@ export default function CarViewer({data,isLoading,uploadedFile}) {
           {envLight&&<Environment preset="night"/>}
           {showGrid&&<Grid args={[20,20]} cellSize={0.3} cellThickness={0.3} cellColor="#191e22" sectionSize={1.5} sectionThickness={0.5} sectionColor="#1d2530" fadeDistance={12} fadeStrength={1} infiniteGrid/>}
           <Suspense fallback={null}>
-            {hasRealMesh&&renderMode!=='cloud'&&<MeshObject meshData={meshData} cpField={cpField} renderMode={renderMode} onStats={setMeshStats}/>}
+            {hasRealMesh&&renderMode!=='cloud'&&<MeshObject meshData={meshData} cpField={cpField} renderMode={renderMode} onStats={handleMeshStats}/>}
             {(showGrid||!hasRealMesh||renderMode==='cloud')&&pointsData&&!hasRealMesh&&<PointCloudMesh pointsData={pointsData}/>}
             {renderMode==='cloud'&&pointsData&&<PointCloudMesh pointsData={pointsData}/>}
             {!hasRealMesh&&!pointsData&&!parsing&&<EmptyState/>}
