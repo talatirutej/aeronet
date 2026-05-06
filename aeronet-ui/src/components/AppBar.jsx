@@ -84,19 +84,18 @@ export default function AppBar({ backendStatus, activePage, activeTab, onTabChan
             border: '0.5px solid rgba(10,132,255,0.4)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M2 8C2 5.5 4 3 8 3s6 2.5 6 5-2 5-6 5-6-2.5-6-5z" stroke="var(--blue)" strokeWidth="1.2" fill="none"/>
-              <path d="M1 8h14M8 3v10" stroke="var(--blue)" strokeWidth="1" opacity="0.5"/>
-              <circle cx="8" cy="8" r="1.5" fill="var(--blue)"/>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M18 5H8.5C6 5 4 7 4 9.5C4 12 6 14 8.5 14H15.5C18 14 20 16 20 18.5C20 19.9 19.3 21 18 21H6" stroke="var(--blue)" strokeWidth="2" strokeLinecap="round"/>
+              <circle cx="19" cy="5" r="1.5" fill="var(--blue)" opacity="0.7"/>
             </svg>
           </div>
           {!collapsed && (
             <div style={{ overflow: 'hidden' }}>
               <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.4px', color: 'var(--text-primary)', lineHeight: 1, whiteSpace: 'nowrap' }}>
-                AeroNet
+                StatCFD
               </div>
               <div style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 2 }}>
-                CFD Surrogate
+                by statinsite.com
               </div>
             </div>
           )}
@@ -306,10 +305,10 @@ export default function AppBar({ backendStatus, activePage, activeTab, onTabChan
         ) : (
           <div>
             <div style={{ fontSize: 10, color: 'var(--text-quaternary)', letterSpacing: '-0.1px', lineHeight: 1.4 }}>
-              Made by Rutej Talati
+              StatCFD · statinsite.com
             </div>
             <div style={{ fontSize: 10, color: 'var(--text-quaternary)', opacity: 0.6, letterSpacing: '-0.1px' }}>
-              © 2026 All rights reserved
+              © 2026 Rutej Talati
             </div>
           </div>
         )}
@@ -317,3 +316,4 @@ export default function AppBar({ backendStatus, activePage, activeTab, onTabChan
     </aside>
   )
 }
+
