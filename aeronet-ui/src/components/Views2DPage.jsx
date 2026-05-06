@@ -94,12 +94,34 @@ function SideView({g,cpOn,showSep,showIso}){
     const off_x   = CPAD
     const off_y   = 20
 
-    // Build SVG path from normalised points
-    const pts = contourPts.map(([nx, ny]) => [
+    // Prefer smooth_pts + catmull_rom_cps for a perfect bezier outline
+    // Falls back to linear path if only outline_pts available
+    const rawPts   = g?._smoothPts ?? contourPts
+    const crCps    = g?._catmullCps  // [[cp1x,cp1y,cp2x,cp2y] per segment]
+
+    const pts = rawPts.map(([nx, ny]) => [
       off_x + nx * scale_x,
       off_y + ny * scale_y
     ])
-    const pathD = pts.map((p, i) => `${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z'
+
+    let pathD
+    if (crCps && crCps.length === pts.length) {
+      // Catmull-Rom cubic bezier — pixel-smooth outline
+      const cmds = pts.map((p, i) => {
+        const cp = crCps[i]
+        const cp1x = (off_x + cp[0] * scale_x).toFixed(2)
+        const cp1y = (off_y + cp[1] * scale_y).toFixed(2)
+        const cp2x = (off_x + cp[2] * scale_x).toFixed(2)
+        const cp2y = (off_y + cp[3] * scale_y).toFixed(2)
+        const ex   = p[0].toFixed(2)
+        const ey   = p[1].toFixed(2)
+        return i === 0 ? `M${ex},${ey}` : `C${cp1x},${cp1y} ${cp2x},${cp2y} ${ex},${ey}`
+      })
+      pathD = cmds.join(' ') + ' Z'
+    } else {
+      // Fallback: straight line segments with smooth_pts
+      pathD = pts.map((p, i) => `${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z'
+    }
 
     // Cp color bands (vertical slices, same as before)
     const cpBands = Array.from({length:14}, (_,i) => {
@@ -726,7 +748,7 @@ export default function Views2DPage() {
       const cg = contourResult.geometry
       setGeo(prev => prev ? {
         ...prev,
-        // Override with accurate contour-derived measurements
+        // Override with accurate contour-derived measurements (rembg semantic segmentation)
         bodyType:    cg.bodyType    ?? prev.bodyType,
         aspectRatio: cg.aspectRatio ?? prev.aspectRatio,
         hoodRatio:   cg.hoodRatio   ?? prev.hoodRatio,
@@ -739,7 +761,9 @@ export default function Views2DPage() {
         w1:          cg.w1          ?? prev.w1,
         w2:          cg.w2          ?? prev.w2,
         confidence:  cg.confidence  ?? prev.confidence,
-        _contourPts: contourResult.outline_pts,
+        _contourPts: contourResult.smooth_pts ?? contourResult.outline_pts,
+        _smoothPts:  contourResult.smooth_pts,
+        _catmullCps: contourResult.catmull_rom_cps,
         _keypoints:  contourResult.keypoints,
       } : { ...cg, _contourPts: contourResult.outline_pts, _keypoints: contourResult.keypoints })
     }
