@@ -181,9 +181,12 @@ export default function RoadmapPage() {
         {/* Footer */}
         <div style={{ padding:'14px 18px', background:'var(--bg1)', borderRadius:12, border:'0.5px solid rgba(255,255,255,0.05)', marginTop:16 }}>
           <p style={{ fontSize:11, color:'var(--text-quaternary)', margin:0, lineHeight:1.7 }}>
-            DrivAerML is licensed CC-BY-SA. DrivAerStar is CC-BY-NC-SA — commercial use of trained models requires written permission. AeroNet source and trained weights are proprietary. © 2026 Rutej Talati.
+            DrivAerML is licensed CC-BY-SA. DrivAerStar is CC-BY-NC-SA — commercial use of trained models requires written permission. AeroNet source and trained weights are proprietary. © 2026 Rutej Talati · All rights reserved.
           </p>
         </div>
+      </div>
+      <div style={{ textAlign: 'center', padding: '10px 0 14px', fontSize: 11, color: 'rgba(255,255,255,0.18)' }}>
+        © 2026 Rutej Talati · All rights reserved
       </div>
       <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
     </div>
