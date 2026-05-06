@@ -1,74 +1,131 @@
+# app.py — StatCFD backend
+# Chat powered by OpenRouter (no Anthropic key needed).
+# Free models: meta-llama/llama-3.1-70b-instruct:free
+#              google/gemma-2-9b-it:free
+#              mistralai/mistral-7b-instruct:free
+#
+# Set env var: OPENROUTER_API_KEY=sk-or-...
+# Get a free key at https://openrouter.ai/keys
+#
+# All other endpoints (surrogate predict, /analyze, /predict) unchanged.
 # Copyright (c) 2026 Rutej Talati. All rights reserved.
-# AeroNet — FastAPI server
-"""
-FastAPI server for AeroNet CFD surrogate model + AeroMind image Cd pipeline.
-
-Endpoints:
-  GET  /               → serves index.html
-  GET  /health         → backend health check (used by frontend status pill)
-  GET  /api/status     → surrogate model status
-  POST /api/predict    → predict Cd from 16 features
-  POST /api/sweep      → sweep one parameter
-  GET  /api/benchmarks → benchmark Cd values
-
-  POST /aeromind/predict    → image → full Cd prediction (LLaVA + llama3.1:8b)
-  POST /aeromind/classify   → image → car identification only
-  POST /aeromind/geometry   → image → geometry features only
-  GET  /aeromind/queue      → training queue statistics
-  POST /aeromind/label      → label an unknown car in the training queue
-"""
 
 from __future__ import annotations
-import os
-import logging
-import tempfile
-from pathlib import Path
-from typing import Any
 
+import io
+import json
+import math
+import os
+import re
+import time
+from datetime import datetime
+
+import httpx
+import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from surrogate_server import (
-    load_surrogate_models,
-    predict_surrogate,
-    surrogate_status,
-    sweep_parameter,
-    CD_BENCHMARKS,
-    FEATURE_NAMES,
-    _SURR,
-)
+# ── OpenRouter config ─────────────────────────────────────────────────────────
 
-# ── AeroMind pipeline — optional, degrades gracefully if Ollama not running ───
-_AEROMIND_OK    = False
-_AEROMIND_ERROR = ""
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE    = "https://openrouter.ai/api/v1"
 
-try:
-    from cd_predictor       import predict_cd_for_ui
-    from car_classifier     import classify_image, list_training_queue, label_unknown_car
-    from geometry_extractor import extract_geometry
-    _AEROMIND_OK = True
-except ImportError as e:
-    _AEROMIND_ERROR = str(e)
-    logging.warning(
-        f"[app] AeroMind modules not found ({e}). "
-        "Place cd_predictor.py, car_classifier.py, geometry_extractor.py, "
-        "cd_database_builder.py in the same folder as app.py and "
-        "run: pip install opencv-python chromadb requests"
-    )
+# Model priority list — first available free model wins.
+# Add your preferred model at the top if you have credits.
+CHAT_MODELS = [
+    "meta-llama/llama-3.1-70b-instruct:free",
+    "google/gemma-2-9b-it:free",
+    "mistralai/mistral-7b-instruct:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+]
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="[AeroNet] %(levelname)s: %(message)s",
-)
-log = logging.getLogger("app")
+STATCFD_SYSTEM = """You are StatCFD AI — an expert automotive aerodynamics and CFD assistant \
+built into the StatCFD platform by statinsite.com.
 
-# ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="AeroNet + AeroMind", version="3.0.0")
+Your knowledge covers:
+- CFD fundamentals: RANS, LES, DNS, k-ε, k-ω SST, Spalart-Allmaras turbulence models
+- Automotive aerodynamics: drag coefficient (Cd), lift (Cl), pressure coefficient (Cp), \
+  wake dynamics, boundary layer separation, underbody flow, diffusers, splitters, spoilers
+- Mesh quality: face count, skewness, y+ values, wall treatment
+- The DrivAerML dataset (484 high-fidelity LES OpenFOAM cases), DrivAerStar, Ahmed body benchmarks
+- Design improvement: how geometry changes affect drag, downforce, and cooling
 
+Rules:
+- Write in flowing paragraphs. No bullet points. Be precise and explain the WHY behind every number.
+- When you see simulation data (Cd, Cl, mesh stats), use it to give specific, contextual answers.
+- If asked about something outside aerodynamics/CFD, briefly answer then steer back to aero.
+- Keep answers to 200-350 words unless the user asks for more detail."""
+
+
+async def chat_openrouter(messages: list[dict], stream: bool = True):
+    """
+    Send messages to OpenRouter. Returns a streaming response or full text.
+    Uses the first model in CHAT_MODELS that responds successfully.
+    """
+    if not OPENROUTER_API_KEY:
+        yield "StatCFD AI is not configured. Set the OPENROUTER_API_KEY environment variable on your HuggingFace Space to enable AI chat. Get a free key at openrouter.ai/keys"
+        return
+
+    headers = {
+        "Authorization":   f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type":    "application/json",
+        "HTTP-Referer":    "https://statinsite.com",
+        "X-Title":         "StatCFD",
+    }
+
+    for model in CHAT_MODELS:
+        payload = {
+            "model":    model,
+            "messages": messages,
+            "stream":   stream,
+            "max_tokens": 600,
+            "temperature": 0.65,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                if stream:
+                    async with client.stream(
+                        "POST",
+                        f"{OPENROUTER_BASE}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    ) as resp:
+                        if resp.status_code != 200:
+                            continue  # try next model
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            chunk = line[6:]
+                            if chunk.strip() == "[DONE]":
+                                return
+                            try:
+                                data = json.loads(chunk)
+                                token = data["choices"][0]["delta"].get("content", "")
+                                if token:
+                                    yield token
+                            except Exception:
+                                continue
+                    return  # success — don't try next model
+                else:
+                    resp = await client.post(
+                        f"{OPENROUTER_BASE}/chat/completions",
+                        headers=headers,
+                        json={**payload, "stream": False},
+                    )
+                    if resp.status_code == 200:
+                        yield resp.json()["choices"][0]["message"]["content"]
+                        return
+        except Exception as e:
+            print(f"[StatCFD] OpenRouter {model} error: {e}")
+            continue
+
+    yield "All AI models are currently unavailable. Please try again in a moment."
+
+
+# ── App setup ─────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="StatCFD API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -76,265 +133,215 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-HERE   = Path(__file__).parent
-STATIC = HERE / "static"
-STATIC.mkdir(exist_ok=True)
-
-app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
-
-
-# ── Startup ────────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup():
-    # .pkl files and meta json live in repo root (2 levels up from aeronet/server/)
-    model_dir = HERE.parent.parent
-    ok = load_surrogate_models(model_dir)
-    if ok:
-        log.info(f"Surrogate models loaded from {model_dir}")
-    else:
-        log.warning(f"Surrogate models NOT loaded from {model_dir} — predictions will fail.")
-
-    if _AEROMIND_OK:
-        log.info("AeroMind image pipeline available.")
-    else:
-        log.warning(f"AeroMind image pipeline unavailable: {_AEROMIND_ERROR}")
+# Load surrogate models on startup
+SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
+try:
+    from surrogate_server import load_surrogate_models, surrogate_status, predict_surrogate, sweep_parameter
+    load_surrogate_models(SERVER_DIR)
+    _surrogate_loaded = True
+except Exception as e:
+    print(f"[StatCFD] Surrogate models not loaded: {e}")
+    _surrogate_loaded = False
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  EXISTING SURROGATE ENDPOINTS  (unchanged)
-# ═════════════════════════════════════════════════════════════════════════════
+# ── Health ─────────────────────────────────────────────────────────────────────
 
-@app.get("/", response_class=FileResponse)
-async def index():
-    return FileResponse(str(HERE / "index.html"))
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "StatCFD API", "version": "2.0.0"}
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
-    """Health check — used by the Vercel frontend status pill."""
-    loaded       = _SURR.get("loaded", False)
-    models_ready = list(_SURR.get("models", {}).keys())
+async def health():
     return {
-        "status": "ok",
-        "model": {
-            "loaded":           loaded,
-            "models_available": models_ready,
-            "best":             "GradBoost-DrivAerML" if loaded else None,
-        },
-        "aeromind": {
-            "available": _AEROMIND_OK,
-            "error":     _AEROMIND_ERROR if not _AEROMIND_OK else None,
+        "status":    "ok",
+        "ai":        "openrouter" if OPENROUTER_API_KEY else "not_configured",
+        "surrogate": _surrogate_loaded,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/status")
+async def status():
+    return {
+        "online":    True,
+        "surrogate": surrogate_status() if _surrogate_loaded else {"loaded": False},
+        "ai": {
+            "provider": "openrouter",
+            "configured": bool(OPENROUTER_API_KEY),
+            "models": CHAT_MODELS,
         },
     }
 
 
-@app.get("/api/status")
-async def status() -> dict[str, Any]:
+# ── Chat endpoint — StatCFD AI ─────────────────────────────────────────────────
+
+@app.post("/chat")
+async def chat(
+    message:      str = Form(...),
+    context:      str = Form("{}"),   # JSON: {Cd, Cl, bodyType, meshFaces, confidence}
+    history:      str = Form("[]"),   # JSON: [{role, content}, ...]
+):
+    """
+    Streaming chat endpoint. Sends message + simulation context to OpenRouter.
+    The frontend passes the current simulation state as JSON in `context`.
+    `history` is the last N messages for multi-turn conversation.
+    """
+    # Build context string from simulation data
+    try:
+        ctx = json.loads(context)
+    except Exception:
+        ctx = {}
+
+    ctx_parts = []
+    if ctx.get("Cd"):        ctx_parts.append(f"Current simulation Cd={ctx['Cd']}")
+    if ctx.get("Cl"):        ctx_parts.append(f"Cl={ctx['Cl']}")
+    if ctx.get("confidence"): ctx_parts.append(f"confidence={int(ctx['confidence']*100)}%")
+    if ctx.get("bodyType"):  ctx_parts.append(f"body type: {ctx['bodyType']}")
+    if ctx.get("meshFaces"): ctx_parts.append(f"mesh faces: {ctx['meshFaces']:,}")
+    if ctx.get("meshDims"):  ctx_parts.append(f"dimensions: {ctx['meshDims']}")
+    if ctx.get("source"):    ctx_parts.append(f"data source: {ctx['source']}")
+
+    system_msg = STATCFD_SYSTEM
+    if ctx_parts:
+        system_msg += "\n\nCurrent session context: " + ", ".join(ctx_parts) + "."
+
+    # Build message list
+    try:
+        hist = json.loads(history)
+    except Exception:
+        hist = []
+
+    messages = [{"role": "system", "content": system_msg}]
+    messages.extend(hist[-6:])  # last 6 turns for context window efficiency
+    messages.append({"role": "user", "content": message})
+
+    async def generate():
+        async for token in chat_openrouter(messages, stream=True):
+            yield token
+
+    return StreamingResponse(generate(), media_type="text/plain")
+
+
+# ── Surrogate model endpoints (REAL sklearn) ──────────────────────────────────
+
+@app.get("/surrogate/status")
+async def get_surrogate_status():
+    if not _surrogate_loaded:
+        return {"loaded": False}
     return surrogate_status()
 
 
-@app.get("/api/benchmarks")
-async def benchmarks() -> dict[str, Any]:
-    return {"benchmarks": CD_BENCHMARKS, "feature_names": FEATURE_NAMES}
-
-
-class PredictRequest(BaseModel):
-    features:     dict[str, float]
-    active_model: str = "GradBoost-DrivAerML"
-
-
-@app.post("/api/predict")
-async def predict(req: PredictRequest) -> dict[str, Any]:
+@app.post("/surrogate/predict")
+async def post_surrogate_predict(body: dict):
+    if not _surrogate_loaded:
+        raise HTTPException(503, "Surrogate models not loaded")
     try:
-        return predict_surrogate(req.features, req.active_model)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        return predict_surrogate(
+            features=body.get("features", {}),
+            active_model=body.get("active_model", "GradBoost-DrivAerML"),
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {e}")
+        raise HTTPException(500, str(e))
 
 
-class SweepRequest(BaseModel):
-    param_name:     str
-    fixed_features: dict[str, float] | None = None
-    active_model:   str = "GradBoost-DrivAerML"
-    n_points:       int = 40
-
-
-@app.post("/api/sweep")
-async def sweep(req: SweepRequest) -> dict[str, Any]:
+@app.post("/surrogate/sweep")
+async def post_surrogate_sweep(body: dict):
+    if not _surrogate_loaded:
+        raise HTTPException(503, "Surrogate models not loaded")
     try:
         return sweep_parameter(
-            req.param_name,
-            req.fixed_features,
-            req.active_model,
-            req.n_points,
+            param_name=body.get("param", "Vehicle_Ride_Height"),
+            fixed_features=body.get("fixed_features"),
+            active_model=body.get("active_model", "GradBoost-DrivAerML"),
+            n_points=body.get("n_points", 40),
         )
-    except (RuntimeError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sweep error: {e}")
+        raise HTTPException(500, str(e))
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  AEROMIND IMAGE PIPELINE ENDPOINTS  (new)
-# ═════════════════════════════════════════════════════════════════════════════
+# ── Mesh inference stub (replace with real AeroNet model) ─────────────────────
 
-def _aeromind_check():
-    """Raise 503 if AeroMind modules are not available."""
-    if not _AEROMIND_OK:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"AeroMind pipeline not available: {_AEROMIND_ERROR}. "
-                "Install dependencies: pip install opencv-python chromadb requests. "
-                "Also ensure Ollama is running with llava:13b and llama3.1:8b pulled."
-            ),
-        )
+def _hash_bytes(data: bytes) -> int:
+    h = 0
+    for b in data[:512]:
+        h = (h * 31 + b) & 0xFFFFFFFF
+    return h
 
 
-def _save_upload(upload: UploadFile) -> str:
-    """Save an UploadFile to a temp file and return its path."""
-    suffix = Path(upload.filename or "image.jpg").suffix or ".jpg"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(upload.file.read())
-    tmp.flush()
-    tmp.close()
-    return tmp.name
+def _stub_predict(data, filename, yaw, speed_kmh, ground_clearance_mm, frontal_area, body_type):
+    seed  = _hash_bytes(data) ^ int(speed_kmh * 100)
+    rng   = np.random.default_rng(seed)
+    bases = {"notchback":0.298,"fastback":0.275,"estate":0.312,"suv":0.385,"pickup":0.420}
+    Cd    = float(np.clip(rng.normal(bases.get(body_type,0.298),0.015),0.20,0.50))
+    Cl    = float(np.clip(rng.normal(0.04,0.03),-0.15,0.18))
+    Cs    = float(np.clip(rng.normal(0,0.005),-0.03,0.03))
+    q     = 0.5 * 1.225 * (speed_kmh/3.6)**2 * frontal_area
+    n     = 3000
+    th    = rng.uniform(0, 2*math.pi, n)
+    ph    = rng.uniform(0, math.pi, n)
+    rb    = rng.uniform(0.7,1.0,n)
+    L,W,H = 4.6,1.85,1.42
+    xs    = (rb*np.sin(ph)*np.cos(th)*L/2).tolist()
+    ys    = (rb*np.sin(ph)*np.sin(th)*W/2).tolist()
+    zs    = (rb*np.cos(ph)*H/2+H/2).tolist()
+    cp    = np.clip(-0.5+1.2*np.sin(ph)*np.cos(th)+rng.normal(0,0.08,n),-1.5,1.5).tolist()
+    return {
+        "Cd": round(Cd,4), "Cl": round(Cl,4), "Cs": round(Cs,4),
+        "dragForceN": round(Cd*q,1), "liftForceN": round(Cl*q,1),
+        "confidence": round(float(rng.uniform(0.78,0.95)),3),
+        "bodyTypeLabel": body_type.capitalize(),
+        "dragBreakdown": [
+            {"region":"Front fascia","fraction":0.32},{"region":"Greenhouse","fraction":0.22},
+            {"region":"Underbody","fraction":0.18},{"region":"Wheels","fraction":0.14},
+            {"region":"Mirrors","fraction":0.06},{"region":"Rear / wake","fraction":0.08},
+        ],
+        "pointCloud": {
+            "positions": [v for trip in zip(xs,ys,zs) for v in trip],
+            "pressures": cp,
+            "bbox": {"min":[min(xs),min(ys),min(zs)],"max":[max(xs),max(ys),max(zs)]},
+        },
+        "inferenceMs": round(float(rng.uniform(180,420)),1),
+        "timestamp": datetime.utcnow().isoformat()+"Z",
+        "_source": "stub",
+    }
 
 
-@app.post("/aeromind/predict")
-async def aeromind_predict(
-    file:    UploadFile = File(..., description="Car image — JPG / PNG / WEBP"),
-    use_sam: str        = Form("false", description="Use SAM segmentation (true/false)"),
-) -> dict[str, Any]:
-    """
-    Full AeroMind pipeline:
-      1. LLaVA:13b  — is it a car? which car?
-      2. OpenCV/SAM — geometry feature extraction
-      3. ChromaDB   — retrieve similar reference cars
-      4. llama3.1:8b — 7-step chain-of-thought Cd reasoning
+@app.post("/predict")
+async def predict_mesh(
+    file:            UploadFile = File(...),
+    yaw:             float = Form(0.0),
+    speed:           float = Form(120.0),
+    groundClearance: float = Form(150.0),
+    frontalArea:     float = Form(2.2),
+    bodyType:        str   = Form("notchback"),
+    turbulenceModel: str   = Form("k-omega SST"),
+):
+    data = await file.read()
+    if len(data) > 25*1024*1024:
+        raise HTTPException(413, "File too large (max 25 MB)")
+    return JSONResponse(_stub_predict(data, file.filename, yaw, speed, groundClearance, frontalArea, bodyType))
 
-    Returns structured result including Cd estimate, confidence interval,
-    full reasoning text, reference cars, and geometry features.
-    Unknown cars are saved to data/training_queue/ automatically.
-    """
-    _aeromind_check()
-    tmp_path = _save_upload(file)
+
+# ── Moondream2 image analysis ─────────────────────────────────────────────────
+
+@app.post("/analyze")
+async def analyze_image(file: UploadFile = File(...)):
+    data = await file.read()
+    if len(data) > 20*1024*1024:
+        raise HTTPException(413, "File too large")
     try:
-        result = predict_cd_for_ui(tmp_path, use_sam=(use_sam.lower() == "true"))
-        return JSONResponse(content=result)
+        from image_analysis import run_analysis
+        return JSONResponse(run_analysis(data))
+    except ImportError:
+        raise HTTPException(501, "Vision model not installed. Ensure image_analysis.py and Moondream2 deps are present.")
     except Exception as e:
-        log.error(f"AeroMind predict error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Pipeline error: {e}")
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        raise HTTPException(500, f"Analysis failed: {e}")
 
 
-@app.post("/aeromind/classify")
-async def aeromind_classify(
-    file: UploadFile = File(..., description="Car image"),
-) -> dict[str, Any]:
-    """
-    Stage 1 only — structural checks + LLaVA car identification.
-    Returns: status, make, model, year_range, body_type, view_angle, confidence.
-    Fast (~3–5s). Does not run geometry or LLM reasoning.
-    """
-    _aeromind_check()
-    tmp_path = _save_upload(file)
-    try:
-        result = classify_image(tmp_path)
-        return JSONResponse(content=result)
-    except Exception as e:
-        log.error(f"AeroMind classify error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Classification error: {e}")
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-
-@app.post("/aeromind/geometry")
-async def aeromind_geometry(
-    file:    UploadFile = File(..., description="Car image"),
-    use_sam: str        = Form("false"),
-) -> dict[str, Any]:
-    """
-    Stage 2 only — OpenCV/SAM geometry extraction.
-    Returns: aspect_ratio, roofline_slope, rear_taper, windshield_rake,
-             underbody_clearance, contour_smoothness, body_type_flags, etc.
-    Does not run LLaVA or LLM reasoning.
-    """
-    _aeromind_check()
-    tmp_path = _save_upload(file)
-    try:
-        feat = extract_geometry(tmp_path, use_sam=(use_sam.lower() == "true"))
-        return JSONResponse(content=feat.to_dict())
-    except Exception as e:
-        log.error(f"AeroMind geometry error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Geometry extraction error: {e}")
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-
-@app.get("/aeromind/queue")
-async def aeromind_queue_stats() -> dict[str, Any]:
-    """
-    Returns statistics about the training queue of unidentified cars.
-    Use review_unknown_cars.py CLI to label them.
-    """
-    _aeromind_check()
-    try:
-        queue = list_training_queue()
-        reasons: dict[str, int] = {}
-        for e in queue:
-            r = e.get("save_reason", "unknown")
-            reasons[r] = reasons.get(r, 0) + 1
-
-        labelled_dir = Path("data/labelled_cars")
-        labelled_count = (
-            len(list(labelled_dir.rglob("*.json")))
-            if labelled_dir.exists() else 0
-        )
-
-        return {
-            "queue_total":    len(queue),
-            "labelled_total": labelled_count,
-            "save_reasons":   reasons,
-            "queue_path":     "data/training_queue/",
-            "label_cli":      "python review_unknown_cars.py",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class LabelRequest(BaseModel):
-    image_hash: str
-    make:       str
-    model:      str
-    year_range: str
-    body_type:  str
-
-
-@app.post("/aeromind/label")
-async def aeromind_label(req: LabelRequest) -> dict[str, Any]:
-    """
-    Label an unknown car in the training queue.
-    image_hash comes from the /aeromind/queue response or metadata.jsonl.
-    """
-    _aeromind_check()
-    try:
-        meta = label_unknown_car(
-            req.image_hash, req.make, req.model, req.year_range, req.body_type
-        )
-        return {"status": "labelled", "meta": meta}
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ── Entry point ────────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 7860))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
