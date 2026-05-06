@@ -186,14 +186,68 @@ function SideView({g,cpOn,showSep,showIso}){
     )
   }
 
-  // ── Fallback: geometric SVG (original code, when no contour available) ──
-  const W2=620,H2=240,PAD2=32; // renamed to avoid conflictconst bLen=W-PAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=H*0.52,gY=H-18,sill=gY-rideH,roofY=sill-bH;const x=f=>PAD+f*bLen;const hx=x(g.hoodRatio),chx=x(g.hoodRatio+g.cabinRatio),rX=x(1.0);const wsH=bH*g.cabinH,wsRad=(90-g.wsAngleDeg)*Math.PI/180,wsRun=wsH/Math.tan(Math.max(0.1,wsRad));const aTx=hx+wsRun,aBy=sill-bH*0.74,hoodY=sill-bH*0.50,cowlY=sill-bH*0.72,roofMidX=(aTx+chx)*0.50,sag=g.bodyType==='suv'?bH*0.01:g.bodyType==='estate'?0:bH*0.015;const bt=g.bodyType;let rearSVG='';if(bt==='fastback'||bt==='coupe'){const c1=x(g.hoodRatio+g.cabinRatio*0.82),c2=x(g.hoodRatio+g.cabinRatio*1.05);rearSVG=[`Q ${c1} ${roofY+sag} ${chx+8} ${roofY+bH*0.10}`,`C ${c2} ${sill-bH*0.38} ${rX-10} ${sill-bH*0.28} ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='notchback'){const deckY=sill-bH*0.56;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${x(g.hoodRatio+g.cabinRatio+0.02)} ${roofY+sag}`,`Q ${rX-14} ${roofY+sag+4} ${rX} ${deckY}`,`L ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='estate'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-5} ${roofY+sag+3} ${rX} ${sill-bH*0.18}`].join(' ')}else if(bt==='suv'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-10} ${roofY+sag+8} ${rX} ${sill-bH*0.20}`].join(' ')}else if(bt==='pickup'){const bedTopY=sill-bH*0.52;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${chx} ${bedTopY}`,`L ${rX-5} ${bedTopY}`,`Q ${rX} ${bedTopY} ${rX} ${sill-bH*0.14}`].join(' ')}else{rearSVG=[`Q ${chx+14} ${roofY+bH*0.10} ${rX-18} ${sill-bH*0.40}`,`Q ${rX} ${sill-bH*0.32} ${rX} ${sill-bH*0.16}`].join(' ')}
-const bodyPath=[`M ${x(0.03)} ${gY-1}`,`C ${PAD+2} ${sill+4} ${PAD} ${sill-bH*0.18} ${PAD} ${sill-bH*0.32}`,`L ${PAD} ${sill-bH*0.47}`,`Q ${x(0.04)} ${hoodY-bH*0.03} ${x(0.10)} ${hoodY}`,`Q ${x(0.22)} ${hoodY} ${hx} ${cowlY}`,`L ${aTx} ${roofY}`,`Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,rearSVG,`L ${rX} ${sill}`,`Q ${rX-3} ${sill+2} ${rX-bLen*0.055} ${gY-1}`,`L ${x(0.03)} ${gY-1}`,'Z'].join(' ')
-const dloPath=(()=>{const dloFrontY=aBy,dloRoofL=roofY+3,dloRoofR=roofY+sag+3;let rear='';if(bt==='fastback'||bt==='coupe')rear=`Q ${chx+8} ${roofY+bH*0.14} ${chx+26} ${dloFrontY+bH*0.10}`;else if(bt==='notchback')rear=`L ${chx-4} ${dloFrontY+2}`;else if(bt==='hatchback')rear=`Q ${chx+10} ${roofY+bH*0.12} ${chx+16} ${dloFrontY+4}`;else rear=`L ${chx-4} ${dloFrontY+2}`;return[`M ${hx+5} ${dloFrontY}`,`L ${aTx+3} ${dloRoofL}`,`Q ${roofMidX} ${dloRoofL} ${chx-4} ${dloRoofR}`,rear,`L ${hx+5} ${dloFrontY}`,'Z'].join(' ')})()
-const wR=bH*(bt==='suv'||bt==='pickup'?0.210:0.178),w1x=x(g.w1),w2x=x(g.w2),wY=gY-wR
-const N=20,cpBands=Array.from({length:N},(_,i)=>{const tM=(i+0.5)/N;return{x0:x(i/N),x1:x((i+1)/N)+1,color:cpToRgb(cpAtPoint(tM,0.65,tM<0.15,g.Cd))}})
-const sepX=bt==='fastback'?x(g.hoodRatio+g.cabinRatio*0.88):x(g.hoodRatio+g.cabinRatio),sepY=bt==='fastback'?roofY+bH*0.08:roofY+sag
-return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet"><defs><clipPath id="sc"><path d={bodyPath}/></clipPath><linearGradient id="edgeHi" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="rgba(255,255,255,0.14)"/><stop offset="40%" stopColor="rgba(255,255,255,0.02)"/><stop offset="100%" stopColor="rgba(0,0,0,0.22)"/></linearGradient><linearGradient id="cpBar" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stopColor="#2147d9"/><stop offset="25%" stopColor="#22d3ee"/><stop offset="50%" stopColor="#84cc16"/><stop offset="75%" stopColor="#fbbf24"/><stop offset="100%" stopColor="#ef4444"/></linearGradient><filter id="sep"><feGaussianBlur stdDeviation="1.2"/></filter></defs><ellipse cx={W/2} cy={gY+6} rx={bLen*0.43} ry={8} fill="rgba(0,0,0,0.4)"/><line x1={6} y1={gY} x2={W-6} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>{cpOn&&<g clipPath="url(#sc)">{cpBands.map((b,i)=><rect key={i} x={b.x0} y={roofY-20} width={b.x1-b.x0} height={bH+rideH+30} fill={b.color}/>)}</g>}<path d={bodyPath} fill={cpOn?'rgba(5,10,18,0.24)':'#111E28'} stroke="rgba(10,132,255,0.65)" strokeWidth={cpOn?0.75:1.1}/><path d={bodyPath} fill="url(#edgeHi)"/><path d={dloPath} fill={cpOn?'rgba(10,132,255,0.16)':'rgba(10,132,255,0.10)'} stroke="rgba(10,132,255,0.55)" strokeWidth="0.85"/><path d={dloPath} fill="rgba(0,14,30,0.40)"/>{bt!=='pickup'&&bt!=='fastback'&&bt!=='coupe'&&<line x1={x(g.hoodRatio+g.cabinRatio*0.46)} y1={aBy} x2={x(g.hoodRatio+g.cabinRatio*0.46)} y2={sill} stroke="rgba(0,0,0,0.6)" strokeWidth="3.5"/>}<path d={`M ${hx+9} ${aBy-2} L ${hx+28} ${aBy-9} L ${hx+28} ${aBy+3} Z`} fill="#0A1620" stroke="rgba(10,132,255,0.25)" strokeWidth="0.7"/><rect x={PAD+2} y={sill-bH*0.44} width={5} height={bH*0.065} rx="1.5" fill="rgba(255,255,200,0.90)"/><rect x={rX-4} y={sill-bH*(bt==='fastback'||bt==='coupe'?0.30:0.22)} width={5} height={bH*0.14} rx="1.5" fill="rgba(255,69,58,0.90)"/>{showSep&&<g><circle cx={sepX} cy={sepY} r={5} fill="rgba(255,214,10,0.2)" filter="url(#sep)"/><circle cx={sepX} cy={sepY} r={2.5} fill="#FFD60A" opacity={0.8}/>{[0,40,80,120,160,200,240,280,320].map(a=>{const r2=a*Math.PI/180,len=a<90||a>270?10:6;return<line key={a} x1={sepX+Math.cos(r2)*2.5} y1={sepY+Math.sin(r2)*2.5} x2={sepX+Math.cos(r2)*(2.5+len)} y2={sepY+Math.sin(r2)*(2.5+len)} stroke="#FFD60A" strokeWidth="0.7" opacity={0.5}/>})}<text x={sepX+8} y={sepY-6} fill="#FFD60A" fontSize="7" fontFamily="'IBM Plex Mono',monospace">SEP</text></g>}{cpOn&&[0.28,0.52,0.76].map((fh,i)=>{const ay=sill-bH*fh;return<g key={i} transform={`translate(${PAD-24},${ay})`}><line x1={0} y1={0} x2={14} y2={0} stroke="rgba(10,132,255,0.55)" strokeWidth="1.1"/><polygon points="16,0 10,-3.5 10,3.5" fill="rgba(10,132,255,0.55)"/></g>})}{cpOn&&<g opacity={0.4}>{[0.15,0.30,0.45].map((d,i)=><ellipse key={i} cx={rX+10+d*30} cy={sill-bH*0.28} rx={4+d*12} ry={3+d*8} fill="none" stroke="#2147d9" strokeWidth="0.8" strokeDasharray="3,3"/>)}</g>}{[[w1x,wY],[w2x,wY]].map(([cx,cy],i)=><g key={i}><circle cx={cx} cy={cy} r={wR+3} fill="rgba(0,0,0,0.35)"/><circle cx={cx} cy={cy} r={wR} fill="#060C14" stroke="#1E3040" strokeWidth="2.6"/><circle cx={cx} cy={cy} r={wR*0.74} fill="#0C1824" stroke="#162C38" strokeWidth="1.5"/>{[0,72,144,216,288].map(a=>{const r2=a*Math.PI/180;return<path key={a} d={`M ${cx+Math.cos(r2)*wR*0.25} ${cy+Math.sin(r2)*wR*0.25} L ${cx+Math.cos(r2+0.22)*wR*0.70} ${cy+Math.sin(r2+0.22)*wR*0.70} Q ${cx+Math.cos(r2)*wR*0.73} ${cy+Math.sin(r2)*wR*0.73} ${cx+Math.cos(r2-0.22)*wR*0.70} ${cy+Math.sin(r2-0.22)*wR*0.70} Z`} fill="#162434" stroke="#1E3040" strokeWidth="0.8"/>})}<circle cx={cx} cy={cy} r={wR*0.15} fill="#1E3040"/><circle cx={cx} cy={cy} r={wR*0.42} fill="none" stroke="#162434" strokeWidth="0.6" strokeDasharray="4,4"/></g>)}{[[w1x,wY],[w2x,wY]].map(([cx,cy],i)=><circle key={i} cx={cx} cy={cy} r={wR+3} fill="none" stroke="#060C14" strokeWidth="5.5"/>)}{cpOn&&<><rect x={W-16} y={H*0.13} width={10} height={H*0.62} rx="2" fill="url(#cpBar)"/><text x={W-22} y={H*0.13+5} textAnchor="end" fill="rgba(255,255,255,0.25)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">+1.0</text><text x={W-22} y={H*0.75+5} textAnchor="end" fill="rgba(255,255,255,0.25)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">−1.5</text></>}<text x={W/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">SIDE · {g.bodyType.toUpperCase()} · Cd {g.Cd.toFixed(3)} · WS {g.wsAngleDeg.toFixed(0)}°</text></svg>)}
+  // ── Fallback: geometric SVG (when no real contour available) ──
+  const W=620,H=240,PAD=32
+  const bLen=W-PAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=H*0.52,gY=H-18,sill=gY-rideH,roofY=sill-bH
+  const xp=f=>PAD+f*bLen
+  const hx=xp(g.hoodRatio),chx=xp(g.hoodRatio+g.cabinRatio),rX=xp(1.0)
+  const wsH=bH*g.cabinH,wsRad=(90-g.wsAngleDeg)*Math.PI/180,wsRun=wsH/Math.tan(Math.max(0.1,wsRad))
+  const aTx=hx+wsRun,hoodY=sill-bH*0.50,cowlY=sill-bH*0.72,roofMidX=(aTx+chx)*0.50
+  const sag=g.bodyType==='suv'?bH*0.01:g.bodyType==='estate'?0:bH*0.015
+  const bt=g.bodyType
+  let rearSVG=''
+  if(bt==='fastback'||bt==='coupe'){const c1=xp(g.hoodRatio+g.cabinRatio*0.82),c2=xp(g.hoodRatio+g.cabinRatio*1.05);rearSVG=[`Q ${c1} ${roofY+sag} ${chx+8} ${roofY+bH*0.10}`,`C ${c2} ${sill-bH*0.38} ${rX-10} ${sill-bH*0.28} ${rX} ${sill-bH*0.18}`].join(' ')}
+  else if(bt==='notchback'){const deckY=sill-bH*0.56;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${xp(g.hoodRatio+g.cabinRatio+0.02)} ${roofY+sag}`,`Q ${rX-14} ${roofY+sag+4} ${rX} ${deckY}`,`L ${rX} ${sill-bH*0.18}`].join(' ')}
+  else if(bt==='estate'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-5} ${roofY+sag+3} ${rX} ${sill-bH*0.18}`].join(' ')}
+  else if(bt==='suv'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-10} ${roofY+sag+8} ${rX} ${sill-bH*0.20}`].join(' ')}
+  else if(bt==='pickup'){const bedTopY=sill-bH*0.52;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${chx} ${bedTopY}`,`L ${rX-5} ${bedTopY}`,`Q ${rX} ${bedTopY} ${rX} ${sill-bH*0.14}`].join(' ')}
+  else{rearSVG=[`Q ${chx+14} ${roofY+bH*0.10} ${rX-18} ${sill-bH*0.40}`,`Q ${rX} ${sill-bH*0.32} ${rX} ${sill-bH*0.16}`].join(' ')}
+
+  const wR=bLen*0.082,w1x=xp(g.w1),w2x=xp(g.w2),wY=sill
+  const N=16,cpBands=Array.from({length:N},(_,i)=>{const f=(i+0.5)/N;return{x:PAD+i*(bLen/N),w:bLen/N+1,c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd))}})
+  const bodyPath=[
+    `M ${PAD} ${sill-bH*0.18}`,
+    `Q ${PAD} ${sill-bH*0.55} ${hx} ${hoodY}`,
+    `Q ${hx+wsRun*0.3} ${cowlY} ${aTx} ${roofY}`,
+    `Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,
+    rearSVG,
+    `L ${rX} ${sill}`,
+    `Q ${rX-8} ${sill+6} ${w2x+wR+8} ${sill+4}`,
+    `A ${wR} ${wR} 0 0 0 ${w2x-wR-8} ${sill+4}`,
+    `L ${w1x+wR+8} ${sill+4}`,
+    `A ${wR} ${wR} 0 0 0 ${w1x-wR-8} ${sill+4}`,
+    `Q ${PAD+8} ${sill+4} ${PAD} ${sill}`,
+    `L ${PAD} ${sill-bH*0.18} Z`
+  ].join(' ')
+
+  // Windscreen path
+  const wsPath=[`M ${hx+wsRun*0.08} ${cowlY+bH*0.04}`,`L ${aTx-wsRun*0.06} ${roofY+4}`,`L ${aTx+bLen*0.01} ${roofY+4}`,`Q ${aTx+wsRun*0.12} ${cowlY+bH*0.02} ${hx+wsRun*0.18} ${cowlY+bH*0.04}`,'Z'].join(' ')
+
+  const sepX = showSep && xp ? xp(g.hoodRatio+g.cabinRatio*0.88) : null
+
+  const cpBandsSide = cpOn ? cpBands : []
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <defs><clipPath id="sclip2"><path d={bodyPath}/></clipPath></defs>
+      <ellipse cx={W/2} cy={gY+6} rx={bLen*0.46} ry={8} fill="rgba(0,0,0,0.45)"/>
+      <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
+      {cpOn&&<g clipPath="url(#sclip2)">{cpBandsSide.map((b,i)=><rect key={i} x={b.x} y={0} width={b.w} height={H} fill={b.c} opacity={0.85}/>)}</g>}
+      <path d={bodyPath} fill={cpOn?'rgba(4,8,16,0.22)':'#0e1a24'} stroke="rgba(10,132,255,0.65)" strokeWidth="1.2"/>
+      <path d={wsPath} fill="rgba(0,14,28,0.55)" stroke="rgba(10,132,255,0.45)" strokeWidth="0.9"/>
+      {showSep&&sepX&&<line x1={sepX} y1={roofY} x2={sepX} y2={sill} stroke="rgba(255,100,80,0.55)" strokeWidth="1" strokeDasharray="3 2"/>}
+      {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=>(
+        <g key={i}>
+          <circle cx={wcx} cy={wcy} r={wR} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/>
+          <circle cx={wcx} cy={wcy} r={wR*0.68} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>
+          {[0,72,144,216,288].map(a=>{const r2=a*Math.PI/180;return<path key={a} d={`M ${wcx+Math.cos(r2)*wR*0.22} ${wcy+Math.sin(r2)*wR*0.22} L ${wcx+Math.cos(r2+0.26)*wR*0.64} ${wcy+Math.sin(r2+0.26)*wR*0.64} Q ${wcx+Math.cos(r2)*wR*0.68} ${wcy+Math.sin(r2)*wR*0.68} ${wcx+Math.cos(r2-0.26)*wR*0.64} ${wcy+Math.sin(r2-0.26)*wR*0.64} Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>})}
+          <circle cx={wcx} cy={wcy} r={wR*0.14} fill="#1E3040"/>
+        </g>
+      ))}
+      <text x={W/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">SIDE · {g.bodyType?.toUpperCase()} · Cd {g.Cd?.toFixed(3)} · WS {g.wsAngleDeg?.toFixed(0)}°</text>
+    </svg>
+  )
+}
 
 function FrontView({g,cpOn}){
   const W=320,H=240,cx=W/2,gY=H-16
