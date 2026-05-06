@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? 'http://127.0.0.1:8000'
 
 // ── Canvas image analysis ─────────────────────────────────────────────────────
 function analyzeImageCanvas(file) {
@@ -118,6 +120,7 @@ export default function Views2DPage() {
   const [file,     setFile]       = useState(null)
   const [preview,  setPreview]    = useState(null)
   const [stage,    setStage]      = useState('idle')
+  const [aiInsight, setAiInsight] = useState(null)
   const [geo,      setGeo]        = useState(null)
   const [error,    setError]      = useState(null)
   const [activeView, setActiveView] = useState('side')
@@ -126,19 +129,162 @@ export default function Views2DPage() {
   const [showIso,  setShowIso]    = useState(false)
   const [showGE,   setShowGE]     = useState(false)
   const [yawAngle, setYawAngle]   = useState(0)
+  const [urlInput,  setUrlInput]  = useState('')
+  const [urlError,  setUrlError]  = useState('')
+  const [urlMode,   setUrlMode]   = useState(false)
   const svgRef = useRef(null)
   const fileRef = useRef(null)
 
   const acceptFile = useCallback((f) => {
     if (!f||!f.type.startsWith('image/')) return
     setFile(f); setPreview(URL.createObjectURL(f)); setGeo(null); setError(null); setStage('ready')
+    setUrlError('')
   }, [])
 
+  // Load image from URL (supports http/https, drag-from-browser, paste)
+  const acceptUrl = useCallback(async (url) => {
+    const trimmed = url?.trim()
+    if (!trimmed) return
+    // Must look like an image URL
+    const looksLikeImage = /\.(jpe?g|png|webp|gif|bmp|svg)(\?.*)?$/i.test(trimmed) || trimmed.startsWith('data:image/')
+    setUrlError('')
+    setStage('analyzing')
+    setGeo(null)
+    try {
+      // Fetch through a CORS proxy so images from any origin work
+      const fetchUrl = trimmed.startsWith('data:')
+        ? trimmed
+        : `https://corsproxy.io/?${encodeURIComponent(trimmed)}`
+      const res = await fetch(fetchUrl)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      if (!blob.type.startsWith('image/')) throw new Error('URL does not point to an image')
+      const filename = trimmed.split('/').pop()?.split('?')[0] || 'dropped.jpg'
+      const file = new File([blob], filename, { type: blob.type })
+      setFile(file)
+      setPreview(URL.createObjectURL(blob))
+      setUrlInput('')
+      setUrlMode(false)
+      setStage('ready')
+    } catch(e) {
+      setUrlError(\`Could not load image: \${e.message}\`)
+      setStage('idle')
+    }
+  }, [])
+
+  // Paste handler — catches Ctrl+V anywhere on the page
+  const handlePaste = useCallback((e) => {
+    // Image from clipboard
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const imgItem = items.find(i => i.type.startsWith('image/'))
+    if (imgItem) { acceptFile(imgItem.getAsFile()); return }
+    // URL text from clipboard
+    const text = e.clipboardData?.getData('text') ?? ''
+    if (/^https?:\/\//i.test(text)) { acceptUrl(text); return }
+  }, [acceptFile, acceptUrl])
+
+  // Wire paste to window on mount
+  useEffect(() => {
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [handlePaste])
+
+  // ── Dual-engine analysis ──────────────────────────────────────────────────
+  // Step 1: canvas edge detection (fast, always works, gives geometry)
+  // Step 2: backend Moondream2 /analyze (AI vision, gives identity + real Cd)
+  // Results are merged — Moondream2 overrides canvas where it has data
   const run = async () => {
     if (!file) return
-    setError(null); setGeo(null); setStage('analyzing')
-    try { const r = await analyzeImageCanvas(file); setGeo(r); setStage('done') }
-    catch(e) { setError(e.message); setStage('error') }
+    setError(null); setGeo(null); setAiInsight(null); setStage('analyzing')
+
+    // Run both in parallel — canvas is instant, backend takes ~10s
+    const canvasPromise = analyzeImageCanvas(file).catch(e => ({ _error: e.message }))
+    const backendPromise = (async () => {
+      try {
+        const fd = new FormData(); fd.append('file', file)
+        const res = await fetch(`${BACKEND}/analyze`, { method: 'POST', body: fd })
+        if (!res.ok) return null
+        return await res.json()
+      } catch { return null }
+    })()
+
+    // Canvas finishes first — show preliminary geometry immediately
+    const canvasResult = await canvasPromise
+    if (!canvasResult._error) {
+      setGeo(canvasResult)
+      setStage('refining') // show "AI enhancing…" state
+    }
+
+    // Wait for Moondream2
+    const aiResult = await backendPromise
+    const canvas = canvasResult._error ? null : canvasResult
+
+    if (aiResult?.image_type === 'full_car' && aiResult.analysis) {
+      const ai = aiResult.analysis
+      const aiCd = ai.database_cd ?? ai.cd_reasoning?.estimated_cd
+      const aiBt = _mapAiBodyType(ai.body_type)
+
+      // Merge: AI overrides canvas for identity + Cd, canvas keeps geometry
+      const merged = {
+        ...(canvas ?? {}),
+        // AI-sourced (authoritative when available)
+        bodyType:    aiBt ?? canvas?.bodyType ?? 'notchback',
+        Cd:          aiCd  ?? canvas?.Cd ?? 0.30,
+        confidence:  ai.confidence ?? canvas?.confidence ?? 0.5,
+        // Keep canvas geometry if we have it
+        aspectRatio: canvas?.aspectRatio ?? 2.0,
+        hoodRatio:   canvas?.hoodRatio   ?? 0.28,
+        cabinRatio:  canvas?.cabinRatio  ?? 0.44,
+        bootRatio:   canvas?.bootRatio   ?? 0.28,
+        wsAngleDeg:  canvas?.wsAngleDeg  ?? 58,
+        rearDrop:    canvas?.rearDrop    ?? 0.15,
+        frontRise:   canvas?.frontRise   ?? 0.05,
+        cabinH:      canvas?.cabinH      ?? 0.58,
+        rideH:       canvas?.rideH       ?? 0.08,
+        w1:          canvas?.w1          ?? 0.22,
+        w2:          canvas?.w2          ?? 0.76,
+        _peaks:      canvas?._peaks      ?? [],
+        _zones:      canvas?._zones      ?? [],
+      }
+      setGeo(merged)
+      setAiInsight({
+        make:       ai.make,
+        model:      ai.model,
+        year:       ai.year_estimate,
+        color:      ai.color,
+        bodyType:   ai.body_type,
+        cdDatabase: ai.database_cd,
+        cdEstimate: ai.cd_reasoning?.estimated_cd,
+        cdConfidence: ai.cd_reasoning?.cd_confidence,
+        cdReasoning:  ai.cd_reasoning?.reasoning_steps,
+        roofline:   ai.aero_features?.roofline_type,
+        rearDesign: ai.aero_features?.rear_design,
+        spoiler:    ai.aero_features?.spoiler,
+        diffuser:   ai.aero_features?.diffuser,
+        grille:     ai.aero_features?.grille,
+        improvements: ai.improvement_suggestions ?? [],
+        comparisons:  ai.comparison_cars ?? [],
+        explanation:  aiResult.explanation,
+        isDatabase:   !!ai.database_cd,
+        databaseMatch: ai.database_match,
+      })
+    } else if (!canvas) {
+      setError('Image analysis failed. Try a clearer side-on photo of the vehicle.')
+    }
+    setStage('done')
+  }
+
+  // Map Moondream2 body type strings → our internal keys
+  function _mapAiBodyType(bt) {
+    if (!bt) return null
+    const s = bt.toLowerCase()
+    if (s.includes('fastback') || s.includes('coupe') || s.includes('supercar') || s.includes('hypercar')) return 'fastback'
+    if (s.includes('suv') || s.includes('crossover') || s.includes('truck')) return 'suv'
+    if (s.includes('pickup')) return 'pickup'
+    if (s.includes('estate') || s.includes('wagon') || s.includes('touring')) return 'estate'
+    if (s.includes('hatchback')) return 'hatchback'
+    if (s.includes('notchback') || s.includes('sedan') || s.includes('saloon')) return 'notchback'
+    return null
   }
 
   const exportSVG = () => {
@@ -148,11 +294,11 @@ export default function Views2DPage() {
     a.download = `aeronet_${activeView}.svg`; a.click()
   }
 
-  const isRunning = stage==='analyzing'
-  const cd = geo?.Cd ?? 0.30
+  const isRunning = stage==='analyzing' || stage==='refining'
+  const cd = aiInsight?.cdDatabase ?? aiInsight?.cdEstimate ?? geo?.Cd ?? 0.30
   const breakdown = geo ? getDragBreakdown(geo.bodyType) : []
   const improvements = { fastback:['Active rear diffuser','Underbody flat floor','Delete rear wing'], notchback:['Active grille shutters','Lower ride height','Rear lip spoiler'], hatchback:['Roof spoiler','Underbody diffuser','Tyre aero covers'], suv:['Lower ride height','Air suspension','Active aero'], estate:['Roof aero rails','Tow hitch fairing','Flush body'], pickup:['Tonneau cover','Air dam','Bed extender fairing'] }
-  const suggestions = improvements[geo?.bodyType] ?? ['Lower ride height','Reduce frontal area','Active grille shutters']
+  const suggestions = aiInsight?.improvements?.length ? aiInsight.improvements : (improvements[geo?.bodyType] ?? ['Lower ride height','Reduce frontal area','Active grille shutters'])
 
   const card = { background:'var(--bg1)', borderRadius:12, border:'0.5px solid rgba(255,255,255,0.06)', overflow:'hidden' }
   const toggleBtn = (label, val, set) => (
@@ -173,11 +319,42 @@ export default function Views2DPage() {
         <div style={{ flex:1, overflowY:'auto', padding:'16px 14px' }}>
           <SL n="01" t="Upload"/>
 
+          {/* Analysis capabilities — shown only before any image loaded */}
+          {!file && (
+            <div style={{ marginBottom:12, padding:'10px 12px', borderRadius:10, background:'rgba(10,132,255,0.05)', border:'0.5px solid rgba(10,132,255,0.12)' }}>
+              <div style={{ fontSize:10, fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase', color:'var(--blue)', marginBottom:8 }}>What gets analysed</div>
+              {[
+                ['Body type',      'Fastback / notchback / estate / SUV / pickup'],
+                ['Cd estimate',    'From roofline slope + aspect ratio'],
+                ['WS rake angle',  'A-pillar angle in degrees'],
+                ['Proportions',    'Hood / cabin / boot length ratios'],
+                ['Separation pt.', 'Predicted flow detachment zone'],
+                ['Cp field',       'Pressure map across all 4 views'],
+                ['Drag breakdown', 'Pressure · friction · induced · wheels'],
+                ['vs. benchmarks', '8 production cars compared'],
+                ['Suggestions',    '3 geometry changes to reduce Cd'],
+              ].map(([k,v]) => (
+                <div key={k} style={{ display:'flex', gap:8, marginBottom:3 }}>
+                  <span style={{ fontSize:10, color:'rgba(10,132,255,0.8)', fontFamily:"'IBM Plex Mono',monospace", minWidth:86, flexShrink:0 }}>{k}</span>
+                  <span style={{ fontSize:10, color:'var(--text-quaternary)', lineHeight:1.4 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Drop zone */}
           <div
             onDragOver={e=>{e.preventDefault();setDragOver(true)}}
             onDragLeave={()=>setDragOver(false)}
-            onDrop={e=>{e.preventDefault();setDragOver(false);acceptFile(e.dataTransfer.files[0])}}
+            onDrop={e=>{
+              e.preventDefault(); setDragOver(false)
+              // File drop (from OS)
+              const f = e.dataTransfer.files?.[0]
+              if (f) { acceptFile(f); return }
+              // URL drop (dragging image from browser)
+              const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
+              if (url && /^https?:\/\//i.test(url)) { acceptUrl(url); return }
+            }}
             onClick={()=>fileRef.current?.click()}
             style={{
               borderRadius:12, border:`0.5px dashed ${dragOver?'var(--blue)':'rgba(255,255,255,0.12)'}`,
@@ -201,9 +378,55 @@ export default function Views2DPage() {
                     <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
                   </svg>
                 </div>
-                <span style={{ fontSize:12, color:'var(--text-tertiary)', fontFamily:"'IBM Plex Sans'", textAlign:'center' }}>Drop a vehicle photo</span>
-                <span style={{ fontSize:10, color:'var(--text-quaternary)', fontFamily:"'IBM Plex Mono'" }}>JPG · PNG · WEBP</span>
+                <span style={{ fontSize:12, color:'var(--text-tertiary)', fontFamily:"'IBM Plex Sans'", textAlign:'center' }}>Drop image, URL or file</span>
+                <span style={{ fontSize:10, color:'var(--text-quaternary)', fontFamily:"'IBM Plex Mono'", textAlign:'center', lineHeight:1.7 }}>
+                  JPG · PNG · WEBP<br/>
+                  <span style={{color:'rgba(255,255,255,0.18)'}}>Ctrl+V to paste · drag from browser</span>
+                </span>
               </div>
+            )}
+          </div>
+
+          {/* URL input — paste or type any image URL */}
+          <div style={{ marginBottom:10 }}>
+            {urlMode ? (
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <div style={{ display:'flex', gap:5 }}>
+                  <input
+                    autoFocus
+                    value={urlInput}
+                    onChange={e=>setUrlInput(e.target.value)}
+                    onKeyDown={e=>{ if(e.key==='Enter') acceptUrl(urlInput); if(e.key==='Escape') setUrlMode(false) }}
+                    placeholder="https://example.com/car.jpg"
+                    style={{
+                      flex:1, background:'var(--bg2)', border:`0.5px solid ${urlError?'var(--red)':'rgba(255,255,255,0.12)'}`,
+                      borderRadius:8, padding:'7px 10px', color:'var(--text-primary)',
+                      fontSize:11, outline:'none', fontFamily:"'IBM Plex Mono',monospace",
+                    }}
+                    onFocus={e=>e.target.style.borderColor='rgba(10,132,255,0.5)'}
+                    onBlur={e=>e.target.style.borderColor=urlError?'var(--red)':'rgba(255,255,255,0.12)'}
+                  />
+                  <button onClick={()=>acceptUrl(urlInput)} style={{ padding:'0 10px', borderRadius:8, border:'none', cursor:'pointer', background:'var(--blue)', color:'#fff', fontSize:11, fontFamily:"'IBM Plex Sans',sans-serif" }}>Go</button>
+                  <button onClick={()=>{setUrlMode(false);setUrlError('')}} style={{ padding:'0 8px', borderRadius:8, border:'0.5px solid var(--sep)', cursor:'pointer', background:'transparent', color:'var(--text-tertiary)', fontSize:11, fontFamily:"'IBM Plex Sans',sans-serif" }}>✕</button>
+                </div>
+                {urlError && <span style={{ fontSize:10, color:'var(--red)', fontFamily:"'IBM Plex Sans',sans-serif" }}>{urlError}</span>}
+                {stage==='analyzing' && <span style={{ fontSize:10, color:'var(--blue)', fontFamily:"'IBM Plex Sans',sans-serif" }}>Fetching image…</span>}
+              </div>
+            ) : (
+              <button onClick={()=>setUrlMode(true)} style={{
+                width:'100%', height:32, borderRadius:8,
+                border:'0.5px solid rgba(255,255,255,0.08)',
+                background:'transparent', cursor:'pointer',
+                color:'var(--text-quaternary)', fontSize:11,
+                fontFamily:"'IBM Plex Sans',sans-serif",
+                display:'flex', alignItems:'center', justifyContent:'center', gap:6,
+                transition:'all 0.12s',
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.background='var(--bg2)';e.currentTarget.style.color='var(--text-tertiary)'}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--text-quaternary)'}}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                Load from URL
+              </button>
             )}
           </div>
 
@@ -222,10 +445,15 @@ export default function Views2DPage() {
             display:'flex', alignItems:'center', justifyContent:'center', gap:6,
             fontFamily:"'IBM Plex Sans'", transition:'opacity 0.15s',
           }}>
-            {isRunning ? (
+            {stage==='analyzing' ? (
               <>
                 <svg className="anim-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5"><path d="M12 3a9 9 0 019 9"/></svg>
-                Analysing…
+                Reading geometry…
+              </>
+            ) : stage==='refining' ? (
+              <>
+                <svg className="anim-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5"><path d="M12 3a9 9 0 019 9"/></svg>
+                AI enhancing…
               </>
             ) : (
               <>
@@ -241,6 +469,93 @@ export default function Views2DPage() {
 
           {geo && (
             <>
+              {/* ── AI Identity Card ── */}
+              {aiInsight && (
+                <>
+                  <div style={{ marginBottom:12, padding:'10px 12px', borderRadius:10, background:'rgba(10,132,255,0.07)', border:'0.5px solid rgba(10,132,255,0.2)', animation:'fadeIn 0.3s ease' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+                      <div style={{ width:6, height:6, borderRadius:'50%', background: aiInsight.isDatabase ? 'var(--green)' : 'var(--orange)', boxShadow: aiInsight.isDatabase ? '0 0 5px var(--green)' : '0 0 5px var(--orange)' }}/>
+                      <span style={{ fontSize:9, fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase', color: aiInsight.isDatabase ? 'var(--green)' : 'var(--orange)' }}>
+                        {aiInsight.isDatabase ? 'Database match' : 'AI estimate'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize:15, fontWeight:700, color:'var(--text-primary)', letterSpacing:'-0.3px', marginBottom:2 }}>
+                      {aiInsight.make} {aiInsight.model}
+                    </div>
+                    {aiInsight.year && <div style={{ fontSize:11, color:'var(--text-tertiary)', marginBottom:6 }}>{aiInsight.year} · {aiInsight.color}</div>}
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                      <span style={{ fontSize:22, fontWeight:700, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace", letterSpacing:'-1px' }}>
+                        {(aiInsight.cdDatabase ?? aiInsight.cdEstimate ?? 0.30).toFixed(3)}
+                      </span>
+                      <div>
+                        <div style={{ fontSize:9, color:'var(--text-quaternary)', textTransform:'uppercase', letterSpacing:'0.06em' }}>Drag Coefficient</div>
+                        <div style={{ fontSize:10, color: aiInsight.cdConfidence==='very_high'?'var(--green)':aiInsight.cdConfidence==='high'?'var(--blue)':'var(--orange)' }}>
+                          {aiInsight.cdConfidence?.replace('_',' ')} confidence
+                        </div>
+                      </div>
+                    </div>
+                    {aiInsight.databaseMatch && (
+                      <div style={{ fontSize:10, color:'var(--text-quaternary)', fontStyle:'italic', marginBottom:4 }}>
+                        Matched: {aiInsight.databaseMatch}
+                      </div>
+                    )}
+                    {/* Aero features */}
+                    <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginTop:6 }}>
+                      {[
+                        aiInsight.roofline && `${aiInsight.roofline} roof`,
+                        aiInsight.rearDesign && `${aiInsight.rearDesign} rear`,
+                        aiInsight.spoiler && aiInsight.spoiler!=='none' && `${aiInsight.spoiler} spoiler`,
+                        aiInsight.diffuser && aiInsight.diffuser!=='none' && `${aiInsight.diffuser} diffuser`,
+                        aiInsight.grille && `${aiInsight.grille} grille`,
+                      ].filter(Boolean).map((feat, i) => (
+                        <span key={i} style={{ fontSize:9, padding:'2px 7px', borderRadius:5, background:'rgba(255,255,255,0.06)', color:'var(--text-tertiary)' }}>
+                          {feat}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  {/* AI explanation */}
+                  {aiInsight.explanation && (
+                    <div style={{ marginBottom:12, padding:'10px 12px', borderRadius:10, background:'var(--bg1)', border:'0.5px solid rgba(255,255,255,0.06)' }}>
+                      <div style={{ fontSize:9, fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase', color:'var(--text-quaternary)', marginBottom:6 }}>
+                        Aero Analysis
+                      </div>
+                      <div style={{ fontSize:11, color:'var(--text-secondary)', lineHeight:1.6 }}>
+                        {aiInsight.explanation?.slice(0, 320)}{aiInsight.explanation?.length > 320 ? '…' : ''}
+                      </div>
+                    </div>
+                  )}
+                  {/* AI improvement suggestions */}
+                  {aiInsight.improvements?.length > 0 && (
+                    <div style={{ marginBottom:12 }}>
+                      <div style={{ fontSize:9, fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase', color:'var(--text-quaternary)', marginBottom:6 }}>
+                        AI Suggestions
+                      </div>
+                      {aiInsight.improvements.map((s, i) => (
+                        <div key={i} style={{ display:'flex', gap:7, marginBottom:5, padding:'6px 10px', borderRadius:8, background:'rgba(48,209,88,0.06)', border:'0.5px solid rgba(48,209,88,0.15)' }}>
+                          <span style={{ fontSize:10, color:'var(--green)', flexShrink:0, marginTop:1 }}>→</span>
+                          <span style={{ fontSize:11, color:'var(--text-secondary)', lineHeight:1.4 }}>{s}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Comparison cars */}
+                  {aiInsight.comparisons?.length > 0 && (
+                    <div style={{ marginBottom:12 }}>
+                      <div style={{ fontSize:9, fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase', color:'var(--text-quaternary)', marginBottom:6 }}>
+                        Similar Aero
+                      </div>
+                      {aiInsight.comparisons.slice(0,3).map((c, i) => (
+                        <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'5px 10px', borderRadius:7, marginBottom:3, background:'rgba(255,255,255,0.03)' }}>
+                          <span style={{ fontSize:11, color:'var(--text-secondary)' }}>{c.name}</span>
+                          <span style={{ fontSize:11, color:'var(--blue)', fontFamily:"'IBM Plex Mono',monospace" }}>Cd {c.cd?.toFixed(3)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
               <SL n="02" t="Extracted"/>
               <div style={{ ...card, padding:'10px 12px', marginBottom:14 }}>
                 {[['Type',geo.bodyType],['Aspect',geo.aspectRatio.toFixed(2)],['Hood',(geo.hoodRatio*100).toFixed(0)+'%'],['Cabin',(geo.cabinRatio*100).toFixed(0)+'%'],['Boot',(geo.bootRatio*100).toFixed(0)+'%'],['WS rake',geo.wsAngleDeg.toFixed(0)+'°'],['Rear drop',(geo.rearDrop*100).toFixed(0)+'%']].map(([k,v])=>(
@@ -450,10 +765,6 @@ export default function Views2DPage() {
             <div style={{ fontSize:12, color:'var(--text-quaternary)' }}>Upload and analyse a vehicle to see results</div>
           </div>
         )}
-      </div>
-      {/* Copyright footer */}
-      <div style={{ textAlign: 'center', padding: '10px 0 14px', fontSize: 11, color: 'rgba(255,255,255,0.18)' }}>
-        © 2026 Rutej Talati · All rights reserved
       </div>
     </div>
   )
