@@ -120,7 +120,7 @@ function SideView({g,cpOn,showSep,showIso}){
       ? roofPts.map((p,i) => `${i===0?'M':'L'}${(off_x+p.nx*scale_x).toFixed(1)},${(off_y+p.ny*scale_y).toFixed(1)}`).join(' ')
       : null
 
-    const gY = H - 16
+    const gY = CH - 16
 
     return (
       <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
@@ -139,7 +139,7 @@ function SideView({g,cpOn,showSep,showIso}){
         {/* Cp bands clipped to real contour */}
         {cpOn && (
           <g clipPath="url(#sclip)">
-            {cpBands.map((b,i) => <rect key={i} x={b.x} y={0} width={b.w} height={H} fill={b.color} opacity={0.88}/>)}
+            {cpBands.map((b,i) => <rect key={i} x={b.x} y={0} width={b.w} height={CH} fill={b.color} opacity={0.88}/>)}
           </g>
         )}
 
@@ -179,7 +179,7 @@ function SideView({g,cpOn,showSep,showIso}){
         )}
 
         {/* Labels */}
-        <text x={CW/2} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
+        <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
           SIDE · {(g.bodyType??'').toUpperCase()} · {contourPts.length}pts
         </text>
       </svg>
@@ -232,7 +232,7 @@ function SideView({g,cpOn,showSep,showIso}){
       <defs><clipPath id="sclip2"><path d={bodyPath}/></clipPath></defs>
       <ellipse cx={FW/2} cy={gY+6} rx={bLen*0.46} ry={8} fill="rgba(0,0,0,0.45)"/>
       <line x1={12} y1={gY} x2={FW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
-      {cpOn&&<g clipPath="url(#sclip2)">{cpBandsSide.map((b,i)=><rect key={i} x={b.x} y={0} width={b.w} height={H} fill={b.c} opacity={0.85}/>)}</g>}
+      {cpOn&&<g clipPath="url(#sclip2)">{cpBandsSide.map((b,i)=><rect key={i} x={b.x} y={0} width={b.w} height={FH} fill={b.c} opacity={0.85}/>)}</g>}
       <path d={bodyPath} fill={cpOn?'rgba(4,8,16,0.22)':'#0e1a24'} stroke="rgba(10,132,255,0.65)" strokeWidth="1.2"/>
       <path d={wsPath} fill="rgba(0,14,28,0.55)" stroke="rgba(10,132,255,0.45)" strokeWidth="0.9"/>
       {showSep&&sepX&&<line x1={sepX} y1={roofY} x2={sepX} y2={sill} stroke="rgba(255,100,80,0.55)" strokeWidth="1" strokeDasharray="3 2"/>}
@@ -579,13 +579,24 @@ export default function Views2DPage() {
     setGeo(null)
     try {
       // Fetch through a CORS proxy so images from any origin work
-      const fetchUrl = trimmed.startsWith('data:')
-        ? trimmed
-        : `https://corsproxy.io/?${encodeURIComponent(trimmed)}`
-      const res = await fetch(fetchUrl)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = await res.blob()
-      if (!blob.type.startsWith('image/')) throw new Error('URL does not point to an image')
+      // Try multiple CORS proxies - different ones work for different sources
+      const proxies = [
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(trimmed)}`,
+        `https://corsproxy.io/?${encodeURIComponent(trimmed)}`,
+      ]
+      let fetchUrl = trimmed.startsWith('data:') ? trimmed : proxies[0]
+      let blob = null
+      if (!trimmed.startsWith('data:')) {
+        for (const proxy of proxies) {
+          try {
+            const r = await fetch(proxy)
+            if (r.ok) { blob = await r.blob(); break }
+          } catch {}
+        }
+        if (!blob) throw new Error('Image blocked by CORS — try saving and uploading the file directly')
+      }
+      if (!blob) { const res = await fetch(fetchUrl); if (!res.ok) throw new Error(`HTTP ${res.status}`); blob = await res.blob() }
+      if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) throw new Error('URL does not point to an image')
       const filename = trimmed.split('/').pop()?.split('?')[0] || 'dropped.jpg'
       const file = new File([blob], filename, { type: blob.type })
       setFile(file)
