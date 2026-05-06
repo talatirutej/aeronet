@@ -204,10 +204,10 @@ function SideView({g,cpOn,showSep,showIso}){
   else{rearSVG=[`Q ${chx+14} ${roofY+bH*0.10} ${rX-18} ${sill-bH*0.40}`,`Q ${rX} ${sill-bH*0.32} ${rX} ${sill-bH*0.16}`].join(' ')}
 
   const wR=bLen*0.082,w1x=xp(g.w1),w2x=xp(g.w2),wY=sill
-  const N=16,cpBands=Array.from({length:N},(_,i)=>{const f=(i+0.5)/N;return{x:PAD+i*(bLen/N),w:bLen/N+1,c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd))}})
+  const N=16,cpBands=Array.from({length:N},(_,i)=>{const f=(i+0.5)/N;return{x:FPAD+i*(bLen/N),w:bLen/N+1,c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd))}})
   const bodyPath=[
     `M ${FPAD} ${sill-bH*0.18}`,
-    `Q ${PAD} ${sill-bH*0.55} ${hx} ${hoodY}`,
+    `Q ${FPAD} ${sill-bH*0.55} ${hx} ${hoodY}`,
     `Q ${hx+wsRun*0.3} ${cowlY} ${aTx} ${roofY}`,
     `Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,
     rearSVG,
@@ -216,8 +216,8 @@ function SideView({g,cpOn,showSep,showIso}){
     `A ${wR} ${wR} 0 0 0 ${w2x-wR-8} ${sill+4}`,
     `L ${w1x+wR+8} ${sill+4}`,
     `A ${wR} ${wR} 0 0 0 ${w1x-wR-8} ${sill+4}`,
-    `Q ${PAD+8} ${sill+4} ${PAD} ${sill}`,
-    `L ${PAD} ${sill-bH*0.18} Z`
+    `Q ${FPAD+8} ${sill+4} ${FPAD} ${sill}`,
+    `L ${FPAD} ${sill-bH*0.18} Z`
   ].join(' ')
 
   // Windscreen path
