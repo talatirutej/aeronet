@@ -272,6 +272,10 @@ export default function ReportPage({ result, history }) {
           <div style={{ textAlign:'center', padding:'24px 0 8px', fontSize:11, color:'var(--text-quaternary)' }}>
             AeroNet CFD Surrogate · GradBoost-DrivAerML · 484 HF-LES OpenFOAM cases · val Cd err 5.4% · {now}
           </div>
+
+          <div style={{ textAlign: 'center', paddingTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.18)' }}>
+            © 2026 Rutej Talati · All rights reserved
+          </div>
         </div>
       </div>
 
