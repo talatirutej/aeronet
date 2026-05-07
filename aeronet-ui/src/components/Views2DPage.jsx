@@ -81,7 +81,7 @@ function cpToRgb(cp){const t=Math.max(0,Math.min(1,(cp+1.5)/2.5));const stops=[[
 function getDragBreakdown(bt){const d={fastback:[{name:'Pressure',pct:0.38,c:'#FF453A'},{name:'Friction',pct:0.22,c:'#FF9F0A'},{name:'Induced',pct:0.16,c:'#30D158'},{name:'Wheels',pct:0.14,c:'#40CBE0'},{name:'Cooling',pct:0.10,c:'#0A84FF'}],notchback:[{name:'Pressure',pct:0.40,c:'#FF453A'},{name:'Friction',pct:0.20,c:'#FF9F0A'},{name:'Induced',pct:0.18,c:'#30D158'},{name:'Wheels',pct:0.14,c:'#40CBE0'},{name:'Cooling',pct:0.08,c:'#0A84FF'}]};return d[bt]??d.notchback}
 
 // ── SVG views (kept exactly — only label text updated) ─────────────────────
-function SideView({g,cpOn,showSep,showIso}){
+function SideView({g,cpOn,showSep,showIso,traceProgress,traceAnimating}){
   // If we have real contour points from the backend, render them directly
   const contourPts   = g?._contourPts
   const keypoints    = g?._keypoints
@@ -169,6 +169,26 @@ function SideView({g,cpOn,showSep,showIso}){
 
     return (
       <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+
+        {/* ── Real-time SAM2 trace animation overlay ── */}
+        {traceAnimating && (
+          <>
+            <rect x={0} y={0} width={CW} height={CH} fill="rgba(10,132,255,0.03)"/>
+            {traceProgress?.pts?.length > 2 && (() => {
+              const ap = traceProgress.pts.map(([nx,ny])=>[off_x+nx*scale_x, off_y+ny*scale_y])
+              const d  = ap.map((p,i)=>`${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+              return <path d={d} fill="none" stroke="#0A84FF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{filter:'drop-shadow(0 0 5px rgba(10,132,255,0.7))'}}/>
+            })()}
+            {traceProgress?.pts?.length > 0 && (() => {
+              const lp = traceProgress.pts[traceProgress.pts.length-1]
+              const lx = off_x+lp[0]*scale_x, ly = off_y+lp[1]*scale_y
+              return <circle cx={lx} cy={ly} r={5} fill="#0A84FF" style={{filter:'drop-shadow(0 0 8px #0A84FF)',animation:'pulse 0.5s ease-in-out infinite'}}/>
+            })()}
+            <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(10,132,255,0.7)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.1em">
+              {traceProgress?.msg ?? 'Analysing…'} · {traceProgress?.pct ?? 0}%
+            </text>
+          </>
+        )}
         <defs>
           <clipPath id="sclip"><path d={pathD}/></clipPath>
           <linearGradient id="bodygrd" x1="0" y1="0" x2="0" y2="1">
@@ -598,6 +618,8 @@ export default function Views2DPage() {
   const [stage,    setStage]      = useState('idle')
   const [aiInsight,   setAiInsight]   = useState(null)
   const [contourData, setContourData] = useState(null)
+  const [traceProgress, setTraceProgress] = useState(null) // {pct, msg, pts:[]} for animation
+  const [traceAnimating, setTraceAnimating] = useState(false)
   const [geo,      setGeo]        = useState(null)
   const [error,    setError]      = useState(null)
   const [activeView, setActiveView] = useState('side')
@@ -695,14 +717,59 @@ export default function Views2DPage() {
         return await res.json()
       } catch { return null }
     })()
-    // Contour analysis — real CV outline
+    // Contour analysis — streaming SSE with real-time animation
     const contourPromise = (async () => {
       try {
         const fd = new FormData(); fd.append('file', file)
-        const res = await fetch(`${BACKEND}/analyze-contour`, { method: 'POST', body: fd })
+        const res = await fetch(`${BACKEND}/analyze-contour-stream`, { method: 'POST', body: fd })
         if (!res.ok) return null
-        return await res.json()
-      } catch { return null }
+
+        const reader = res.body.getReader()
+        const dec    = new TextDecoder()
+        let buffer   = ''
+        let finalResult = null
+
+        setTraceAnimating(true)
+        setTraceProgress({ pct: 0, msg: 'Starting analysis…', pts: [] })
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += dec.decode(value, { stream: true })
+          const lines = buffer.split('
+')
+          buffer = lines.pop() // keep incomplete line
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const evt = JSON.parse(line.slice(6))
+              if (evt.stage === 'error') {
+                setTraceProgress({ pct: 0, msg: `Error: ${evt.msg}`, pts: [] })
+                setTraceAnimating(false)
+                return null
+              }
+              if (evt.stage === 'done') {
+                finalResult = evt.result
+                setTraceProgress({ pct: 100, msg: evt.msg, pts: evt.result?.smooth_pts ?? [] })
+                setTraceAnimating(false)
+              } else {
+                // Progressive outline animation — show partial pts as they come
+                setTraceProgress(prev => ({
+                  pct: evt.pct,
+                  msg: evt.msg,
+                  pts: prev?.pts ?? [],
+                }))
+              }
+            } catch {}
+          }
+        }
+        return finalResult
+      } catch (e) {
+        setTraceAnimating(false)
+        console.error('Contour stream error:', e)
+        return null
+      }
     })()
 
     // Canvas finishes first — show preliminary geometry immediately
@@ -1201,7 +1268,7 @@ export default function Views2DPage() {
               {/* Main view */}
               <div style={{ flex:1, ...card, display:'flex', alignItems:'center', justifyContent:'center', padding:'12px', overflow:'hidden' }}>
                 <div style={{ width:'100%', height:'100%', maxHeight:295 }}>
-                  {activeView==='side'  && <SideView  g={geo} cpOn={cpOn} showSep={showSep} showIso={showIso}/>}
+                  {activeView==='side'  && <SideView g={geo} cpOn={cpOn} showSep={showSep} showIso={showIso} traceProgress={traceProgress} traceAnimating={traceAnimating}/>}
                   {activeView==='front' && <FrontView g={geo} cpOn={cpOn}/>}
                   {activeView==='top'   && <TopView   g={geo} yawAngle={yawAngle}/>}
                   {activeView==='under' && <UnderView g={geo} showGroundEffect={showGE}/>}
