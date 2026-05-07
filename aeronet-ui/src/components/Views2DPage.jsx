@@ -82,183 +82,197 @@ function getDragBreakdown(bt){const d={fastback:[{name:'Pressure',pct:0.38,c:'#F
 
 // ── SVG views (kept exactly — only label text updated) ─────────────────────
 function SideView({g,cpOn,showSep,showIso,traceProgress,traceAnimating}){
-  // If we have real contour points from the backend, render them directly
-  const contourPts   = g?._contourPts
-  const keypoints    = g?._keypoints
-  const CW=620,CH=260,CPAD=28
+  const CW=620, CH=260, CPAD=28
+  const scale_x = CW - CPAD*2
+  const scale_y = CH - 40
+  const off_x   = CPAD
+  const off_y   = 20
 
-  if (contourPts && contourPts.length > 10) {
-    // Render real SVG path from contour data
-    const scale_x = (CW - CPAD*2)
-    const scale_y = (CH - 40)
-    const off_x   = CPAD
-    const off_y   = 20
-
-    // Prefer smooth_pts + catmull_rom_cps for a perfect bezier outline
-    // Falls back to linear path if only outline_pts available
-    // Use smooth_pts if available, fall back to outline_pts
-    // Apply a simple convexity pass to remove window-hole artifacts
-    const rawPtsRaw = g?._smoothPts ?? contourPts
-    const crCps     = g?._catmullCps
-
-    // Filter out points that are too far inside the bbox (interior contour artifacts)
-    // Keep only points forming the outer silhouette
-    const rawPts = (() => {
-      if (!rawPtsRaw || rawPtsRaw.length < 10) return rawPtsRaw
-      // Find bbox in normalised coords
-      const minX = Math.min(...rawPtsRaw.map(p=>p[0]))
-      const maxX = Math.max(...rawPtsRaw.map(p=>p[0]))
-      const minY = Math.min(...rawPtsRaw.map(p=>p[1]))
-      const maxY = Math.max(...rawPtsRaw.map(p=>p[1]))
-      const spanX = maxX - minX, spanY = maxY - minY
-      // Smooth with moving average window=5 to remove micro-jags
-      const n = rawPtsRaw.length
-      return rawPtsRaw.map((_,i) => {
-        const pts5 = [-2,-1,0,1,2].map(d=>rawPtsRaw[(i+d+n)%n])
-        return [
-          pts5.reduce((s,p)=>s+p[0],0)/5,
-          pts5.reduce((s,p)=>s+p[1],0)/5,
-        ]
-      })
-    })()
-
-    const pts = rawPts.map(([nx, ny]) => [
-      off_x + nx * scale_x,
-      off_y + ny * scale_y
-    ])
-
-    let pathD
-    if (crCps && crCps.length === pts.length) {
-      // Catmull-Rom cubic bezier — pixel-smooth outline
-      const cmds = pts.map((p, i) => {
-        const cp = crCps[i]
-        const cp1x = (off_x + cp[0] * scale_x).toFixed(2)
-        const cp1y = (off_y + cp[1] * scale_y).toFixed(2)
-        const cp2x = (off_x + cp[2] * scale_x).toFixed(2)
-        const cp2y = (off_y + cp[3] * scale_y).toFixed(2)
-        const ex   = p[0].toFixed(2)
-        const ey   = p[1].toFixed(2)
-        return i === 0 ? `M${ex},${ey}` : `C${cp1x},${cp1y} ${cp2x},${cp2y} ${ex},${ey}`
-      })
-      pathD = cmds.join(' ') + ' Z'
-    } else {
-      // Fallback: straight line segments with smooth_pts
-      pathD = pts.map((p, i) => `${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z'
+  // ── ANIMATION OVERLAY — renders at top level, before any data checks ─────
+  // This shows DURING processing (before contour data arrives)
+  if (traceAnimating || (traceProgress && traceProgress.pct < 100 && traceProgress.pct > 0)) {
+    const pts   = traceProgress?.pts ?? []
+    const pct   = traceProgress?.pct ?? 0
+    const msg   = traceProgress?.msg ?? 'Analysing…'
+    // Build partial path from whatever points we have so far
+    let tracePath = null
+    if (pts.length > 2) {
+      const mapped = pts.map(([nx,ny]) => [off_x + nx*scale_x, off_y + ny*scale_y])
+      tracePath = mapped.map((p,i) => `${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
     }
-
-    // Cp color bands (vertical slices, same as before)
-    const cpBands = Array.from({length:14}, (_,i) => {
-      const f=i/14, cp=(0.9*(1-Math.pow(f-0.3,2)*3)-0.15)*(g.Cd/0.30)
-      return { x: off_x + f*scale_x, w: scale_x/14+1, color: cpToRgb(cp) }
-    })
-
-    // Wheel circles from keypoints
-    const wheels = (keypoints?.wheels ?? []).map(w => ({
-      cx: off_x + w.nx * scale_x,
-      cy: off_y + w.ny * scale_y,
-      r:  Math.max(8, w.r / 800 * scale_x),
-    }))
-
-    // Roofline accent from keypoints
-    const roofPts = (keypoints?.roofline ?? [])
-    const roofPath = roofPts.length > 1
-      ? roofPts.map((p,i) => `${i===0?'M':'L'}${(off_x+p.nx*scale_x).toFixed(1)},${(off_y+p.ny*scale_y).toFixed(1)}`).join(' ')
-      : null
-
-    const gY = CH - 16
+    const lastPt = pts.length > 0 ? pts[pts.length-1] : null
+    const lx = lastPt ? off_x + lastPt[0]*scale_x : CW/2
+    const ly = lastPt ? off_y + lastPt[1]*scale_y : CH/2
 
     return (
       <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
-
-        {/* ── Real-time SAM2 trace animation overlay ── */}
-        {traceAnimating && (
-          <>
-            <rect x={0} y={0} width={CW} height={CH} fill="rgba(10,132,255,0.03)"/>
-            {traceProgress?.pts?.length > 2 && (() => {
-              const ap = traceProgress.pts.map(([nx,ny])=>[off_x+nx*scale_x, off_y+ny*scale_y])
-              const d  = ap.map((p,i)=>`${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
-              return <path d={d} fill="none" stroke="#0A84FF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{filter:'drop-shadow(0 0 5px rgba(10,132,255,0.7))'}}/>
-            })()}
-            {traceProgress?.pts?.length > 0 && (() => {
-              const lp = traceProgress.pts[traceProgress.pts.length-1]
-              const lx = off_x+lp[0]*scale_x, ly = off_y+lp[1]*scale_y
-              return <circle cx={lx} cy={ly} r={5} fill="#0A84FF" style={{filter:'drop-shadow(0 0 8px #0A84FF)',animation:'pulse 0.5s ease-in-out infinite'}}/>
-            })()}
-            <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(10,132,255,0.7)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.1em">
-              {traceProgress?.msg ?? 'Analysing…'} · {traceProgress?.pct ?? 0}%
-            </text>
-          </>
-        )}
-        <defs>
-          <clipPath id="sclip"><path d={pathD}/></clipPath>
-          <linearGradient id="bodygrd" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.08)"/>
-            <stop offset="100%" stopColor="rgba(0,0,0,0)"/>
-          </linearGradient>
-        </defs>
-
-        {/* Shadow */}
-        <ellipse cx={CW/2} cy={gY+5} rx={scale_x*0.48} ry={7} fill="rgba(0,0,0,0.45)"/>
-        <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>
-
-        {/* Solid base fill first — prevents window holes */}
-        <path d={pathD} fill="#050e18" stroke="none" fillRule="nonzero"/>
-
-        {/* Cp bands — clipped to contour bbox not to jagged path, looks cleaner */}
-        {cpOn && (
-          <g clipPath="url(#sclip)">
-            {cpBands.map((b,i) => <rect key={i} x={b.x} y={off_y-4} width={b.w} height={scale_y+8} fill={b.color} opacity={0.82}/>)}
-          </g>
-        )}
-
-        {/* Car body outline — semi-transparent overlay on Cp bands */}
-        <path d={pathD} fill={cpOn?'rgba(2,8,14,0.18)':'rgba(10,20,30,0.55)'} stroke="rgba(10,132,255,0.8)" strokeWidth="1.5" fillRule="nonzero"/>
-        {/* Inner glow on the outline */}
-        <path d={pathD} fill="none" stroke="rgba(100,200,255,0.12)" strokeWidth="4" fillRule="nonzero"/>
-
-        {/* Gloss highlight overlay */}
-        <path d={pathD} fill="url(#bodygrd)" clipPath="url(#sclip)" opacity="0.4"/>
-
-        {/* Roofline accent — subtle dashed highlight */}
-        {roofPath && (
-          <path d={roofPath} fill="none" stroke="rgba(100,200,255,0.25)" strokeWidth="1" strokeDasharray="6 4"/>
-        )}
-
-        {/* Wheels from Hough detection */}
-        {wheels.map((w,i) => (
-          <g key={i}>
-            <circle cx={w.cx} cy={w.cy} r={w.r} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/>
-            <circle cx={w.cx} cy={w.cy} r={w.r*0.65} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>
-            {[0,72,144,216,288].map(a => {
-              const rad=a*Math.PI/180
-              return <path key={a} d={`M ${w.cx+Math.cos(rad)*w.r*0.22} ${w.cy+Math.sin(rad)*w.r*0.22} L ${w.cx+Math.cos(rad+0.28)*w.r*0.62} ${w.cy+Math.sin(rad+0.28)*w.r*0.62} Q ${w.cx+Math.cos(rad)*w.r*0.65} ${w.cy+Math.sin(rad)*w.r*0.65} ${w.cx+Math.cos(rad-0.28)*w.r*0.62} ${w.cy+Math.sin(rad-0.28)*w.r*0.62} Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>
-            })}
-            <circle cx={w.cx} cy={w.cy} r={w.r*0.14} fill="#1E3040"/>
-          </g>
+        {/* Dark base */}
+        <rect x={0} y={0} width={CW} height={CH} fill="#050e18"/>
+        {/* Scanning grid */}
+        {Array.from({length:8},(_,i)=>(
+          <line key={i} x1={off_x+i*(scale_x/7)} y1={off_y} x2={off_x+i*(scale_x/7)} y2={off_y+scale_y}
+            stroke="rgba(10,132,255,0.06)" strokeWidth="0.5"/>
         ))}
+        {/* Ground line */}
+        <line x1={12} y1={CH-16} x2={CW-12} y2={CH-16} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
 
-        {/* Separation line indicator */}
-        {showSep && keypoints?.bumpers?.rear && (
-          <line
-            x1={off_x + keypoints.bumpers.rear.nx * scale_x}
-            y1={off_y}
-            x2={off_x + keypoints.bumpers.rear.nx * scale_x}
-            y2={gY}
-            stroke="rgba(255,100,80,0.5)" strokeWidth="1" strokeDasharray="3 2"
-          />
+        {/* Partial contour path drawn so far */}
+        {tracePath && (
+          <path d={tracePath} fill="none"
+            stroke="rgba(10,132,255,0.85)" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round"
+            style={{filter:'drop-shadow(0 0 4px rgba(10,132,255,0.6))'}}/>
         )}
 
-        {/* Labels */}
-        <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
-          SIDE · {(g.bodyType??'').toUpperCase()} · {contourPts.length}pts{crCps?' · bezier':''}
+        {/* Pulsing dot at trace tip */}
+        <circle cx={lx} cy={ly} r={5} fill="#0A84FF"
+          style={{filter:'drop-shadow(0 0 8px #0A84FF)'}}/>
+        <circle cx={lx} cy={ly} r={9} fill="none"
+          stroke="rgba(10,132,255,0.4)" strokeWidth="1.5">
+          <animate attributeName="r" values="5;16;5" dur="1.2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.8;0;0.8" dur="1.2s" repeatCount="indefinite"/>
+        </circle>
+
+        {/* Progress bar */}
+        <rect x={CPAD} y={CH-10} width={scale_x} height={3} rx="1.5" fill="rgba(255,255,255,0.06)"/>
+        <rect x={CPAD} y={CH-10} width={scale_x*(pct/100)} height={3} rx="1.5"
+          fill="rgba(10,132,255,0.8)"/>
+
+        {/* Status message */}
+        <text x={CW/2} y={CH-3} textAnchor="middle"
+          fill="rgba(10,132,255,0.7)" fontSize="9"
+          fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.1em">
+          {msg} · {pct}%
         </text>
       </svg>
     )
   }
 
-  // ── Fallback: geometric SVG (when no real contour available) ──
+  // ── REAL CONTOUR (from RMBG-2.0 + SAM2) ─────────────────────────────────
+  const contourPts = g?._contourPts
+  const keypoints  = g?._keypoints
+
+  if (contourPts && contourPts.length > 10) {
+    // Use Catmull-Rom bezier if we have control points, else polyline
+    const crCps  = g?._catmullCps
+    const rawPts = g?._smoothPts ?? contourPts
+
+    // JS smoothing pass — extra insurance against any remaining jitter
+    const n = rawPts.length
+    const smoothed = rawPts.map((_,i) => {
+      const pts5 = [-2,-1,0,1,2].map(d=>rawPts[(i+d+n)%n])
+      return [pts5.reduce((s,p)=>s+p[0],0)/5, pts5.reduce((s,p)=>s+p[1],0)/5]
+    })
+
+    const mapped = smoothed.map(([nx,ny]) => [off_x+nx*scale_x, off_y+ny*scale_y])
+
+    let pathD
+    if (crCps && crCps.length === mapped.length) {
+      // Catmull-Rom cubic bezier — smooth curves through every point
+      pathD = mapped.map((p,i) => {
+        const cp  = crCps[i]
+        const c1x = (off_x+cp[0]*scale_x).toFixed(2)
+        const c1y = (off_y+cp[1]*scale_y).toFixed(2)
+        const c2x = (off_x+cp[2]*scale_x).toFixed(2)
+        const c2y = (off_y+cp[3]*scale_y).toFixed(2)
+        return i===0
+          ? `M${p[0].toFixed(2)},${p[1].toFixed(2)}`
+          : `C${c1x},${c1y} ${c2x},${c2y} ${p[0].toFixed(2)},${p[1].toFixed(2)}`
+      }).join(' ') + ' Z'
+    } else {
+      pathD = mapped.map((p,i)=>`${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z'
+    }
+
+    const gY = CH - 16
+
+    // Cp colour bands
+    const cpBands = Array.from({length:16},(_,i)=>{
+      const f=(i+0.5)/16
+      return { x:off_x+i*(scale_x/16), w:scale_x/16+1, c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd)) }
+    })
+
+    // Wheels
+    const wheels = (keypoints?.wheels??[]).map(w=>({
+      cx: off_x+w.nx*scale_x, cy: off_y+w.ny*scale_y,
+      r:  Math.max(10, w.nr*scale_x),
+    }))
+
+    // Roofline
+    const roofPts = keypoints?.roofline??[]
+    const roofPath = roofPts.length > 1
+      ? roofPts.map((p,i)=>`${i===0?'M':'L'}${(off_x+p.nx*scale_x).toFixed(1)},${(off_y+p.ny*scale_y).toFixed(1)}`).join(' ')
+      : null
+
+    const method = g?._method ?? ''
+
+    return (
+      <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <clipPath id="sclip"><path d={pathD} fillRule="nonzero"/></clipPath>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="2" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+
+        {/* Shadow */}
+        <ellipse cx={CW/2} cy={gY+5} rx={scale_x*0.46} ry={7} fill="rgba(0,0,0,0.5)"/>
+        <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
+
+        {/* Solid body base — fills everything inside outline including windows */}
+        <path d={pathD} fill="#07111c" stroke="none" fillRule="nonzero"/>
+
+        {/* Cp bands clipped to silhouette */}
+        {cpOn && (
+          <g clipPath="url(#sclip)">
+            {cpBands.map((b,i)=><rect key={i} x={b.x} y={off_y-4} width={b.w} height={scale_y+8} fill={b.c} opacity={0.82}/>)}
+          </g>
+        )}
+
+        {/* Semi-transparent body overlay so outline reads clearly */}
+        <path d={pathD} fill={cpOn?'rgba(2,8,14,0.15)':'rgba(8,18,28,0.5)'}
+          stroke="rgba(10,132,255,0.85)" strokeWidth="1.6"
+          fillRule="nonzero" filter="url(#glow)"/>
+
+        {/* Roofline accent */}
+        {roofPath && (
+          <path d={roofPath} fill="none" stroke="rgba(100,200,255,0.2)"
+            strokeWidth="1" strokeDasharray="5 4"/>
+        )}
+
+        {/* Separation line */}
+        {showSep && keypoints?.bumpers?.rear && (
+          <line
+            x1={off_x+keypoints.bumpers.rear.x*scale_x} y1={off_y}
+            x2={off_x+keypoints.bumpers.rear.x*scale_x} y2={gY}
+            stroke="rgba(255,100,80,0.5)" strokeWidth="1" strokeDasharray="3 2"/>
+        )}
+
+        {/* Wheels */}
+        {wheels.map((w,i)=>(
+          <g key={i}>
+            <circle cx={w.cx} cy={w.cy} r={w.r} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/>
+            <circle cx={w.cx} cy={w.cy} r={w.r*0.68} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>
+            {[0,72,144,216,288].map(a=>{
+              const rad=a*Math.PI/180
+              return <path key={a} d={`M${w.cx+Math.cos(rad)*w.r*0.22} ${w.cy+Math.sin(rad)*w.r*0.22}L${w.cx+Math.cos(rad+0.26)*w.r*0.64} ${w.cy+Math.sin(rad+0.26)*w.r*0.64}Q${w.cx+Math.cos(rad)*w.r*0.68} ${w.cy+Math.sin(rad)*w.r*0.68} ${w.cx+Math.cos(rad-0.26)*w.r*0.64} ${w.cy+Math.sin(rad-0.26)*w.r*0.64}Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>
+            })}
+            <circle cx={w.cx} cy={w.cy} r={w.r*0.14} fill="#1E3040"/>
+          </g>
+        ))}
+
+        {/* Status label */}
+        <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.12)"
+          fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
+          SIDE · {(g.bodyType??'').toUpperCase()} · {contourPts.length}pts · {method}
+        </text>
+      </svg>
+    )
+  }
+
+  // ── GEOMETRIC FALLBACK (no contour data yet) ─────────────────────────────
   const FW=620,FH=240,FPAD=32
-  const bLen=FW-FPAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=FH*0.52,gY=FH-18,sill=gY-rideH,roofY=sill-bH
+  const bLen=FW-FPAD*2,rideH=bLen*0.055*(g.rideH>0.12?1.8:1.0),bH=FH*0.52,gY2=FH-18,sill=gY2-rideH,roofY=sill-bH
   const xp=f=>FPAD+f*bLen
   const hx=xp(g.hoodRatio),chx=xp(g.hoodRatio+g.cabinRatio),rX=xp(1.0)
   const wsH=bH*g.cabinH,wsRad=(90-g.wsAngleDeg)*Math.PI/180,wsRun=wsH/Math.tan(Math.max(0.1,wsRad))
@@ -270,51 +284,21 @@ function SideView({g,cpOn,showSep,showIso,traceProgress,traceAnimating}){
   else if(bt==='notchback'){const deckY=sill-bH*0.56;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${xp(g.hoodRatio+g.cabinRatio+0.02)} ${roofY+sag}`,`Q ${rX-14} ${roofY+sag+4} ${rX} ${deckY}`,`L ${rX} ${sill-bH*0.18}`].join(' ')}
   else if(bt==='estate'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-5} ${roofY+sag+3} ${rX} ${sill-bH*0.18}`].join(' ')}
   else if(bt==='suv'){rearSVG=[`L ${chx} ${roofY+sag}`,`Q ${rX-10} ${roofY+sag+8} ${rX} ${sill-bH*0.20}`].join(' ')}
-  else if(bt==='pickup'){const bedTopY=sill-bH*0.52;rearSVG=[`L ${chx} ${roofY+sag}`,`L ${chx} ${bedTopY}`,`L ${rX-5} ${bedTopY}`,`Q ${rX} ${bedTopY} ${rX} ${sill-bH*0.14}`].join(' ')}
   else{rearSVG=[`Q ${chx+14} ${roofY+bH*0.10} ${rX-18} ${sill-bH*0.40}`,`Q ${rX} ${sill-bH*0.32} ${rX} ${sill-bH*0.16}`].join(' ')}
-
   const wR=bLen*0.082,w1x=xp(g.w1),w2x=xp(g.w2),wY=sill
-  const N=16,cpBands=Array.from({length:N},(_,i)=>{const f=(i+0.5)/N;return{x:FPAD+i*(bLen/N),w:bLen/N+1,c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd))}})
-  const bodyPath=[
-    `M ${FPAD} ${sill-bH*0.18}`,
-    `Q ${FPAD} ${sill-bH*0.55} ${hx} ${hoodY}`,
-    `Q ${hx+wsRun*0.3} ${cowlY} ${aTx} ${roofY}`,
-    `Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,
-    rearSVG,
-    `L ${rX} ${sill}`,
-    `Q ${rX-8} ${sill+6} ${w2x+wR+8} ${sill+4}`,
-    `A ${wR} ${wR} 0 0 0 ${w2x-wR-8} ${sill+4}`,
-    `L ${w1x+wR+8} ${sill+4}`,
-    `A ${wR} ${wR} 0 0 0 ${w1x-wR-8} ${sill+4}`,
-    `Q ${FPAD+8} ${sill+4} ${FPAD} ${sill}`,
-    `L ${FPAD} ${sill-bH*0.18} Z`
-  ].join(' ')
-
-  // Windscreen path
+  const bodyPath=[`M ${FPAD} ${sill-bH*0.18}`,`Q ${FPAD} ${sill-bH*0.55} ${hx} ${hoodY}`,`Q ${hx+wsRun*0.3} ${cowlY} ${aTx} ${roofY}`,`Q ${roofMidX} ${roofY-sag} ${chx} ${roofY+sag}`,rearSVG,`L ${rX} ${sill}`,`Q ${rX-8} ${sill+6} ${w2x+wR+8} ${sill+4}`,`A ${wR} ${wR} 0 0 0 ${w2x-wR-8} ${sill+4}`,`L ${w1x+wR+8} ${sill+4}`,`A ${wR} ${wR} 0 0 0 ${w1x-wR-8} ${sill+4}`,`Q ${FPAD+8} ${sill+4} ${FPAD} ${sill}`,`L ${FPAD} ${sill-bH*0.18} Z`].join(' ')
   const wsPath=[`M ${hx+wsRun*0.08} ${cowlY+bH*0.04}`,`L ${aTx-wsRun*0.06} ${roofY+4}`,`L ${aTx+bLen*0.01} ${roofY+4}`,`Q ${aTx+wsRun*0.12} ${cowlY+bH*0.02} ${hx+wsRun*0.18} ${cowlY+bH*0.04}`,'Z'].join(' ')
-
-  const sepX = showSep && xp ? xp(g.hoodRatio+g.cabinRatio*0.88) : null
-
-  const cpBandsSide = cpOn ? cpBands : []
-
-  return (
+  const N=16,cpBands2=Array.from({length:N},(_,i)=>{const f=(i+0.5)/N;return{x:FPAD+i*(bLen/N),w:bLen/N+1,c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd))}})
+  return(
     <svg viewBox={`0 0 ${FW} ${FH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <defs><clipPath id="sclip2"><path d={bodyPath}/></clipPath></defs>
-      <ellipse cx={FW/2} cy={gY+6} rx={bLen*0.46} ry={8} fill="rgba(0,0,0,0.45)"/>
-      <line x1={12} y1={gY} x2={FW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
-      {cpOn&&<g clipPath="url(#sclip2)">{cpBandsSide.map((b,i)=><rect key={i} x={b.x} y={0} width={b.w} height={FH} fill={b.c} opacity={0.85}/>)}</g>}
+      <ellipse cx={FW/2} cy={gY2+6} rx={bLen*0.46} ry={8} fill="rgba(0,0,0,0.45)"/>
+      <line x1={12} y1={gY2} x2={FW-12} y2={gY2} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
+      {cpOn&&<g clipPath="url(#sclip2)">{cpBands2.map((b,i)=><rect key={i} x={b.x} y={0} width={b.w} height={FH} fill={b.c} opacity={0.85}/>)}</g>}
       <path d={bodyPath} fill={cpOn?'rgba(4,8,16,0.22)':'#0e1a24'} stroke="rgba(10,132,255,0.65)" strokeWidth="1.2"/>
       <path d={wsPath} fill="rgba(0,14,28,0.55)" stroke="rgba(10,132,255,0.45)" strokeWidth="0.9"/>
-      {showSep&&sepX&&<line x1={sepX} y1={roofY} x2={sepX} y2={sill} stroke="rgba(255,100,80,0.55)" strokeWidth="1" strokeDasharray="3 2"/>}
-      {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=>(
-        <g key={i}>
-          <circle cx={wcx} cy={wcy} r={wR} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/>
-          <circle cx={wcx} cy={wcy} r={wR*0.68} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>
-          {[0,72,144,216,288].map(a=>{const r2=a*Math.PI/180;return<path key={a} d={`M ${wcx+Math.cos(r2)*wR*0.22} ${wcy+Math.sin(r2)*wR*0.22} L ${wcx+Math.cos(r2+0.26)*wR*0.64} ${wcy+Math.sin(r2+0.26)*wR*0.64} Q ${wcx+Math.cos(r2)*wR*0.68} ${wcy+Math.sin(r2)*wR*0.68} ${wcx+Math.cos(r2-0.26)*wR*0.64} ${wcy+Math.sin(r2-0.26)*wR*0.64} Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>})}
-          <circle cx={wcx} cy={wcy} r={wR*0.14} fill="#1E3040"/>
-        </g>
-      ))}
-      <text x={FW/2} y={FH-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">SIDE · {g.bodyType?.toUpperCase()} · Cd {g.Cd?.toFixed(3)} · WS {g.wsAngleDeg?.toFixed(0)}°</text>
+      {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=>(<g key={i}><circle cx={wcx} cy={wcy} r={wR} fill="#060C14" stroke="#1E3040" strokeWidth="2.5"/><circle cx={wcx} cy={wcy} r={wR*0.68} fill="#0C1C28" stroke="#162C38" strokeWidth="1.4"/>{[0,72,144,216,288].map(a=>{const r2=a*Math.PI/180;return<path key={a} d={`M ${wcx+Math.cos(r2)*wR*0.22} ${wcy+Math.sin(r2)*wR*0.22} L ${wcx+Math.cos(r2+0.26)*wR*0.64} ${wcy+Math.sin(r2+0.26)*wR*0.64} Q ${wcx+Math.cos(r2)*wR*0.68} ${wcy+Math.sin(r2)*wR*0.68} ${wcx+Math.cos(r2-0.26)*wR*0.64} ${wcy+Math.sin(r2-0.26)*wR*0.64} Z`} fill="#162838" stroke="#1E3040" strokeWidth="0.8"/>})}<circle cx={wcx} cy={wcy} r={wR*0.14} fill="#1E3040"/></g>))}
+      <text x={FW/2} y={FH-3} textAnchor="middle" fill="rgba(255,255,255,0.12)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">SIDE · {g.bodyType?.toUpperCase()} · Cd {g.Cd?.toFixed(3)} · WS {g.wsAngleDeg?.toFixed(0)}°</text>
     </svg>
   )
 }
@@ -751,10 +735,30 @@ export default function Views2DPage() {
               }
               if (evt.stage === 'done') {
                 finalResult = evt.result
-                setTraceProgress({ pct: 100, msg: evt.msg, pts: evt.result?.smooth_pts ?? [] })
+                // Animate the final outline drawing itself — reveal pts progressively
+                const allPts = evt.result?.smooth_pts ?? []
+                setTraceProgress({ pct: 100, msg: evt.msg, pts: allPts })
                 setTraceAnimating(false)
+                // Animate trace drawing: reveal points in chunks over 1.5s
+                if (allPts.length > 0) {
+                  const totalPts = allPts.length
+                  const steps    = 30
+                  const delay    = 1500 / steps
+                  for (let step = 0; step <= steps; step++) {
+                    setTimeout(() => {
+                      const visible = Math.round((step / steps) * totalPts)
+                      setTraceProgress({
+                        pct:  100,
+                        msg:  step < steps ? `Tracing outline… ${Math.round(step/steps*100)}%` : 'Done ✓',
+                        pts:  allPts.slice(0, visible),
+                        done: step === steps,
+                      })
+                      if (step === steps) setTraceAnimating(false)
+                    }, step * delay)
+                  }
+                  setTraceAnimating(true) // keep animation showing during draw
+                }
               } else {
-                // Progressive outline animation — show partial pts as they come
                 setTraceProgress(prev => ({
                   pct: evt.pct,
                   msg: evt.msg,
