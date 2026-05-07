@@ -234,7 +234,7 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   const gY = CH - 16
   const wheels = (keypoints?.wheels??[]).map(w=>({
     cx: kpX(w.nx), cy: kpY(w.ny),
-    r: Math.max(draw_h*0.14, Math.min(draw_h*0.28, w.nr*draw_w*0.55)),
+    r: Math.max(draw_h*0.12, Math.min(draw_h*0.26, w.nr*draw_w*0.60)),
   }))
   const method = g?._method ?? ''
 
