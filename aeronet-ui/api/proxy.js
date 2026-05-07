@@ -22,14 +22,13 @@ export default async function handler(req, res) {
 
   const url = `${HF_BACKEND}/${path}`
 
-  // Build clean headers — only forward content-type and content-length
-  // HF rejects requests with browser Origin headers from other domains
+  // Clean headers — do NOT forward Origin/Referer/Host from the browser
+  // HF rejects cross-origin headers; server-to-server requests have no origin
   const forwardHeaders = {
     'accept': 'application/json, */*',
-    'accept-language': 'en-US,en;q=0.9',
   }
 
-  // Forward content-type for POST requests (needed for multipart/form-data boundary)
+  // Must forward content-type for multipart/form-data (contains the boundary string)
   if (req.headers['content-type']) {
     forwardHeaders['content-type'] = req.headers['content-type']
   }
@@ -49,11 +48,11 @@ export default async function handler(req, res) {
       body:    req.method === 'GET' ? undefined : body,
     })
 
-    // Check if HF returned an HTML error page (403/503 etc)
+    // If HF returned HTML error page, return structured JSON instead
     const contentType = hfRes.headers.get('content-type') ?? ''
     if (!hfRes.ok && contentType.includes('text/html')) {
       const text = await hfRes.text()
-      console.error(`[proxy] HF returned ${hfRes.status} HTML:`, text.slice(0, 200))
+      console.error(`[proxy] HF ${hfRes.status}:`, text.slice(0, 300))
       res.status(hfRes.status).json({
         error: `HuggingFace returned ${hfRes.status}`,
         detail: text.slice(0, 300),
@@ -61,7 +60,6 @@ export default async function handler(req, res) {
       return
     }
 
-    // Forward response headers
     for (const [k, v] of hfRes.headers.entries()) {
       if (['content-encoding', 'transfer-encoding', 'connection'].includes(k)) continue
       res.setHeader(k, v)
@@ -69,8 +67,8 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.status(hfRes.status)
 
-    const responseBuffer = await hfRes.arrayBuffer()
-    res.end(Buffer.from(responseBuffer))
+    const buf = await hfRes.arrayBuffer()
+    res.end(Buffer.from(buf))
   } catch (e) {
     console.error('[proxy] Error:', e)
     res.status(502).json({ error: `Proxy error: ${e.message}` })
