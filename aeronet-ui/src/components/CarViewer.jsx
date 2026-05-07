@@ -17,7 +17,7 @@ import { OrbitControls, GizmoHelper, GizmoViewport, Grid } from '@react-three/dr
 import * as THREE from 'three'
 import { cpToColor } from '../lib/predict'
 
-const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? 'http://127.0.0.1:8000'
+const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? ''
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MESH PARSERS — client-side, zero server round-trip
