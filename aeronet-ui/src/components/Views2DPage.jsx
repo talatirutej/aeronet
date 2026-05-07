@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? 'http://127.0.0.1:8000'
+// On HuggingFace Spaces the frontend and backend share the same origin,
+// so a relative path works without CORS issues.
+// Locally, set VITE_AERONET_BACKEND=http://127.0.0.1:8000 in your .env file.
+const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? ''
 
 // ── Cp helpers ────────────────────────────────────────────────────────────────
 function cpAtPoint(t, hz, isFront) {
