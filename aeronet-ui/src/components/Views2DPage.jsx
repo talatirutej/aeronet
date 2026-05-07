@@ -256,8 +256,8 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
       <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
 
       {/* Car outline — double layer for glow effect */}
-      <path d={pathD} fill="none" stroke="rgba(10,132,255,0.25)" strokeWidth="4" fillRule="nonzero"/>
-      <path d={pathD} fill="none" stroke="rgba(10,132,255,1.0)" strokeWidth="1.2"
+      <path d={pathD} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="4" fillRule="nonzero"/>
+      <path d={pathD} fill="none" stroke="rgba(255,255,255,1.0)" strokeWidth="1.2"
         fillRule="nonzero" filter="url(#glow)"/>
 
       {/* Panel lines (Mode B/C) */}
@@ -322,9 +322,9 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
       {wheels.map((w,i)=>(
         <g key={i}>
           <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r} fill="none"
-            stroke="rgba(10,132,255,0.85)" strokeWidth="1.5"/>
+            stroke="rgba(255,255,255,0.8)" strokeWidth="1.5"/>
           <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r*0.5} fill="none"
-            stroke="rgba(10,132,255,0.3)" strokeWidth="0.7"/>
+            stroke="rgba(255,255,255,0.25)" strokeWidth="0.7"/>
         </g>
       ))}
 
@@ -424,9 +424,9 @@ function UnderView({ g }) {
 function SL({ n, t }) {
   return (
     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-      <span style={{fontSize:9,fontWeight:700,color:'#0A84FF',fontFamily:"'IBM Plex Mono'"}}>{n}</span>
-      <div style={{flex:1,height:0.5,background:'rgba(0,0,0,0.12)'}}/>
-      <span style={{fontSize:9,fontWeight:600,color:'rgba(0,0,0,0.35)',letterSpacing:'0.08em',textTransform:'uppercase'}}>{t}</span>
+      <span style={{fontSize:9,fontWeight:700,color:'var(--blue)',fontFamily:"'IBM Plex Mono'"}}>{n}</span>
+      <div style={{flex:1,height:0.5,background:'var(--sep)'}}/>
+      <span style={{fontSize:9,fontWeight:600,color:'var(--text-quaternary)',letterSpacing:'0.08em',textTransform:'uppercase'}}>{t}</span>
     </div>
   )
 }
@@ -604,16 +604,15 @@ export default function Views2DPage() {
   const isRunning = stage==='analyzing'
 
   // White card style for left panel
-  const card = {background:'#fff',borderRadius:10,border:'0.5px solid rgba(0,0,0,0.08)',
-    boxShadow:'0 1px 4px rgba(0,0,0,0.06)',overflow:'hidden'}
-  const darkCard = {background:'#0c1017',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
+  const card = {background:'var(--bg1)',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
+  const darkCard = {background:'var(--bg1)',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
 
   return (
-    <div style={{display:'flex',height:'100%',overflow:'hidden',background:'#f4f6f8'}}>
+    <div style={{display:'flex',height:'100%',overflow:'hidden',background:'var(--bg0)'}}>
 
       {/* ── LEFT PANEL — white background ── */}
       <div style={{width:240,flexShrink:0,display:'flex',flexDirection:'column',
-        borderRight:'0.5px solid rgba(0,0,0,0.1)',overflow:'hidden',background:'#fff'}}>
+        borderRight:'0.5px solid var(--sep)',overflow:'hidden',background:'var(--bg0)'}}>
         <div style={{flex:1,overflowY:'auto',padding:'16px 14px'}}>
 
           <SL n="01" t="Upload"/>
@@ -630,8 +629,8 @@ export default function Views2DPage() {
               if(url&&/^https?:\/\//i.test(url))acceptUrl(url)
             }}
             onClick={()=>fileRef.current?.click()}
-            style={{borderRadius:10,border:`1.5px dashed ${dragOver?'#0A84FF':'rgba(0,0,0,0.15)'}`,
-              background:dragOver?'rgba(10,132,255,0.04)':'#fafafa',cursor:'pointer',
+            style={{borderRadius:10,border:`0.5px dashed ${dragOver?'var(--blue)':'rgba(255,255,255,0.12)'}`,
+              background:dragOver?'rgba(10,132,255,0.06)':'var(--bg1)',cursor:'pointer',
               overflow:'hidden',minHeight:120,transition:'all 0.15s',marginBottom:8,
               display:'flex',flexDirection:'column'}}>
             <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}}
@@ -647,19 +646,19 @@ export default function Views2DPage() {
             ) : (
               <div style={{display:'flex',flexDirection:'column',alignItems:'center',
                 justifyContent:'center',gap:8,padding:'24px 16px',flex:1}}>
-                <div style={{width:40,height:40,borderRadius:10,background:'#f0f0f0',
-                  border:'1px solid rgba(0,0,0,0.08)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.35)" strokeWidth="1.5">
+                <div style={{width:40,height:40,borderRadius:10,background:'var(--bg2)',
+                  border:'0.5px solid var(--sep)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5">
                     <rect x="3" y="3" width="18" height="18" rx="3"/>
                     <circle cx="8.5" cy="8.5" r="1.5"/>
                     <path d="M21 15l-5-5L5 21"/>
                   </svg>
                 </div>
-                <span style={{fontSize:12,color:'rgba(0,0,0,0.5)',textAlign:'center'}}>Drop image or file</span>
-                <span style={{fontSize:9,color:'rgba(0,0,0,0.3)',fontFamily:"'IBM Plex Mono'",
+                <span style={{fontSize:12,color:'var(--text-tertiary)',textAlign:'center'}}>Drop image or file</span>
+                <span style={{fontSize:9,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'",
                   textAlign:'center',lineHeight:1.7}}>
                   JPG · PNG · WEBP<br/>
-                  <span style={{color:'rgba(0,0,0,0.2)'}}>Ctrl+V · drag URL</span>
+                  <span style={{color:'rgba(255,255,255,0.18)'}}>Ctrl+V · drag URL</span>
                 </span>
               </div>
             )}
@@ -673,15 +672,15 @@ export default function Views2DPage() {
                   <input autoFocus value={urlInput} onChange={e=>setUrlInput(e.target.value)}
                     onKeyDown={e=>{if(e.key==='Enter')acceptUrl(urlInput);if(e.key==='Escape')setUrlMode(false)}}
                     placeholder="https://example.com/car.jpg"
-                    style={{flex:1,background:'#f8f8f8',border:`1px solid ${urlError&&urlError!=='Fetching image…'?'#ff3b30':'rgba(0,0,0,0.15)'}`,
-                      borderRadius:7,padding:'6px 9px',color:'#000',fontSize:11,outline:'none',
+                    style={{flex:1,background:'var(--bg2)',border:`0.5px solid ${urlError&&urlError!=='Fetching image…'?'var(--red)':'rgba(255,255,255,0.12)'}`,
+                      borderRadius:7,padding:'6px 9px',color:'var(--text-primary)',fontSize:11,outline:'none',
                       fontFamily:"'IBM Plex Mono',monospace"}}/>
                   <button onClick={()=>acceptUrl(urlInput)}
                     style={{padding:'0 10px',borderRadius:7,border:'none',cursor:'pointer',
                       background:'#0A84FF',color:'#fff',fontSize:11,fontWeight:600}}>Go</button>
                   <button onClick={()=>{setUrlMode(false);setUrlError('')}}
                     style={{padding:'0 8px',borderRadius:7,border:'1px solid rgba(0,0,0,0.12)',
-                      cursor:'pointer',background:'#fff',color:'rgba(0,0,0,0.4)',fontSize:11}}>✕</button>
+                      cursor:'pointer',background:'#fff',color:'var(--text-quaternary)',fontSize:11}}>✕</button>
                 </div>
                 {urlError && (
                   <span style={{fontSize:10,color:urlError==='Fetching image…'?'#0A84FF':'#ff3b30'}}>
@@ -692,7 +691,7 @@ export default function Views2DPage() {
             ) : (
               <button onClick={()=>setUrlMode(true)}
                 style={{width:'100%',height:30,borderRadius:7,border:'1px solid rgba(0,0,0,0.1)',
-                  background:'#fafafa',cursor:'pointer',color:'rgba(0,0,0,0.4)',fontSize:11,
+                  background:'#fafafa',cursor:'pointer',color:'var(--text-quaternary)',fontSize:11,
                   display:'flex',alignItems:'center',justifyContent:'center',gap:5,transition:'all 0.12s'}}
                 onMouseEnter={e=>e.currentTarget.style.borderColor='#0A84FF'}
                 onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(0,0,0,0.1)'}>
@@ -708,9 +707,9 @@ export default function Views2DPage() {
           {file && (
             <div style={{...card,padding:'7px 11px',display:'flex',justifyContent:'space-between',
               alignItems:'center',marginBottom:10}}>
-              <span style={{fontSize:11,color:'rgba(0,0,0,0.6)',overflow:'hidden',textOverflow:'ellipsis',
+              <span style={{fontSize:11,color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',
                 whiteSpace:'nowrap',flex:1}}>{file.name}</span>
-              <span style={{fontSize:9,fontFamily:"'IBM Plex Mono'",color:'rgba(0,0,0,0.35)',marginLeft:6,flexShrink:0}}>
+              <span style={{fontSize:9,fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)',marginLeft:6,flexShrink:0}}>
                 {(file.size/1024).toFixed(0)} KB
               </span>
             </div>
@@ -718,7 +717,7 @@ export default function Views2DPage() {
 
           {/* Analysis Mode selector */}
           <div style={{marginBottom:12}}>
-            <div style={{fontSize:9,color:'rgba(0,0,0,0.35)',marginBottom:6,textTransform:'uppercase',
+            <div style={{fontSize:9,color:'var(--text-quaternary)',marginBottom:6,textTransform:'uppercase',
               letterSpacing:'0.08em',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>Analysis Mode</div>
             <div style={{display:'flex',flexDirection:'column',gap:3}}>
               {[
@@ -728,13 +727,13 @@ export default function Views2DPage() {
               ].map(m=>(
                 <button key={m.id} onClick={()=>setAnalysisMode(m.id)}
                   style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,
-                    border:`1px solid ${analysisMode===m.id?'#0A84FF':'rgba(0,0,0,0.1)'}`,
-                    background:analysisMode===m.id?'rgba(10,132,255,0.06)':'#fafafa',
+                    border:`0.5px solid ${analysisMode===m.id?'rgba(10,132,255,0.6)':'rgba(255,255,255,0.08)'}`,
+                    background:analysisMode===m.id?'rgba(10,132,255,0.12)':'transparent',
                     cursor:'pointer',textAlign:'left',transition:'all 0.12s'}}>
-                  <span style={{fontSize:13,color:analysisMode===m.id?'#0A84FF':'rgba(0,0,0,0.3)'}}>{m.icon}</span>
+                  <span style={{fontSize:13,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.3)'}}>{m.icon}</span>
                   <div>
-                    <div style={{fontSize:11,fontWeight:600,color:analysisMode===m.id?'#0A84FF':'rgba(0,0,0,0.6)'}}>{m.label}</div>
-                    <div style={{fontSize:9,color:'rgba(0,0,0,0.35)',fontFamily:"'IBM Plex Mono'"}}>{m.desc}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.6)'}}>{m.label}</div>
+                    <div style={{fontSize:9,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{m.desc}</div>
                   </div>
                 </button>
               ))}
@@ -744,8 +743,8 @@ export default function Views2DPage() {
           {/* Run button */}
           <button onClick={run} disabled={!file||isRunning}
             style={{width:'100%',height:40,borderRadius:10,border:'none',marginBottom:12,
-              background:!file||isRunning?'rgba(0,0,0,0.06)':'#0A84FF',
-              color:!file||isRunning?'rgba(0,0,0,0.3)':'#fff',
+              background:!file||isRunning?'rgba(255,255,255,0.05)':'var(--blue)',
+              color:!file||isRunning?'rgba(255,255,255,0.3)':'#fff',
               fontSize:13,fontWeight:600,cursor:!file||isRunning?'not-allowed':'pointer',
               display:'flex',alignItems:'center',justifyContent:'center',gap:6,
               transition:'all 0.15s',boxShadow:!file||isRunning?'none':'0 2px 8px rgba(10,132,255,0.3)'}}>
@@ -760,8 +759,8 @@ export default function Views2DPage() {
           <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
 
           {error && (
-            <div style={{borderRadius:8,padding:'8px 11px',background:'#fff2f2',
-              border:'1px solid rgba(255,59,48,0.2)',color:'#d70015',fontSize:11,marginBottom:10,lineHeight:1.5}}>
+            <div style={{borderRadius:8,padding:'8px 11px',background:'rgba(255,69,58,0.08)',
+              border:'0.5px solid rgba(255,69,58,0.3)',color:'var(--red)',fontSize:11,marginBottom:10,lineHeight:1.5}}>
               {error}
             </div>
           )}
@@ -778,8 +777,8 @@ export default function Views2DPage() {
                   ['WS rake',(geo.wsAngleDeg??0).toFixed(0)+'°'],
                 ].map(([k,v])=>(
                   <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
-                    padding:'3px 0',borderBottom:'0.5px solid rgba(0,0,0,0.05)'}}>
-                    <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                    padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                    <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
                     <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
                   </div>
                 ))}
@@ -795,13 +794,13 @@ export default function Views2DPage() {
         {/* Toolbar */}
         <div style={{display:'flex',alignItems:'center',gap:6,padding:'7px 12px',
           borderBottom:'0.5px solid rgba(0,0,0,0.1)',flexShrink:0,
-          background:'#fff',flexWrap:'wrap'}}>
+          background:'rgba(0,0,0,0.4)',flexWrap:'wrap'}}>
           <div style={{display:'flex',gap:2}}>
             {VIEWS.map(v=>(
               <button key={v.id} onClick={()=>setActiveView(v.id)}
                 style={{padding:'4px 12px',borderRadius:7,border:'none',cursor:'pointer',
-                  background:activeView===v.id?'#0A84FF':'transparent',
-                  color:activeView===v.id?'#fff':'rgba(0,0,0,0.4)',
+                  background:activeView===v.id?'rgba(10,132,255,0.18)':'transparent',
+                  color:activeView===v.id?'var(--blue)':'rgba(255,255,255,0.38)',
                   fontSize:12,fontWeight:activeView===v.id?600:400,transition:'all 0.12s'}}>
                 {v.label}
               </button>
@@ -816,9 +815,9 @@ export default function Views2DPage() {
           <button onClick={exportSVG}
             style={{marginLeft:'auto',padding:'4px 12px',borderRadius:7,
               border:'1px solid rgba(0,0,0,0.1)',background:'transparent',
-              color:'rgba(0,0,0,0.4)',fontSize:11,cursor:'pointer',transition:'all 0.12s'}}
-            onMouseEnter={e=>e.currentTarget.style.color='#0A84FF'}
-            onMouseLeave={e=>e.currentTarget.style.color='rgba(0,0,0,0.4)'}>
+              color:'var(--text-quaternary)',fontSize:11,cursor:'pointer',transition:'all 0.12s'}}
+            onMouseEnter={e=>e.currentTarget.style.color='var(--blue)'}
+            onMouseLeave={e=>e.currentTarget.style.color='var(--text-quaternary)'}>
             Export SVG
           </button>
         </div>
@@ -900,25 +899,25 @@ export default function Views2DPage() {
       </div>
 
       {/* ── RIGHT PANEL — white background ── */}
-      <div style={{width:210,flexShrink:0,borderLeft:'0.5px solid rgba(0,0,0,0.1)',
+      <div style={{width:210,flexShrink:0,borderLeft:'0.5px solid var(--sep)',
         overflowY:'auto',padding:'16px 14px',background:'#fff'}}>
         {geo ? (
           <>
             <SL n="03" t="Wheels"/>
             <div style={{...card,padding:'9px 11px',marginBottom:10}}>
               {(geo._keypoints?.wheels??[]).length===0 ? (
-                <div style={{fontSize:11,color:'rgba(0,0,0,0.3)',textAlign:'center',padding:'6px 0'}}>
+                <div style={{fontSize:11,color:'var(--text-quaternary)',textAlign:'center',padding:'6px 0'}}>
                   No wheels detected
                 </div>
               ) : (geo._keypoints?.wheels??[]).map((w,i)=>(
-                <div key={i} style={{marginBottom:7,paddingBottom:7,borderBottom:'0.5px solid rgba(0,0,0,0.06)'}}>
+                <div key={i} style={{marginBottom:7,paddingBottom:7,borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
                   <div style={{fontSize:10,fontWeight:700,color:'#0A84FF',marginBottom:3,fontFamily:"'IBM Plex Mono'"}}>
                     Wheel {i+1}
                   </div>
                   {[['cx',(w.nx*100).toFixed(1)+'%'],['cy',(w.ny*100).toFixed(1)+'%'],['r',(w.nr*100).toFixed(1)+'%']].map(([k,v])=>(
                     <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'1px 0'}}>
-                      <span style={{color:'rgba(0,0,0,0.35)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
-                      <span style={{color:'rgba(0,0,0,0.65)',fontFamily:"'IBM Plex Mono'"}}>{v}</span>
+                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'"}}>{v}</span>
                     </div>
                   ))}
                 </div>
@@ -936,8 +935,8 @@ export default function Views2DPage() {
                 ['Rear drop', ((geo.rearDrop??0)*100).toFixed(0)+'%'],
               ].map(([k,v])=>(
                 <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
-                  padding:'3px 0',borderBottom:'0.5px solid rgba(0,0,0,0.05)'}}>
-                  <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                  padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                  <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
                   <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
                 </div>
               ))}
@@ -946,12 +945,12 @@ export default function Views2DPage() {
             <SL n="05" t="Confidence"/>
             <div style={{...card,padding:'9px 11px',marginBottom:10}}>
               <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:5}}>
-                <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>score</span>
+                <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>score</span>
                 <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>
                   {((geo.confidence??0)*100).toFixed(0)}%
                 </span>
               </div>
-              <div style={{height:4,borderRadius:2,background:'rgba(0,0,0,0.06)'}}>
+              <div style={{height:4,borderRadius:2,background:'var(--bg3)'}}>
                 <div style={{height:'100%',borderRadius:2,width:`${(geo.confidence??0)*100}%`,
                   background:(geo.confidence??0)>0.7?'#30d158':(geo.confidence??0)>0.4?'#ff9f0a':'#ff453a',
                   transition:'width 0.5s'}}/>
@@ -972,9 +971,9 @@ export default function Views2DPage() {
                     ['Grille',   geo._aero.features?.grille??'—'],
                   ].map(([k,v])=>(
                     <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,
-                      padding:'2px 0',borderBottom:'0.5px solid rgba(0,0,0,0.05)'}}>
-                      <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
-                      <span style={{color:'rgba(0,0,0,0.65)',fontFamily:"'IBM Plex Mono'",textTransform:'capitalize'}}>{v}</span>
+                      padding:'2px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'",textTransform:'capitalize'}}>{v}</span>
                     </div>
                   ))}
                 </div>
@@ -984,12 +983,12 @@ export default function Views2DPage() {
                   {Object.entries(geo._aero.region_cd??{}).map(([region,val])=>(
                     <div key={region} style={{marginBottom:6}}>
                       <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
-                        <span style={{color:'rgba(0,0,0,0.45)',fontFamily:"'IBM Plex Mono'"}}>{region}</span>
+                        <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{region}</span>
                         <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>
                           {(val*100).toFixed(1)}%
                         </span>
                       </div>
-                      <div style={{height:3,borderRadius:2,background:'rgba(0,0,0,0.06)'}}>
+                      <div style={{height:3,borderRadius:2,background:'var(--bg3)'}}>
                         <div style={{height:'100%',borderRadius:2,background:'rgba(10,132,255,0.5)',
                           width:`${Math.min(100,(val/(geo._aero.estimated_cd??0.3))*100)}%`}}/>
                       </div>
@@ -1002,8 +1001,8 @@ export default function Views2DPage() {
                     <SL n="08" t="Improvements"/>
                     <div style={{...card,padding:'9px 11px'}}>
                       {geo._aero.improvements.map((imp,i)=>(
-                        <div key={i} style={{fontSize:10,color:'rgba(0,0,0,0.6)',padding:'3px 0',
-                          borderBottom:'0.5px solid rgba(0,0,0,0.05)',lineHeight:1.5}}>
+                        <div key={i} style={{fontSize:10,color:'var(--text-secondary)',padding:'3px 0',
+                          borderBottom:'0.5px solid rgba(255,255,255,0.04)',lineHeight:1.5}}>
                           {i+1}. {imp}
                         </div>
                       ))}
@@ -1016,7 +1015,7 @@ export default function Views2DPage() {
         ) : (
           <div style={{display:'flex',alignItems:'center',justifyContent:'center',
             padding:'40px 0',textAlign:'center'}}>
-            <span style={{fontSize:12,color:'rgba(0,0,0,0.3)'}}>Results appear here after analysis</span>
+            <span style={{fontSize:12,color:'var(--text-quaternary)'}}>Results appear here after analysis</span>
           </div>
         )}
       </div>
