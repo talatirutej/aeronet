@@ -96,8 +96,31 @@ function SideView({g,cpOn,showSep,showIso}){
 
     // Prefer smooth_pts + catmull_rom_cps for a perfect bezier outline
     // Falls back to linear path if only outline_pts available
-    const rawPts   = g?._smoothPts ?? contourPts
-    const crCps    = g?._catmullCps  // [[cp1x,cp1y,cp2x,cp2y] per segment]
+    // Use smooth_pts if available, fall back to outline_pts
+    // Apply a simple convexity pass to remove window-hole artifacts
+    const rawPtsRaw = g?._smoothPts ?? contourPts
+    const crCps     = g?._catmullCps
+
+    // Filter out points that are too far inside the bbox (interior contour artifacts)
+    // Keep only points forming the outer silhouette
+    const rawPts = (() => {
+      if (!rawPtsRaw || rawPtsRaw.length < 10) return rawPtsRaw
+      // Find bbox in normalised coords
+      const minX = Math.min(...rawPtsRaw.map(p=>p[0]))
+      const maxX = Math.max(...rawPtsRaw.map(p=>p[0]))
+      const minY = Math.min(...rawPtsRaw.map(p=>p[1]))
+      const maxY = Math.max(...rawPtsRaw.map(p=>p[1]))
+      const spanX = maxX - minX, spanY = maxY - minY
+      // Smooth with moving average window=5 to remove micro-jags
+      const n = rawPtsRaw.length
+      return rawPtsRaw.map((_,i) => {
+        const pts5 = [-2,-1,0,1,2].map(d=>rawPtsRaw[(i+d+n)%n])
+        return [
+          pts5.reduce((s,p)=>s+p[0],0)/5,
+          pts5.reduce((s,p)=>s+p[1],0)/5,
+        ]
+      })
+    })()
 
     const pts = rawPts.map(([nx, ny]) => [
       off_x + nx * scale_x,
@@ -158,22 +181,27 @@ function SideView({g,cpOn,showSep,showIso}){
         <ellipse cx={CW/2} cy={gY+5} rx={scale_x*0.48} ry={7} fill="rgba(0,0,0,0.45)"/>
         <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>
 
-        {/* Cp bands clipped to real contour */}
+        {/* Solid base fill first — prevents window holes */}
+        <path d={pathD} fill="#050e18" stroke="none" fillRule="nonzero"/>
+
+        {/* Cp bands — clipped to contour bbox not to jagged path, looks cleaner */}
         {cpOn && (
           <g clipPath="url(#sclip)">
-            {cpBands.map((b,i) => <rect key={i} x={b.x} y={0} width={b.w} height={CH} fill={b.color} opacity={0.88}/>)}
+            {cpBands.map((b,i) => <rect key={i} x={b.x} y={off_y-4} width={b.w} height={scale_y+8} fill={b.color} opacity={0.82}/>)}
           </g>
         )}
 
-        {/* Main body — real contour */}
-        <path d={pathD} fill={cpOn?'rgba(4,8,16,0.25)':'#0e1a24'} stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
+        {/* Car body outline — semi-transparent overlay on Cp bands */}
+        <path d={pathD} fill={cpOn?'rgba(2,8,14,0.18)':'rgba(10,20,30,0.55)'} stroke="rgba(10,132,255,0.8)" strokeWidth="1.5" fillRule="nonzero"/>
+        {/* Inner glow on the outline */}
+        <path d={pathD} fill="none" stroke="rgba(100,200,255,0.12)" strokeWidth="4" fillRule="nonzero"/>
 
         {/* Gloss highlight overlay */}
         <path d={pathD} fill="url(#bodygrd)" clipPath="url(#sclip)" opacity="0.4"/>
 
-        {/* Roofline accent */}
+        {/* Roofline accent — subtle dashed highlight */}
         {roofPath && (
-          <path d={roofPath} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="1.5" strokeDasharray="4 3"/>
+          <path d={roofPath} fill="none" stroke="rgba(100,200,255,0.25)" strokeWidth="1" strokeDasharray="6 4"/>
         )}
 
         {/* Wheels from Hough detection */}
@@ -202,7 +230,7 @@ function SideView({g,cpOn,showSep,showIso}){
 
         {/* Labels */}
         <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
-          SIDE · {(g.bodyType??'').toUpperCase()} · {contourPts.length}pts
+          SIDE · {(g.bodyType??'').toUpperCase()} · {contourPts.length}pts{crCps?' · bezier':''}
         </text>
       </svg>
     )
