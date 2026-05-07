@@ -2,22 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const BACKEND = (typeof __AERONET_BACKEND__ !== 'undefined' ? __AERONET_BACKEND__ : null)
-  || import.meta.env?.VITE_AERONET_BACKEND
-  || 'https://rutejtalati16-aeronet.hf.space'
-
-async function compressImage(file, maxWidth = 800, quality = 0.82) {
+// ── Image preprocessing ───────────────────────────────────────────────────────
+async function prepareImage(file, maxWidth = 1200, quality = 0.92) {
   return new Promise((resolve) => {
     const img = new window.Image()
     const url = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(url)
-      const scale  = Math.min(1, maxWidth / img.width)
-      const w      = Math.round(img.width  * scale)
-      const h      = Math.round(img.height * scale)
+      // Upscale small images, downscale huge ones
+      const scale = file.size < 50000
+        ? Math.min(3.0, maxWidth / img.width)   // upscale tiny images
+        : Math.min(1.0, maxWidth / img.width)    // downscale large ones
+      const w = Math.round(img.width  * scale)
+      const h = Math.round(img.height * scale)
       const canvas = document.createElement('canvas')
       canvas.width = w; canvas.height = h
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+      const ctx = canvas.getContext('2d')
+      // White background for transparent PNGs
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+      ctx.imageSmoothingEnabled  = true
+      ctx.imageSmoothingQuality  = 'high'
+      ctx.drawImage(img, 0, 0, w, h)
       canvas.toBlob(
         (blob) => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })),
         'image/jpeg', quality
@@ -28,199 +34,304 @@ async function compressImage(file, maxWidth = 800, quality = 0.82) {
   })
 }
 
+// ── URL fetcher with multi-proxy fallback ─────────────────────────────────────
+async function fetchImageFromUrl(url) {
+  const proxies = [
+    u => u,  // try direct first
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://proxy.cors.sh/${u}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  ]
+  for (const proxy of proxies) {
+    try {
+      const r = await fetch(proxy(url), { signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined })
+      if (!r.ok) continue
+      const blob = await r.blob()
+      if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) continue
+      const filename = url.split('/').pop()?.split('?')[0] || 'car.jpg'
+      return new File([blob], filename, { type: blob.type.startsWith('image/') ? blob.type : 'image/jpeg' })
+    } catch { continue }
+  }
+  throw new Error('Could not fetch image — try downloading and uploading the file directly')
+}
+
+// ── Pipeline stage config ─────────────────────────────────────────────────────
+const STAGES = [
+  { id: 'prep',      label: 'Preprocessing',        icon: '⚙', pct: [0,  8]  },
+  { id: 'yolo',      label: 'YOLO Detection',        icon: '◉', pct: [8,  32] },
+  { id: 'sam2',      label: 'SAM2 Refinement',       icon: '◎', pct: [32, 60] },
+  { id: 'contour',   label: 'Contour Extraction',    icon: '⬡', pct: [60, 72] },
+  { id: 'keypoints', label: 'Keypoint Mapping',      icon: '✦', pct: [72, 82] },
+  { id: 'panels',    label: 'Panel Detection',       icon: '⊞', pct: [82, 92] },
+  { id: 'aero',      label: 'Aero Analysis',         icon: '◈', pct: [92, 98] },
+  { id: 'done',      label: 'Complete',              icon: '✓', pct: [98, 100]},
+]
+
+// ── Loading animation ─────────────────────────────────────────────────────────
+function PipelineLoader({ pct, msg, mode }) {
+  const activeStage = STAGES.findLast(s => pct >= s.pct[0]) ?? STAGES[0]
+  const relevantStages = mode === 'A' ? STAGES.slice(0,6)
+    : mode === 'B' ? STAGES.slice(0,7)
+    : STAGES
+
+  return (
+    <div style={{
+      display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+      height:'100%',gap:24,padding:'24px 32px',background:'#030608'
+    }}>
+      {/* Big progress ring */}
+      <div style={{position:'relative',width:100,height:100}}>
+        <svg width={100} height={100} viewBox="0 0 100 100">
+          <circle cx={50} cy={50} r={44} fill="none" stroke="rgba(10,132,255,0.08)" strokeWidth={6}/>
+          <circle cx={50} cy={50} r={44} fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth={6}
+            strokeLinecap="round"
+            strokeDasharray={`${2*Math.PI*44}`}
+            strokeDashoffset={`${2*Math.PI*44*(1-pct/100)}`}
+            transform="rotate(-90 50 50)"
+            style={{transition:'stroke-dashoffset 0.6s ease'}}/>
+          <text x={50} y={46} textAnchor="middle" fill="white" fontSize={18} fontWeight={700}
+            fontFamily="'IBM Plex Mono',monospace">{Math.round(pct)}</text>
+          <text x={50} y={60} textAnchor="middle" fill="rgba(10,132,255,0.7)" fontSize={9}
+            fontFamily="'IBM Plex Mono',monospace">%</text>
+        </svg>
+        {/* Pulsing ring */}
+        <div style={{
+          position:'absolute',inset:-4,borderRadius:'50%',
+          border:'1px solid rgba(10,132,255,0.3)',
+          animation:'pulse-ring 1.5s ease-out infinite'
+        }}/>
+      </div>
+
+      {/* Stage pipeline */}
+      <div style={{display:'flex',alignItems:'center',gap:0,flexWrap:'wrap',justifyContent:'center',maxWidth:480}}>
+        {relevantStages.map((s, i) => {
+          const done    = pct >= s.pct[1]
+          const active  = s.id === activeStage.id
+          const pending = pct < s.pct[0]
+          return (
+            <div key={s.id} style={{display:'flex',alignItems:'center'}}>
+              <div style={{
+                display:'flex',flexDirection:'column',alignItems:'center',gap:4,padding:'6px 8px',
+                borderRadius:8,transition:'all 0.3s',
+                background: active ? 'rgba(10,132,255,0.12)' : 'transparent',
+                border: active ? '0.5px solid rgba(10,132,255,0.3)' : '0.5px solid transparent',
+              }}>
+                <div style={{
+                  width:28,height:28,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
+                  fontSize:13,
+                  background: done ? 'rgba(10,132,255,0.9)' : active ? 'rgba(10,132,255,0.2)' : 'rgba(255,255,255,0.05)',
+                  border: active ? '1.5px solid rgba(10,132,255,0.8)' : '1px solid rgba(255,255,255,0.1)',
+                  color: done ? '#fff' : active ? 'rgba(10,132,255,1)' : 'rgba(255,255,255,0.25)',
+                  boxShadow: active ? '0 0 12px rgba(10,132,255,0.4)' : 'none',
+                  transition:'all 0.3s',
+                }}>
+                  {done ? '✓' : s.icon}
+                </div>
+                <span style={{
+                  fontSize:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.04em',
+                  color: done ? 'rgba(10,132,255,0.8)' : active ? 'white' : 'rgba(255,255,255,0.2)',
+                  textAlign:'center',lineHeight:1.3,maxWidth:52,
+                  transition:'color 0.3s',
+                }}>
+                  {s.label}
+                </span>
+              </div>
+              {i < relevantStages.length-1 && (
+                <div style={{
+                  width:12,height:1,
+                  background: pct >= relevantStages[i+1].pct[0]
+                    ? 'rgba(10,132,255,0.6)' : 'rgba(255,255,255,0.1)',
+                  transition:'background 0.5s',marginBottom:18,
+                }}/>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Status message */}
+      <div style={{
+        background:'rgba(10,132,255,0.06)',border:'0.5px solid rgba(10,132,255,0.2)',
+        borderRadius:8,padding:'8px 20px',maxWidth:400,textAlign:'center',
+      }}>
+        <div style={{fontSize:11,color:'rgba(10,132,255,0.9)',fontFamily:"'IBM Plex Mono',monospace",
+          letterSpacing:'0.05em',lineHeight:1.6}}>
+          {msg}
+        </div>
+      </div>
+
+      {/* Animated scan line */}
+      <div style={{width:320,height:2,borderRadius:9999,background:'rgba(255,255,255,0.05)',overflow:'hidden'}}>
+        <div style={{
+          height:'100%',width:'40%',borderRadius:9999,
+          background:'linear-gradient(90deg,transparent,rgba(10,132,255,0.8),transparent)',
+          animation:'scan-line 1.8s ease-in-out infinite',
+        }}/>
+      </div>
+
+      <style>{`
+        @keyframes pulse-ring { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(1.3);opacity:0} }
+        @keyframes scan-line  { 0%{transform:translateX(-100%)} 100%{transform:translateX(350%)} }
+      `}</style>
+    </div>
+  )
+}
+
 // ── SideView ──────────────────────────────────────────────────────────────────
-function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true }) {
+function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, mode='A' }) {
   const CW = 620, CH = 260, CPAD = 28
-  const scale_x = CW - CPAD * 2
-  const scale_y = CH - 40
+  const scale_x = CW - CPAD*2, scale_y = CH - 40
   const off_x = CPAD, off_y = 20
 
   if (traceAnimating || (traceProgress && traceProgress.pct < 100 && traceProgress.pct > 0)) {
-    const pts = traceProgress?.pts ?? []
-    const pct = traceProgress?.pct ?? 0
-    const msg = traceProgress?.msg ?? 'Analysing…'
-    let tracePath = null
-    if (pts.length > 2) {
-      const mapped = pts.map(([nx,ny]) => [off_x + nx*scale_x, off_y + ny*scale_y])
-      tracePath = mapped.map((p,i) => `${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
-    }
-    const lastPt = pts.length > 0 ? pts[pts.length-1] : null
-    const lx = lastPt ? off_x + lastPt[0]*scale_x : CW/2
-    const ly = lastPt ? off_y + lastPt[1]*scale_y : CH/2
-    return (
-      <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
-        <rect x={0} y={0} width={CW} height={CH} fill="#050e18"/>
-        {Array.from({length:8},(_,i)=>(
-          <line key={i} x1={off_x+i*(scale_x/7)} y1={off_y} x2={off_x+i*(scale_x/7)} y2={off_y+scale_y}
-            stroke="rgba(10,132,255,0.06)" strokeWidth="0.5"/>
-        ))}
-        <line x1={12} y1={CH-16} x2={CW-12} y2={CH-16} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
-        {tracePath && (
-          <path d={tracePath} fill="none" stroke="rgba(10,132,255,0.85)" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round"
-            style={{filter:'drop-shadow(0 0 4px rgba(10,132,255,0.6))'}}/>
-        )}
-        <circle cx={lx} cy={ly} r={5} fill="#0A84FF" style={{filter:'drop-shadow(0 0 8px #0A84FF)'}}/>
-        <circle cx={lx} cy={ly} r={9} fill="none" stroke="rgba(10,132,255,0.4)" strokeWidth="1.5">
-          <animate attributeName="r" values="5;16;5" dur="1.2s" repeatCount="indefinite"/>
-          <animate attributeName="opacity" values="0.8;0;0.8" dur="1.2s" repeatCount="indefinite"/>
-        </circle>
-        <rect x={CPAD} y={CH-10} width={scale_x} height={3} rx="1.5" fill="rgba(255,255,255,0.06)"/>
-        <rect x={CPAD} y={CH-10} width={scale_x*(pct/100)} height={3} rx="1.5" fill="rgba(10,132,255,0.8)"/>
-        <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(10,132,255,0.7)" fontSize="9"
-          fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.1em">{msg} · {pct}%</text>
-      </svg>
-    )
+    return <PipelineLoader pct={traceProgress?.pct ?? 0} msg={traceProgress?.msg ?? 'Analysing…'} mode={mode}/>
   }
 
   const contourPts = g?._contourPts
   const keypoints  = g?._keypoints
-
-  if (contourPts && contourPts.length > 10) {
-    const crCps  = g?._catmullCps
-    const crPts  = g?._catmullPts
-    const rawPts = g?._smoothPts ?? contourPts
-
-    const bboxAspect = g._bboxAspect ?? (scale_x / scale_y)
-    let draw_w, draw_h
-    if (bboxAspect > scale_x / scale_y) {
-      draw_w = scale_x; draw_h = scale_x / bboxAspect
-    } else {
-      draw_h = scale_y; draw_w = scale_y * bboxAspect
-    }
-    const draw_ox = off_x + (scale_x - draw_w) / 2
-    const draw_oy = off_y + (scale_y - draw_h) / 2
-    const toSVG = ([nx, ny]) => [draw_ox + nx * draw_w, draw_oy + ny * draw_h]
-    const kpX = nx => draw_ox + nx * draw_w
-    const kpY = ny => draw_oy + ny * draw_h
-
-    let pathD
-    if (crCps && crPts && crCps.length === crPts.length && crCps.length > 10) {
-      pathD = crPts.map((pt, i) => {
-        const [px, py] = toSVG(pt)
-        const cp = crCps[i]
-        const [c1x,c1y] = toSVG([cp[0],cp[1]])
-        const [c2x,c2y] = toSVG([cp[2],cp[3]])
-        return i===0 ? `M${px.toFixed(2)},${py.toFixed(2)}`
-          : `C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${px.toFixed(2)},${py.toFixed(2)}`
-      }).join(' ') + ' Z'
-    } else {
-      pathD = rawPts.map((p,i)=>{const[sx,sy]=toSVG(p);return`${i===0?'M':'L'}${sx.toFixed(2)},${sy.toFixed(2)}`}).join(' ') + ' Z'
-    }
-
-    const gY = CH - 16
-    const wheels = (keypoints?.wheels??[]).map(w=>({
-      cx: kpX(w.nx), cy: kpY(w.ny),
-      // Use draw_h as radius reference — stable across all aspect ratios
-      // nr is wheel_radius/bbox_width, convert to height-relative for supercars
-      r: Math.max(draw_h * 0.10, Math.min(draw_h * 0.30, w.nr * draw_w * 0.7)),
-    }))
-    const roofPts  = keypoints?.roofline ?? []
-    const roofPath = roofPts.length > 1
-      ? roofPts.map((p,i)=>`${i===0?'M':'L'}${kpX(p.nx).toFixed(1)},${kpY(p.ny).toFixed(1)}`).join(' ')
-      : null
-    const method = g?._method ?? ''
-
+  if (!contourPts || contourPts.length <= 10) {
     return (
       <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
-        <defs>
-          <filter id="glow">
-            <feGaussianBlur stdDeviation="1.5" result="blur"/>
-            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-          </filter>
-        </defs>
-        <ellipse cx={CW/2} cy={gY+5} rx={scale_x*0.46} ry={7} fill="rgba(0,0,0,0.5)"/>
-        <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5"/>
-        {/* Outline only — no fill, no colour bands */}
-        <path d={pathD} fill="none"
-          stroke="rgba(10,132,255,1.0)" strokeWidth="1.5" fillRule="nonzero" filter="url(#glow)"/>
-        {roofPath && (
-          <path d={roofPath} fill="none" stroke="rgba(100,200,255,0.15)" strokeWidth="0.8" strokeDasharray="4 4"/>
-        )}
-        {showSep && keypoints?.bumpers?.rear && (
-          <line x1={kpX(keypoints.bumpers.rear.x)} y1={draw_oy}
-            x2={kpX(keypoints.bumpers.rear.x)} y2={gY}
-            stroke="rgba(255,100,80,0.4)" strokeWidth="1" strokeDasharray="3 2"/>
-        )}
-        {/* Wheels */}
-        {wheels.map((w,i)=>(
-          <g key={i}>
-            <circle cx={w.cx} cy={w.cy} r={w.r}    fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth="1.5"/>
-            <circle cx={w.cx} cy={w.cy} r={w.r*0.5} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="0.8"/>
-          </g>
-        ))}
-
-        {/* Panel lines (Mode B/C) */}
-        {showPanels && g?._panels?.lines?.map((l,i)=>{
-          const x1s = draw_ox + l.x1 * draw_w, y1s = draw_oy + l.y1 * draw_h
-          const x2s = draw_ox + l.x2 * draw_w, y2s = draw_oy + l.y2 * draw_h
-          const isPillar = l.type === 'pillar'
-          return (
-            <line key={i} x1={x1s.toFixed(1)} y1={y1s.toFixed(1)}
-              x2={x2s.toFixed(1)} y2={y2s.toFixed(1)}
-              stroke={isPillar ? 'rgba(100,200,255,0.35)' : 'rgba(10,132,255,0.28)'}
-              strokeWidth={isPillar ? '0.8' : '0.6'}
-              strokeDasharray={isPillar ? '3 3' : '4 4'}/>
-          )
-        })}
-
-        {/* Region markers (Mode B/C) */}
-        {showPanels && g?._panels?.markers?.map((m,i)=>{
-          const mx = draw_ox + m.nx * draw_w
-          const my = draw_oy + m.ny * draw_h
-          const isTop = m.ny < 0.35
-          const labelY = isTop ? my - 8 : my + 16
-          return (
-            <g key={i}>
-              <circle cx={mx.toFixed(1)} cy={my.toFixed(1)} r={3}
-                fill="rgba(10,132,255,0.9)" stroke="rgba(10,132,255,0.4)" strokeWidth="0.5"/>
-              <text x={mx.toFixed(1)} y={labelY.toFixed(1)}
-                textAnchor="middle" fill="rgba(10,132,255,0.65)" fontSize="7"
-                fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.05em">
-                {m.label}
-              </text>
-            </g>
-          )
-        })}
-
-        {/* ΔCd region annotations (Mode C) */}
-        {showPanels && g?._aero?.region_cd && Object.entries(g._aero.region_cd).map(([region, val], i) => {
-          // Position annotations along the car profile
-          const positions = {
-            'Front Face':  [0.08, 0.45], 'Underbody': [0.50, 0.92],
-            'Wheels':      [0.25, 0.80], 'Rear Wake': [0.92, 0.45],
-            'Greenhouse':  [0.50, 0.25],
-          }
-          const pos = positions[region]
-          if (!pos) return null
-          const ax = draw_ox + pos[0] * draw_w
-          const ay = draw_oy + pos[1] * draw_h
-          return (
-            <g key={i}>
-              <rect x={(ax-22).toFixed(1)} y={(ay-9).toFixed(1)} width="44" height="16" rx="4"
-                fill="rgba(0,0,0,0.75)" stroke="rgba(10,132,255,0.3)" strokeWidth="0.5"/>
-              <text x={ax.toFixed(1)} y={(ay+3).toFixed(1)}
-                textAnchor="middle" fill="rgba(255,200,50,0.9)" fontSize="7"
-                fontFamily="'IBM Plex Mono',monospace">
-                {region} {(val*100).toFixed(1)}%
-              </text>
-            </g>
-          )
-        })}
-
-        <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.12)"
-          fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
-          SIDE · {contourPts.length}pts · {method}{g?._panels ? ' · panels' : ''}{g?._aero ? ' · aero' : ''}
-        </text>
+        <rect width={CW} height={CH} fill="#050e18"/>
+        <text x={CW/2} y={CH/2} textAnchor="middle" fill="rgba(255,255,255,0.1)"
+          fontSize="12" fontFamily="'IBM Plex Mono',monospace">Upload a photo and click Analyse</text>
       </svg>
     )
   }
 
+  const crCps  = g?._catmullCps
+  const crPts  = g?._catmullPts
+  const rawPts = g?._smoothPts ?? contourPts
+
+  const bboxAspect  = g._bboxAspect ?? (scale_x / scale_y)
+  const canvasAspect = scale_x / scale_y
+  let draw_w, draw_h
+  if (bboxAspect > canvasAspect) {
+    draw_w = scale_x * 0.94; draw_h = draw_w / bboxAspect
+  } else {
+    draw_h = scale_y * 0.88; draw_w = draw_h * bboxAspect
+    if (draw_w > scale_x * 0.96) { draw_w = scale_x * 0.96; draw_h = draw_w / bboxAspect }
+  }
+  const draw_ox = off_x + (scale_x - draw_w) / 2
+  const draw_oy = off_y  + (scale_y - draw_h) / 2
+  const toSVG = ([nx,ny]) => [draw_ox + nx*draw_w, draw_oy + ny*draw_h]
+  const kpX = nx => draw_ox + nx*draw_w
+  const kpY = ny => draw_oy + ny*draw_h
+
+  let pathD
+  if (crCps && crPts && crCps.length === crPts.length && crCps.length > 10) {
+    pathD = crPts.map((pt,i) => {
+      const [px,py] = toSVG(pt); const cp = crCps[i]
+      const [c1x,c1y] = toSVG([cp[0],cp[1]]); const [c2x,c2y] = toSVG([cp[2],cp[3]])
+      return i===0 ? `M${px.toFixed(2)},${py.toFixed(2)}`
+        : `C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${px.toFixed(2)},${py.toFixed(2)}`
+    }).join(' ') + ' Z'
+  } else {
+    pathD = rawPts.map((p,i)=>{const[sx,sy]=toSVG(p);return`${i===0?'M':'L'}${sx.toFixed(2)},${sy.toFixed(2)}`}).join(' ') + ' Z'
+  }
+
+  const gY = CH - 16
+  const wheels = (keypoints?.wheels??[]).map(w=>({
+    cx: kpX(w.nx), cy: kpY(w.ny),
+    r: Math.max(draw_h*0.14, Math.min(draw_h*0.28, w.nr*draw_w*0.55)),
+  }))
+  const method = g?._method ?? ''
+
   return (
     <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
-      <rect x={0} y={0} width={CW} height={CH} fill="#050e18"/>
-      <text x={CW/2} y={CH/2} textAnchor="middle" fill="rgba(255,255,255,0.1)"
-        fontSize="12" fontFamily="'IBM Plex Mono',monospace">Upload a photo and click Analyse</text>
+      <defs>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="1.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-strong">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      {/* Ground shadow */}
+      <ellipse cx={CW/2} cy={gY+5} rx={scale_x*0.44} ry={6} fill="rgba(0,0,0,0.4)"/>
+      <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
+
+      {/* Car outline — double layer for glow effect */}
+      <path d={pathD} fill="none" stroke="rgba(10,132,255,0.25)" strokeWidth="4" fillRule="nonzero"/>
+      <path d={pathD} fill="none" stroke="rgba(10,132,255,1.0)" strokeWidth="1.2"
+        fillRule="nonzero" filter="url(#glow)"/>
+
+      {/* Panel lines (Mode B/C) */}
+      {showPanels && g?._panels?.lines
+        ?.filter(l => l.length > 0.12 && l.length < 0.85)
+        ?.slice(0, 18)
+        ?.map((l,i) => {
+          if (l.y1 > 0.65 && l.y2 > 0.65) return null
+          const x1s = draw_ox+l.x1*draw_w, y1s = draw_oy+l.y1*draw_h
+          const x2s = draw_ox+l.x2*draw_w, y2s = draw_oy+l.y2*draw_h
+          const isPillar = l.type === 'pillar'
+          return <line key={i} x1={x1s.toFixed(1)} y1={y1s.toFixed(1)}
+            x2={x2s.toFixed(1)} y2={y2s.toFixed(1)}
+            stroke={isPillar?'rgba(100,200,255,0.40)':'rgba(10,132,255,0.30)'}
+            strokeWidth={isPillar?'1.0':'0.7'} strokeDasharray={isPillar?'4 3':'5 4'}/>
+        })}
+
+      {/* Region markers (Mode B/C) */}
+      {showPanels && g?._panels?.markers?.map((m,i) => {
+        const mx = draw_ox+m.nx*draw_w, my = draw_oy+m.ny*draw_h
+        if (mx<draw_ox||mx>draw_ox+draw_w||my<draw_oy||my>draw_oy+draw_h) return null
+        const isTop=m.ny<0.40, isLeft=m.nx<0.30
+        const labelY = isTop ? my-10 : my+14
+        const anchor = isLeft?'start':(m.nx>0.70?'end':'middle')
+        return (
+          <g key={i}>
+            <line x1={mx.toFixed(1)} y1={my.toFixed(1)} x2={mx.toFixed(1)}
+              y2={(isTop?my-6:my+6).toFixed(1)} stroke="rgba(10,132,255,0.5)" strokeWidth="0.7"/>
+            <circle cx={mx.toFixed(1)} cy={my.toFixed(1)} r={2.5} fill="rgba(10,132,255,1.0)"/>
+            <text x={mx.toFixed(1)} y={labelY.toFixed(1)} textAnchor={anchor}
+              fill="rgba(160,210,255,0.9)" fontSize="7.5" fontFamily="'IBM Plex Mono',monospace"
+              letterSpacing="0.04em">{m.label}</text>
+          </g>
+        )
+      })}
+
+      {/* ΔCd annotations (Mode C) */}
+      {showPanels && g?._aero?.region_cd && Object.entries(g._aero.region_cd).map(([region,val],i) => {
+        const pos = {'Front Face':[0.08,0.45],'Underbody':[0.50,0.92],'Wheels':[0.25,0.80],'Rear Wake':[0.92,0.45],'Greenhouse':[0.50,0.25]}[region]
+        if (!pos) return null
+        const ax = draw_ox+pos[0]*draw_w, ay = draw_oy+pos[1]*draw_h
+        return (
+          <g key={i}>
+            <rect x={(ax-24).toFixed(1)} y={(ay-9).toFixed(1)} width="48" height="16" rx="4"
+              fill="rgba(0,0,0,0.8)" stroke="rgba(10,132,255,0.3)" strokeWidth="0.5"/>
+            <text x={ax.toFixed(1)} y={(ay+3).toFixed(1)} textAnchor="middle"
+              fill="rgba(255,200,50,0.95)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">
+              {region.split(' ')[0]} {(val*100).toFixed(1)}%
+            </text>
+          </g>
+        )
+      })}
+
+      {/* Sep line */}
+      {showSep && keypoints?.bumpers?.rear && (
+        <line x1={kpX(keypoints.bumpers.rear.x).toFixed(1)} y1={draw_oy.toFixed(1)}
+          x2={kpX(keypoints.bumpers.rear.x).toFixed(1)} y2={gY.toFixed(1)}
+          stroke="rgba(255,100,80,0.35)" strokeWidth="1" strokeDasharray="3 2"/>
+      )}
+
+      {/* Wheels */}
+      {wheels.map((w,i)=>(
+        <g key={i}>
+          <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r} fill="none"
+            stroke="rgba(10,132,255,0.85)" strokeWidth="1.5"/>
+          <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r*0.5} fill="none"
+            stroke="rgba(10,132,255,0.3)" strokeWidth="0.7"/>
+        </g>
+      ))}
+
+      <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.10)"
+        fontSize="8" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
+        SIDE · {contourPts.length}pts · {method}{g?._panels?' · panels':''}{g?._aero?' · aero':''}
+      </text>
     </svg>
   )
 }
@@ -228,25 +339,22 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true }
 // ── FrontView ─────────────────────────────────────────────────────────────────
 function FrontView({ g }) {
   const W=320, H=240, cx=W/2, gY=H-16
-  const kp      = g?._keypoints
-  const wheels  = kp?.wheels ?? []
-  const roofPts = kp?.roofline ?? []
-  const sillPts = kp?.sill ?? []
+  const kp=g?._keypoints, wheels=kp?.wheels??[], roofPts=kp?.roofline??[], sillPts=kp?.sill??[]
   const roofTopNY = roofPts.length ? Math.min(...roofPts.map(p=>p.ny)) : 0.15
   const sillNY    = sillPts.length ? sillPts.reduce((s,p)=>s+p.ny,0)/sillPts.length : 0.80
-  const trackFrac = wheels.length >= 2 ? Math.abs(wheels[1].nx - wheels[0].nx) : 0.48
-  const bw = Math.round(Math.min(110, Math.max(70, trackFrac * W * 1.1)))
-  const bh = Math.round(Math.min(130, Math.max(75, (sillNY - roofTopNY) * H * 1.15)))
-  const bodyBot = gY - bh * 0.08, bodyTop = bodyBot - bh
-  const wsAngle = g?.wsAngleDeg ?? 58
-  const roofNarrow = Math.max(0.28, Math.min(0.46, 0.38-(wsAngle-55)*0.003))
-  const roofHW = bw*roofNarrow, shoulderHW = bw*0.50, sillHW = bw*0.46
-  const shoulderY = bodyTop+bh*0.55, sillY = bodyTop+bh*0.92
-  const frontPath = [`M ${cx} ${bodyTop}`,`C ${cx-roofHW*0.6} ${bodyTop} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,`C ${cx-shoulderHW} ${shoulderY+bh*0.12} ${cx-sillHW} ${sillY} ${cx-sillHW*0.80} ${bodyBot}`,`L ${cx+sillHW*0.80} ${bodyBot}`,`C ${cx+sillHW} ${sillY} ${cx+shoulderHW} ${shoulderY+bh*0.12} ${cx+shoulderHW} ${shoulderY}`,`C ${cx+shoulderHW} ${shoulderY-bh*0.22} ${cx+roofHW*0.6} ${bodyTop} ${cx} ${bodyTop}`,'Z'].join(' ')
-  const aBY = bodyTop+bh*0.55, aTY = bodyTop+bh*0.08, aBHW = shoulderHW*0.86, aTHW = roofHW*0.92
-  const wscPath = [`M ${cx-aTHW} ${aTY}`,`Q ${cx} ${aTY-2} ${cx+aTHW} ${aTY}`,`L ${cx+aBHW} ${aBY}`,`L ${cx-aBHW} ${aBY}`,'Z'].join(' ')
-  const wR = wheels.length>=1 ? Math.max(12,Math.min(24,wheels[0].r/800*W*0.9)) : 16
-  const w1x = cx-shoulderHW*1.05, w2x = cx+shoulderHW*1.05, wY = gY-wR
+  const trackFrac = wheels.length>=2 ? Math.abs(wheels[1].nx-wheels[0].nx) : 0.48
+  const bw = Math.round(Math.min(110,Math.max(70,trackFrac*W*1.1)))
+  const bh = Math.round(Math.min(130,Math.max(75,(sillNY-roofTopNY)*H*1.15)))
+  const bodyBot=gY-bh*0.08, bodyTop=bodyBot-bh
+  const wsAngle=g?.wsAngleDeg??58
+  const roofNarrow=Math.max(0.28,Math.min(0.46,0.38-(wsAngle-55)*0.003))
+  const roofHW=bw*roofNarrow, shoulderHW=bw*0.50, sillHW=bw*0.46
+  const shoulderY=bodyTop+bh*0.55, sillY=bodyTop+bh*0.92
+  const frontPath=[`M ${cx} ${bodyTop}`,`C ${cx-roofHW*0.6} ${bodyTop} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,`C ${cx-shoulderHW} ${shoulderY+bh*0.12} ${cx-sillHW} ${sillY} ${cx-sillHW*0.80} ${bodyBot}`,`L ${cx+sillHW*0.80} ${bodyBot}`,`C ${cx+sillHW} ${sillY} ${cx+shoulderHW} ${shoulderY+bh*0.12} ${cx+shoulderHW} ${shoulderY}`,`C ${cx+shoulderHW} ${shoulderY-bh*0.22} ${cx+roofHW*0.6} ${bodyTop} ${cx} ${bodyTop}`,'Z'].join(' ')
+  const aBY=bodyTop+bh*0.55, aTY=bodyTop+bh*0.08, aBHW=shoulderHW*0.86, aTHW=roofHW*0.92
+  const wscPath=[`M ${cx-aTHW} ${aTY}`,`Q ${cx} ${aTY-2} ${cx+aTHW} ${aTY}`,`L ${cx+aBHW} ${aBY}`,`L ${cx-aBHW} ${aBY}`,'Z'].join(' ')
+  const wR=wheels.length>=1?Math.max(12,Math.min(24,wheels[0].r/800*W*0.9)):16
+  const w1x=cx-shoulderHW*1.05, w2x=cx+shoulderHW*1.05, wY=gY-wR
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <ellipse cx={cx} cy={gY+5} rx={shoulderHW*1.2} ry={7} fill="rgba(0,0,0,0.4)"/>
@@ -256,8 +364,8 @@ function FrontView({ g }) {
       {[-1,1].map(s=><path key={s} d={`M ${cx+s*aTHW} ${aTY} L ${cx+s*aBHW} ${aBY}`} stroke="rgba(10,132,255,0.3)" strokeWidth="1.5" strokeLinecap="round"/>)}
       {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=>(
         <g key={i}>
-          <circle cx={wcx} cy={wcy} r={wR}      fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth="1.5"/>
-          <circle cx={wcx} cy={wcy} r={wR*0.5}  fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="0.8"/>
+          <circle cx={wcx} cy={wcy} r={wR}     fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth="1.5"/>
+          <circle cx={wcx} cy={wcy} r={wR*0.5} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="0.8"/>
         </g>
       ))}
       <text x={cx} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">FRONT</text>
@@ -267,48 +375,43 @@ function FrontView({ g }) {
 
 // ── TopView ───────────────────────────────────────────────────────────────────
 function TopView({ g, yawAngle }) {
-  const W=320, H=240, cx=W/2, cy=H/2+6
-  const kp = g?._keypoints, wheels = kp?.wheels ?? []
-  const bl = Math.round(Math.min(180, Math.max(130, (g?.aspectRatio??2.0)*72))), bw = 70
-  const hoodEnd  = cy+bl*((g?.hoodRatio??0.28)-0.50)
-  const cabinEnd = cy+bl*((g?.hoodRatio??0.28)+(g?.cabinRatio??0.44)-0.50)
-  const ghW = bw*0.41
-  const fwy = wheels.length>=1 ? cy+bl*(wheels[0].nx*1.1-0.55) : cy+bl*((g?.w1??0.22)-0.50)
-  const rwy = wheels.length>=2 ? cy+bl*(wheels[1].nx*1.1-0.55) : cy+bl*((g?.w2??0.76)-0.50)
-  const wR = wheels.length>=1 ? Math.max(8,Math.min(18,wheels[0].r/800*W*0.9)) : 10, wTrack = bw*0.52
-  const body = [`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,`Q ${cx-bw*0.50} ${cy-bl/2+52} ${cx-bw*0.50} ${cy}`,`Q ${cx-bw*0.50} ${cy+bl*0.12} ${cx-bw*0.44} ${cy+bl/2-10}`,`Q ${cx-bw*0.30} ${cy+bl/2-2} ${cx} ${cy+bl/2-2}`,`Q ${cx+bw*0.30} ${cy+bl/2-2} ${cx+bw*0.44} ${cy+bl/2-10}`,`Q ${cx+bw*0.50} ${cy+bl*0.12} ${cx+bw*0.50} ${cy}`,`Q ${cx+bw*0.50} ${cy-bl/2+52} ${cx+bw*0.48} ${cy-bl/2+22}`,`Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ')
-  const ghPath = [`M ${cx} ${hoodEnd-4}`,`Q ${cx-ghW*0.50} ${hoodEnd+2} ${cx-ghW*0.52} ${hoodEnd+16}`,`L ${cx-ghW*0.52} ${cabinEnd-10}`,`Q ${cx-ghW*0.44} ${cabinEnd} ${cx} ${cabinEnd}`,`Q ${cx+ghW*0.44} ${cabinEnd} ${cx+ghW*0.52} ${cabinEnd-10}`,`L ${cx+ghW*0.52} ${hoodEnd+16}`,`Q ${cx+ghW*0.50} ${hoodEnd+2} ${cx} ${hoodEnd-4}`,'Z'].join(' ')
+  const W=320,H=240,cx=W/2,cy=H/2+6
+  const kp=g?._keypoints,wheels=kp?.wheels??[]
+  const bl=Math.round(Math.min(180,Math.max(130,(g?.aspectRatio??2.0)*72))),bw=70
+  const hoodEnd=cy+bl*((g?.hoodRatio??0.28)-0.50), cabinEnd=cy+bl*((g?.hoodRatio??0.28)+(g?.cabinRatio??0.44)-0.50)
+  const ghW=bw*0.41
+  const fwy=wheels.length>=1?cy+bl*(wheels[0].nx*1.1-0.55):cy+bl*((g?.w1??0.22)-0.50)
+  const rwy=wheels.length>=2?cy+bl*(wheels[1].nx*1.1-0.55):cy+bl*((g?.w2??0.76)-0.50)
+  const wR=wheels.length>=1?Math.max(8,Math.min(18,wheels[0].r/800*W*0.9)):10,wTrack=bw*0.52
+  const body=[`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,`Q ${cx-bw*0.50} ${cy-bl/2+52} ${cx-bw*0.50} ${cy}`,`Q ${cx-bw*0.50} ${cy+bl*0.12} ${cx-bw*0.44} ${cy+bl/2-10}`,`Q ${cx-bw*0.30} ${cy+bl/2-2} ${cx} ${cy+bl/2-2}`,`Q ${cx+bw*0.30} ${cy+bl/2-2} ${cx+bw*0.44} ${cy+bl/2-10}`,`Q ${cx+bw*0.50} ${cy+bl*0.12} ${cx+bw*0.50} ${cy}`,`Q ${cx+bw*0.50} ${cy-bl/2+52} ${cx+bw*0.48} ${cy-bl/2+22}`,`Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ')
+  const ghPath=[`M ${cx} ${hoodEnd-4}`,`Q ${cx-ghW*0.50} ${hoodEnd+2} ${cx-ghW*0.52} ${hoodEnd+16}`,`L ${cx-ghW*0.52} ${cabinEnd-10}`,`Q ${cx-ghW*0.44} ${cabinEnd} ${cx} ${cabinEnd}`,`Q ${cx+ghW*0.44} ${cabinEnd} ${cx+ghW*0.52} ${cabinEnd-10}`,`L ${cx+ghW*0.52} ${hoodEnd+16}`,`Q ${cx+ghW*0.50} ${hoodEnd+2} ${cx} ${hoodEnd-4}`,'Z'].join(' ')
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <path d={body}   fill="none" stroke="rgba(10,132,255,0.65)" strokeWidth="1.1"/>
       <path d={ghPath} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="0.9"/>
-      <line x1={cx-bw*0.26} y1={cy-bl/2+22} x2={cx+bw*0.26} y2={cy-bl/2+22} stroke="rgba(255,255,255,0.06)" strokeWidth="0.8"/>
       {[[-wTrack,fwy],[wTrack,fwy],[-wTrack,rwy],[wTrack,rwy]].map(([wx,wy],i)=>(
         <ellipse key={i} cx={cx+wx} cy={wy} rx={wR*0.45} ry={wR} fill="none" stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
       ))}
-      {[-1,1].map(s=><line key={s} x1={cx+s*ghW*0.52} y1={hoodEnd+16} x2={cx+s*bw*0.46} y2={hoodEnd-10} stroke="rgba(255,255,255,0.08)" strokeWidth="1.2"/>)}
       <text x={cx} y={H-4} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">TOP</text>
     </svg>
   )
 }
 
 // ── UnderView ─────────────────────────────────────────────────────────────────
-function UnderView({ g, showGroundEffect }) {
-  const W=320, H=240, cx=W/2, cy=H/2+6
-  const kp = g?._keypoints, wheels = kp?.wheels ?? []
-  const bl = Math.round(Math.min(180, Math.max(130, (g?.aspectRatio??2.0)*72))), bw = 70
-  const fwy = wheels.length>=1 ? cy+bl*(wheels[0].nx*1.1-0.55) : cy+bl*((g?.w1??0.22)-0.50)
-  const rwy = wheels.length>=2 ? cy+bl*(wheels[1].nx*1.1-0.55) : cy+bl*((g?.w2??0.76)-0.50)
-  const wR = wheels.length>=1 ? Math.max(8,Math.min(18,wheels[0].r/800*W*0.9)) : 10, wTrack = bw*0.52
-  const diffY = cy+bl/2-bl*0.14
-  const body = [`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,`L ${cx-bw*0.50} ${cy+bl*0.08}`,`Q ${cx-bw*0.48} ${cy+bl/2-12} ${cx-bw*0.42} ${cy+bl/2-3}`,`L ${cx+bw*0.42} ${cy+bl/2-3}`,`Q ${cx+bw*0.48} ${cy+bl/2-12} ${cx+bw*0.50} ${cy+bl*0.08}`,`L ${cx+bw*0.48} ${cy-bl/2+22}`,`Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ')
+function UnderView({ g }) {
+  const W=320,H=240,cx=W/2,cy=H/2+6
+  const kp=g?._keypoints,wheels=kp?.wheels??[]
+  const bl=Math.round(Math.min(180,Math.max(130,(g?.aspectRatio??2.0)*72))),bw=70
+  const fwy=wheels.length>=1?cy+bl*(wheels[0].nx*1.1-0.55):cy+bl*((g?.w1??0.22)-0.50)
+  const rwy=wheels.length>=2?cy+bl*(wheels[1].nx*1.1-0.55):cy+bl*((g?.w2??0.76)-0.50)
+  const wR=wheels.length>=1?Math.max(8,Math.min(18,wheels[0].r/800*W*0.9)):10,wTrack=bw*0.52
+  const diffY=cy+bl/2-bl*0.14
+  const body=[`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,`L ${cx-bw*0.50} ${cy+bl*0.08}`,`Q ${cx-bw*0.48} ${cy+bl/2-12} ${cx-bw*0.42} ${cy+bl/2-3}`,`L ${cx+bw*0.42} ${cy+bl/2-3}`,`Q ${cx+bw*0.48} ${cy+bl/2-12} ${cx+bw*0.50} ${cy+bl*0.08}`,`L ${cx+bw*0.48} ${cy-bl/2+22}`,`Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ')
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <path d={body} fill="none" stroke="rgba(10,132,255,0.65)" strokeWidth="1.1"/>
       <rect x={cx-bw*0.28} y={cy-bl*0.35} width={bw*0.56} height={bl*0.62} rx="3" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="0.8"/>
-      <rect x={cx-bw*0.05} y={cy-bl*0.30} width={bw*0.10} height={bl*0.52} rx="2" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.6"/>
       <path d={`M ${cx-bw*0.38} ${diffY} L ${cx-bw*0.42} ${cy+bl/2-3} L ${cx+bw*0.42} ${cy+bl/2-3} L ${cx+bw*0.38} ${diffY} Z`} fill="none" stroke="rgba(10,132,255,0.4)" strokeWidth="0.9"/>
-      {[-2,-1,0,1,2].map(i=><line key={i} x1={cx+i*bw*0.07} y1={diffY} x2={cx+i*bw*0.075} y2={cy+bl/2-3} stroke="rgba(10,132,255,0.2)" strokeWidth="0.7"/>)}
       {[[-wTrack,fwy],[wTrack,fwy],[-wTrack,rwy],[wTrack,rwy]].map(([wx,wy],i)=>(
         <ellipse key={i} cx={cx+wx} cy={wy} rx={wR*0.45} ry={wR} fill="none" stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
       ))}
@@ -317,12 +420,13 @@ function UnderView({ g, showGroundEffect }) {
   )
 }
 
+// ── Section label ─────────────────────────────────────────────────────────────
 function SL({ n, t }) {
   return (
-    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-      <span style={{fontSize:10,fontWeight:600,color:'var(--blue)',fontFamily:"'IBM Plex Mono'"}}>{n}</span>
-      <div style={{flex:1,height:0.5,background:'var(--sep)'}}/>
-      <span style={{fontSize:10,fontWeight:600,color:'var(--text-quaternary)',letterSpacing:'0.08em',textTransform:'uppercase'}}>{t}</span>
+    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+      <span style={{fontSize:9,fontWeight:700,color:'#0A84FF',fontFamily:"'IBM Plex Mono'"}}>{n}</span>
+      <div style={{flex:1,height:0.5,background:'rgba(0,0,0,0.12)'}}/>
+      <span style={{fontSize:9,fontWeight:600,color:'rgba(0,0,0,0.35)',letterSpacing:'0.08em',textTransform:'uppercase'}}>{t}</span>
     </div>
   )
 }
@@ -340,12 +444,11 @@ export default function Views2DPage() {
   const [error,          setError]          = useState(null)
   const [activeView,     setActiveView]     = useState('side')
   const [showSep,        setShowSep]        = useState(true)
-  const [showGE,         setShowGE]         = useState(false)
-  const [analysisMode,   setAnalysisMode]   = useState('A')  // A=Silhouette, B=Panels, C=Full Aero
   const [yawAngle,       setYawAngle]       = useState(0)
   const [urlInput,       setUrlInput]       = useState('')
   const [urlError,       setUrlError]       = useState('')
   const [urlMode,        setUrlMode]        = useState(false)
+  const [analysisMode,   setAnalysisMode]   = useState('A')
   const svgRef  = useRef(null)
   const fileRef = useRef(null)
 
@@ -358,25 +461,15 @@ export default function Views2DPage() {
 
   const acceptUrl = useCallback(async (url) => {
     const trimmed = url?.trim(); if (!trimmed) return
-    setUrlError(''); setStage('analyzing'); setGeo(null)
+    setUrlError(''); setGeo(null); setStage('idle')
     try {
-      const proxies = [
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(trimmed)}`,
-        `https://corsproxy.io/?${encodeURIComponent(trimmed)}`,
-      ]
-      let blob = null
-      if (!trimmed.startsWith('data:')) {
-        for (const proxy of proxies) {
-          try { const r = await fetch(proxy); if (r.ok) { blob = await r.blob(); break } } catch {}
-        }
-        if (!blob) throw new Error('Image blocked by CORS — try uploading the file directly')
-      } else {
-        const res = await fetch(trimmed); if (!res.ok) throw new Error(`HTTP ${res.status}`); blob = await res.blob()
-      }
-      if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) throw new Error('URL does not point to an image')
-      const f = new File([blob], trimmed.split('/').pop()?.split('?')[0]||'car.jpg', {type:blob.type})
-      setFile(f); setPreview(URL.createObjectURL(blob)); setUrlInput(''); setUrlMode(false); setStage('ready')
-    } catch(e) { setUrlError(`Could not load image: ${e.message}`); setStage('idle') }
+      setUrlError('Fetching image…')
+      const f = await fetchImageFromUrl(trimmed)
+      setFile(f); setPreview(URL.createObjectURL(f))
+      setUrlInput(''); setUrlMode(false); setStage('ready'); setUrlError('')
+    } catch(e) {
+      setUrlError(e.message); setStage('idle')
+    }
   }, [])
 
   const handlePaste = useCallback((e) => {
@@ -395,22 +488,21 @@ export default function Views2DPage() {
   const run = async () => {
     if (!file) return
     setError(null); setGeo(null); setTraceAnimating(false)
-    setTraceProgress({ pct: 2, msg: 'Compressing image…', pts: [] })
+    setTraceProgress({ pct: 2, msg: 'Preparing image…', pts: [] })
     setStage('analyzing')
 
     let uploadFile
     try {
-      uploadFile = await compressImage(file)
-      console.log(`[StatCFD] Compressed: ${(file.size/1024).toFixed(0)}KB → ${(uploadFile.size/1024).toFixed(0)}KB`)
+      uploadFile = await prepareImage(file)
+      console.log(`[StatCFD] Prepared: ${(file.size/1024).toFixed(0)}KB → ${(uploadFile.size/1024).toFixed(0)}KB`)
     } catch(e) { uploadFile = file }
 
     let jobId = null
     const MAX_ATTEMPTS = 8
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const waited = attempt * 5
       setTraceProgress({
         pct: 5,
-        msg: attempt === 0 ? 'Connecting to server…' : `Retrying… (${waited}s elapsed)`,
+        msg: attempt === 0 ? 'Connecting to server…' : `Retrying… (${attempt*5}s elapsed)`,
         pts: [],
       })
       try {
@@ -422,236 +514,273 @@ export default function Views2DPage() {
         let res
         try {
           res = await fetch('/api/proxy?path=analyze-contour%2Fstart', {
-            method: 'POST', body: fd, signal: controller.signal,
+            method:'POST', body:fd, signal:controller.signal,
           })
         } finally { clearTimeout(timer) }
-        if (res.ok) {
-          const data = await res.json()
-          jobId = data.job_id
-          break
-        }
-        const text = await res.text().catch(() => '')
-        setError(`Server error ${res.status}${text ? ': ' + text.slice(0,120) : ''}`)
+        if (res.ok) { jobId = (await res.json()).job_id; break }
+        const text = await res.text().catch(()=>'')
+        setError(`Server error ${res.status}${text?': '+text.slice(0,120):''}`)
         setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
       } catch(e) {
-        console.warn(`[StatCFD] Attempt ${attempt+1} failed:`, e.message)
-        if (attempt >= MAX_ATTEMPTS - 1) {
-          setError(`Could not reach the server after ${MAX_ATTEMPTS*5}s. Check https://huggingface.co/spaces/rutejtalati16/Aeronet — it may need a manual restart.`)
+        if (attempt >= MAX_ATTEMPTS-1) {
+          setError(`Could not reach server after ${MAX_ATTEMPTS*5}s. Check https://huggingface.co/spaces/rutejtalati16/Aeronet`)
           setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
         }
-        await new Promise(r => setTimeout(r, 5000))
+        await new Promise(r=>setTimeout(r,5000))
       }
     }
-
-    if (!jobId) {
-      setError('Failed to start analysis job.')
-      setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
-    }
+    if (!jobId) { setError('Failed to start job.'); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
 
     setTraceAnimating(true)
-    setTraceProgress({ pct: 15, msg: 'Job queued — YOLO loading…', pts: [] })
+    setTraceProgress({ pct: 10, msg: 'Job queued — preprocessing image…', pts: [] })
 
     const startTime = Date.now()
     while (true) {
-      await new Promise(r => setTimeout(r, 3000))
-      const elapsed = Math.round((Date.now() - startTime) / 1000)
+      await new Promise(r=>setTimeout(r,3000))
+      const elapsed = Math.round((Date.now()-startTime)/1000)
       let poll
       try {
-        const pc = new AbortController()
-        const pt = setTimeout(() => pc.abort(), 10000)
+        const pc = new AbortController(); const pt = setTimeout(()=>pc.abort(),10000)
         let res
-        try {
-          res = await fetch(`/api/proxy?path=analyze-contour%2Fresult%2F${jobId}`, { signal: pc.signal })
-        } finally { clearTimeout(pt) }
-        if (!res.ok) {
-          setError(`Poll error ${res.status}`)
-          setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
-        }
+        try { res = await fetch(`/api/proxy?path=analyze-contour%2Fresult%2F${jobId}`,{signal:pc.signal}) }
+        finally { clearTimeout(pt) }
+        if (!res.ok) { setError(`Poll error ${res.status}`); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
         poll = await res.json()
-      } catch(e) {
-        setError(`Connection lost while polling: ${e.message}`)
-        setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
-      }
+      } catch(e) { setError(`Connection lost: ${e.message}`); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
 
-      if (poll.status === 'error') {
-        setError(poll.error ?? 'Analysis failed on server')
-        setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
-      }
-      if (poll.status === 'running' || poll.status === 'pending') {
-        const pct = Math.min(88, 15 + elapsed * 1.2)
-        setTraceProgress({ pct: Math.round(pct), msg: `YOLO+SAM2 running… ${elapsed}s`, pts: [] })
+      if (poll.status==='error') { setError(poll.error??'Analysis failed'); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
+      if (poll.status==='running'||poll.status==='pending') {
+        const pct = Math.min(88, 10+elapsed*1.2)
+        // Map elapsed time to stage messages
+        const stageMsg = elapsed < 10 ? 'Preprocessing & YOLO detection…'
+          : elapsed < 25 ? 'SAM2 boundary refinement…'
+          : elapsed < 40 ? 'Contour extraction & smoothing…'
+          : elapsed < 60 ? (analysisMode!=='A' ? 'Panel detection running…' : 'Finalising outline…')
+          : analysisMode==='C' ? 'Moondream2 aero analysis…'
+          : 'Almost done…'
+        setTraceProgress({ pct:Math.round(pct), msg:`${stageMsg} ${elapsed}s`, pts:[] })
         continue
       }
-      if (poll.status === 'done') {
+      if (poll.status==='done') {
         const result = poll.result
-        if (!result?.geometry) {
-          setError('No vehicle outline found. Use a clear side-on photo with plain background.')
-          setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
-        }
+        if (!result?.geometry) { setError('No vehicle outline found. Use a clear side-on photo.'); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
         const allPts = result.smooth_pts ?? []
         if (allPts.length > 0) {
-          const steps = 30, delay = 1500 / steps
-          setTraceAnimating(true)
-          for (let step = 0; step <= steps; step++) {
-            setTimeout(() => {
-              const visible = Math.round((step / steps) * allPts.length)
-              setTraceProgress({
-                pct: 100,
-                msg: step < steps ? `Tracing… ${Math.round(step/steps*100)}%` : 'Done ✓',
-                pts: allPts.slice(0, visible),
-                done: step === steps,
-              })
-              if (step === steps) { setTraceAnimating(false); setTraceProgress(null) }
-            }, step * delay)
+          const steps=30, delay=1500/steps; setTraceAnimating(true)
+          for (let step=0;step<=steps;step++) {
+            setTimeout(()=>{
+              const visible = Math.round((step/steps)*allPts.length)
+              setTraceProgress({pct:100,msg:step<steps?`Tracing outline… ${Math.round(step/steps*100)}%`:'Done ✓',pts:allPts.slice(0,visible),done:step===steps})
+              if (step===steps){setTraceAnimating(false);setTraceProgress(null)}
+            }, step*delay)
           }
-        } else {
-          setTraceAnimating(false); setTraceProgress(null)
-        }
-        const cg = result.geometry
+        } else { setTraceAnimating(false); setTraceProgress(null) }
+        const cg=result.geometry
         setGeo({
-          aspectRatio: cg.aspectRatio ?? 2.0, hoodRatio: cg.hoodRatio ?? 0.28,
-          cabinRatio: cg.cabinRatio ?? 0.44, bootRatio: cg.bootRatio ?? 0.28,
-          wsAngleDeg: cg.wsAngleDeg ?? 58, rearDrop: cg.rearDrop ?? 0.15,
-          cabinH: cg.cabinH ?? 0.58, rideH: cg.rideH ?? 0.08,
-          w1: cg.w1 ?? 0.22, w2: cg.w2 ?? 0.76, confidence: cg.confidence ?? 0.97,
-          _contourPts: result.smooth_pts ?? result.outline_pts,
-          _smoothPts:  result.smooth_pts,
-          _catmullCps: result.catmull_rom_cps,
-          _catmullPts: result.catmull_rom_pts,
-          _bboxAspect: result.bbox ? result.bbox.w / Math.max(1, result.bbox.h) : undefined,
-          _keypoints:  result.keypoints,
-          _method:     result.method,
-          _panels:     result.panels ?? null,
-          _aero:       result.aero ?? null,
+          aspectRatio:cg.aspectRatio??2.0,hoodRatio:cg.hoodRatio??0.28,
+          cabinRatio:cg.cabinRatio??0.44,bootRatio:cg.bootRatio??0.28,
+          wsAngleDeg:cg.wsAngleDeg??58,rearDrop:cg.rearDrop??0.15,
+          cabinH:cg.cabinH??0.58,rideH:cg.rideH??0.08,
+          w1:cg.w1??0.22,w2:cg.w2??0.76,confidence:cg.confidence??0.97,
+          _contourPts:result.smooth_pts??result.outline_pts,
+          _smoothPts:result.smooth_pts,_catmullCps:result.catmull_rom_cps,
+          _catmullPts:result.catmull_rom_pts,
+          _bboxAspect:result.bbox?result.bbox.w/Math.max(1,result.bbox.h):undefined,
+          _keypoints:result.keypoints,_method:result.method,
+          _panels:result.panels??null,_aero:result.aero??null,
         })
-        setStage('done')
-        return
+        setStage('done'); return
       }
     }
   }
 
   const exportSVG = () => {
-    const svg = svgRef.current?.querySelector('svg'); if (!svg) return
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([svg.outerHTML], {type:'image/svg+xml'}))
-    a.download = `statcfd_${activeView}.svg`; a.click()
+    const svg=svgRef.current?.querySelector('svg'); if(!svg) return
+    const a=document.createElement('a')
+    a.href=URL.createObjectURL(new Blob([svg.outerHTML],{type:'image/svg+xml'}))
+    a.download=`statcfd_${activeView}.svg`; a.click()
   }
 
-  const isRunning = stage === 'analyzing'
-  const card = {background:'var(--bg1)',borderRadius:12,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
-  const toggleBtn = (label, val, set) => (
-    <button key={label} onClick={()=>set(p=>!p)} style={{padding:'4px 11px',borderRadius:7,border:`0.5px solid ${val?'rgba(10,132,255,0.4)':'var(--sep)'}`,background:val?'rgba(10,132,255,0.16)':'transparent',color:val?'var(--blue)':'rgba(255,255,255,0.35)',fontSize:11,fontWeight:500,cursor:'pointer',transition:'all 0.12s',fontFamily:"'IBM Plex Sans'"}}>
-      {label}
-    </button>
-  )
+  const isRunning = stage==='analyzing'
+
+  // White card style for left panel
+  const card = {background:'#fff',borderRadius:10,border:'0.5px solid rgba(0,0,0,0.08)',
+    boxShadow:'0 1px 4px rgba(0,0,0,0.06)',overflow:'hidden'}
+  const darkCard = {background:'#0c1017',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
 
   return (
-    <div style={{display:'flex',height:'100%',overflow:'hidden',background:'var(--bg0)'}}>
-      <div style={{width:228,flexShrink:0,display:'flex',flexDirection:'column',borderRight:'0.5px solid var(--sep)',overflow:'hidden'}}>
+    <div style={{display:'flex',height:'100%',overflow:'hidden',background:'#f4f6f8'}}>
+
+      {/* ── LEFT PANEL — white background ── */}
+      <div style={{width:240,flexShrink:0,display:'flex',flexDirection:'column',
+        borderRight:'0.5px solid rgba(0,0,0,0.1)',overflow:'hidden',background:'#fff'}}>
         <div style={{flex:1,overflowY:'auto',padding:'16px 14px'}}>
+
           <SL n="01" t="Upload"/>
+
+          {/* Drop zone */}
           <div
-            onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)}
-            onDrop={e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files?.[0];if(f){acceptFile(f);return}const url=e.dataTransfer.getData('text/uri-list')||e.dataTransfer.getData('text/plain');if(url&&/^https?:\/\//i.test(url))acceptUrl(url)}}
+            onDragOver={e=>{e.preventDefault();setDragOver(true)}}
+            onDragLeave={()=>setDragOver(false)}
+            onDrop={e=>{
+              e.preventDefault();setDragOver(false)
+              const f=e.dataTransfer.files?.[0]
+              if(f){acceptFile(f);return}
+              const url=e.dataTransfer.getData('text/uri-list')||e.dataTransfer.getData('text/plain')
+              if(url&&/^https?:\/\//i.test(url))acceptUrl(url)
+            }}
             onClick={()=>fileRef.current?.click()}
-            style={{borderRadius:12,border:`0.5px dashed ${dragOver?'var(--blue)':'rgba(255,255,255,0.12)'}`,background:dragOver?'rgba(10,132,255,0.06)':'var(--bg1)',cursor:'pointer',overflow:'hidden',minHeight:130,transition:'border-color 0.15s, background 0.15s',marginBottom:10,display:'flex',flexDirection:'column'}}>
-            <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={e=>acceptFile(e.target.files[0])}/>
+            style={{borderRadius:10,border:`1.5px dashed ${dragOver?'#0A84FF':'rgba(0,0,0,0.15)'}`,
+              background:dragOver?'rgba(10,132,255,0.04)':'#fafafa',cursor:'pointer',
+              overflow:'hidden',minHeight:120,transition:'all 0.15s',marginBottom:8,
+              display:'flex',flexDirection:'column'}}>
+            <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}}
+              onChange={e=>acceptFile(e.target.files[0])}/>
             {preview ? (
               <div style={{position:'relative'}}>
-                <img src={preview} alt="preview" style={{width:'100%',display:'block',borderRadius:12}}/>
+                <img src={preview} alt="preview" style={{width:'100%',display:'block',borderRadius:10}}/>
                 <div style={{position:'absolute',bottom:6,left:0,right:0,textAlign:'center'}}>
-                  <span style={{fontSize:10,color:'var(--text-secondary)',background:'rgba(0,0,0,0.55)',padding:'2px 10px',borderRadius:20}}>click to change</span>
+                  <span style={{fontSize:10,color:'#fff',background:'rgba(0,0,0,0.55)',
+                    padding:'2px 10px',borderRadius:20}}>click to change</span>
                 </div>
               </div>
             ) : (
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:10,padding:'28px 16px',flex:1}}>
-                <div style={{width:44,height:44,borderRadius:12,background:'var(--bg2)',border:'0.5px solid var(--sep)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',
+                justifyContent:'center',gap:8,padding:'24px 16px',flex:1}}>
+                <div style={{width:40,height:40,borderRadius:10,background:'#f0f0f0',
+                  border:'1px solid rgba(0,0,0,0.08)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.35)" strokeWidth="1.5">
+                    <rect x="3" y="3" width="18" height="18" rx="3"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <path d="M21 15l-5-5L5 21"/>
+                  </svg>
                 </div>
-                <span style={{fontSize:12,color:'var(--text-tertiary)',textAlign:'center'}}>Drop image or file</span>
-                <span style={{fontSize:10,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'",textAlign:'center',lineHeight:1.7}}>JPG · PNG · WEBP<br/><span style={{color:'rgba(255,255,255,0.18)'}}>Ctrl+V to paste</span></span>
+                <span style={{fontSize:12,color:'rgba(0,0,0,0.5)',textAlign:'center'}}>Drop image or file</span>
+                <span style={{fontSize:9,color:'rgba(0,0,0,0.3)',fontFamily:"'IBM Plex Mono'",
+                  textAlign:'center',lineHeight:1.7}}>
+                  JPG · PNG · WEBP<br/>
+                  <span style={{color:'rgba(0,0,0,0.2)'}}>Ctrl+V · drag URL</span>
+                </span>
               </div>
             )}
           </div>
+
+          {/* URL input */}
           <div style={{marginBottom:10}}>
             {urlMode ? (
-              <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                <div style={{display:'flex',gap:5}}>
+              <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                <div style={{display:'flex',gap:4}}>
                   <input autoFocus value={urlInput} onChange={e=>setUrlInput(e.target.value)}
                     onKeyDown={e=>{if(e.key==='Enter')acceptUrl(urlInput);if(e.key==='Escape')setUrlMode(false)}}
                     placeholder="https://example.com/car.jpg"
-                    style={{flex:1,background:'var(--bg2)',border:`0.5px solid ${urlError?'var(--red)':'rgba(255,255,255,0.12)'}`,borderRadius:8,padding:'7px 10px',color:'var(--text-primary)',fontSize:11,outline:'none',fontFamily:"'IBM Plex Mono',monospace"}}/>
-                  <button onClick={()=>acceptUrl(urlInput)} style={{padding:'0 10px',borderRadius:8,border:'none',cursor:'pointer',background:'var(--blue)',color:'#fff',fontSize:11}}>Go</button>
-                  <button onClick={()=>{setUrlMode(false);setUrlError('')}} style={{padding:'0 8px',borderRadius:8,border:'0.5px solid var(--sep)',cursor:'pointer',background:'transparent',color:'var(--text-tertiary)',fontSize:11}}>✕</button>
+                    style={{flex:1,background:'#f8f8f8',border:`1px solid ${urlError&&urlError!=='Fetching image…'?'#ff3b30':'rgba(0,0,0,0.15)'}`,
+                      borderRadius:7,padding:'6px 9px',color:'#000',fontSize:11,outline:'none',
+                      fontFamily:"'IBM Plex Mono',monospace"}}/>
+                  <button onClick={()=>acceptUrl(urlInput)}
+                    style={{padding:'0 10px',borderRadius:7,border:'none',cursor:'pointer',
+                      background:'#0A84FF',color:'#fff',fontSize:11,fontWeight:600}}>Go</button>
+                  <button onClick={()=>{setUrlMode(false);setUrlError('')}}
+                    style={{padding:'0 8px',borderRadius:7,border:'1px solid rgba(0,0,0,0.12)',
+                      cursor:'pointer',background:'#fff',color:'rgba(0,0,0,0.4)',fontSize:11}}>✕</button>
                 </div>
-                {urlError && <span style={{fontSize:10,color:'var(--red)'}}>{urlError}</span>}
+                {urlError && (
+                  <span style={{fontSize:10,color:urlError==='Fetching image…'?'#0A84FF':'#ff3b30'}}>
+                    {urlError}
+                  </span>
+                )}
               </div>
             ) : (
               <button onClick={()=>setUrlMode(true)}
-                style={{width:'100%',height:32,borderRadius:8,border:'0.5px solid rgba(255,255,255,0.08)',background:'transparent',cursor:'pointer',color:'var(--text-quaternary)',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'all 0.12s'}}
-                onMouseEnter={e=>{e.currentTarget.style.background='var(--bg2)';e.currentTarget.style.color='var(--text-tertiary)'}}
-                onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--text-quaternary)'}}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                style={{width:'100%',height:30,borderRadius:7,border:'1px solid rgba(0,0,0,0.1)',
+                  background:'#fafafa',cursor:'pointer',color:'rgba(0,0,0,0.4)',fontSize:11,
+                  display:'flex',alignItems:'center',justifyContent:'center',gap:5,transition:'all 0.12s'}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor='#0A84FF'}
+                onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(0,0,0,0.1)'}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
                 Load from URL
               </button>
             )}
           </div>
+
           {file && (
-            <div style={{...card,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-              <span style={{fontSize:11,color:'var(--text-tertiary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{file.name}</span>
-              <span style={{fontSize:10,fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)',marginLeft:8,flexShrink:0}}>{(file.size/1024).toFixed(0)} KB</span>
+            <div style={{...card,padding:'7px 11px',display:'flex',justifyContent:'space-between',
+              alignItems:'center',marginBottom:10}}>
+              <span style={{fontSize:11,color:'rgba(0,0,0,0.6)',overflow:'hidden',textOverflow:'ellipsis',
+                whiteSpace:'nowrap',flex:1}}>{file.name}</span>
+              <span style={{fontSize:9,fontFamily:"'IBM Plex Mono'",color:'rgba(0,0,0,0.35)',marginLeft:6,flexShrink:0}}>
+                {(file.size/1024).toFixed(0)} KB
+              </span>
             </div>
           )}
-          {/* Mode selector */}
-          <div style={{marginBottom:10}}>
-            <div style={{fontSize:10,color:'var(--text-quaternary)',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.08em',fontFamily:"'IBM Plex Mono'"}}>Analysis Mode</div>
-            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+
+          {/* Analysis Mode selector */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:9,color:'rgba(0,0,0,0.35)',marginBottom:6,textTransform:'uppercase',
+              letterSpacing:'0.08em',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>Analysis Mode</div>
+            <div style={{display:'flex',flexDirection:'column',gap:3}}>
               {[
-                {id:'A', label:'Silhouette', desc:'~30s · outline only', icon:'◎'},
-                {id:'B', label:'Panels',     desc:'~90s · lines + markers', icon:'⊞'},
-                {id:'C', label:'Full Aero',  desc:'~150s · panels + ΔCd', icon:'⬡'},
+                {id:'A',label:'Silhouette',  desc:'~30s · outline only',         icon:'◎'},
+                {id:'B',label:'Panels',      desc:'~90s · lines + markers',       icon:'⊞'},
+                {id:'C',label:'Full Aero',   desc:'~150s · panels + ΔCd + ID',   icon:'⬡'},
               ].map(m=>(
                 <button key={m.id} onClick={()=>setAnalysisMode(m.id)}
                   style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,
-                    border:`0.5px solid ${analysisMode===m.id?'rgba(10,132,255,0.6)':'rgba(255,255,255,0.08)'}`,
-                    background:analysisMode===m.id?'rgba(10,132,255,0.12)':'transparent',
+                    border:`1px solid ${analysisMode===m.id?'#0A84FF':'rgba(0,0,0,0.1)'}`,
+                    background:analysisMode===m.id?'rgba(10,132,255,0.06)':'#fafafa',
                     cursor:'pointer',textAlign:'left',transition:'all 0.12s'}}>
-                  <span style={{fontSize:14,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.3)'}}>{m.icon}</span>
+                  <span style={{fontSize:13,color:analysisMode===m.id?'#0A84FF':'rgba(0,0,0,0.3)'}}>{m.icon}</span>
                   <div>
-                    <div style={{fontSize:11,fontWeight:600,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.6)'}}>{m.label}</div>
-                    <div style={{fontSize:9,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{m.desc}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:analysisMode===m.id?'#0A84FF':'rgba(0,0,0,0.6)'}}>{m.label}</div>
+                    <div style={{fontSize:9,color:'rgba(0,0,0,0.35)',fontFamily:"'IBM Plex Mono'"}}>{m.desc}</div>
                   </div>
                 </button>
               ))}
             </div>
           </div>
 
+          {/* Run button */}
           <button onClick={run} disabled={!file||isRunning}
-            style={{width:'100%',height:38,borderRadius:10,border:'none',marginBottom:14,background:!file||isRunning?'rgba(255,255,255,0.05)':'var(--blue)',color:!file||isRunning?'rgba(255,255,255,0.3)':'#fff',fontSize:13,fontWeight:600,cursor:!file||isRunning?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'opacity 0.15s'}}>
+            style={{width:'100%',height:40,borderRadius:10,border:'none',marginBottom:12,
+              background:!file||isRunning?'rgba(0,0,0,0.06)':'#0A84FF',
+              color:!file||isRunning?'rgba(0,0,0,0.3)':'#fff',
+              fontSize:13,fontWeight:600,cursor:!file||isRunning?'not-allowed':'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+              transition:'all 0.15s',boxShadow:!file||isRunning?'none':'0 2px 8px rgba(10,132,255,0.3)'}}>
             {isRunning
-              ? <><svg className="anim-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5"><path d="M12 3a9 9 0 019 9"/></svg>Analysing…</>
-              : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>Analyse Vehicle</>
+              ? <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                  style={{animation:'spin 1s linear infinite'}}><path d="M12 3a9 9 0 019 9"/></svg>Analysing…</>
+              : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <polygon points="5 3 19 12 5 21 5 3"/></svg>Analyse Vehicle</>
             }
           </button>
+
+          <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+
           {error && (
-            <div style={{...card,padding:'9px 12px',background:'rgba(255,69,58,0.08)',border:'0.5px solid rgba(255,69,58,0.3)',color:'var(--red)',fontSize:12,marginBottom:12}}>
+            <div style={{borderRadius:8,padding:'8px 11px',background:'#fff2f2',
+              border:'1px solid rgba(255,59,48,0.2)',color:'#d70015',fontSize:11,marginBottom:10,lineHeight:1.5}}>
               {error}
             </div>
           )}
+
           {geo && (
             <>
               <SL n="02" t="Result"/>
-              <div style={{...card,padding:'10px 12px',marginBottom:14}}>
+              <div style={{...card,padding:'9px 11px',marginBottom:10}}>
                 {[
-                  ['Method',  geo._method ?? '—'],
-                  ['Points',  (geo._contourPts?.length ?? 0) + ' pt'],
-                  ['Wheels',  (geo._keypoints?.wheels?.length ?? 0) + ' found'],
-                  ['Aspect',  (geo.aspectRatio ?? 0).toFixed(2)],
-                  ['WS rake', (geo.wsAngleDeg ?? 0).toFixed(0) + '°'],
+                  ['Method', geo._method??'—'],
+                  ['Points', (geo._contourPts?.length??0)+' pt'],
+                  ['Wheels', (geo._keypoints?.wheels?.length??0)+' found'],
+                  ['Aspect', (geo.aspectRatio??0).toFixed(2)],
+                  ['WS rake',(geo.wsAngleDeg??0).toFixed(0)+'°'],
                 ].map(([k,v])=>(
-                  <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
-                    <span style={{fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)'}}>{k}</span>
-                    <span style={{fontFamily:"'IBM Plex Mono'",color:'var(--blue)'}}>{v}</span>
+                  <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
+                    padding:'3px 0',borderBottom:'0.5px solid rgba(0,0,0,0.05)'}}>
+                    <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                    <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
                   </div>
                 ))}
               </div>
@@ -660,80 +789,108 @@ export default function Views2DPage() {
         </div>
       </div>
 
+      {/* ── CENTRE: canvas (dark) ── */}
       <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
-        <div style={{display:'flex',alignItems:'center',gap:6,padding:'7px 12px',borderBottom:'0.5px solid var(--sep)',flexShrink:0,background:'rgba(0,0,0,0.4)',flexWrap:'wrap'}}>
+
+        {/* Toolbar */}
+        <div style={{display:'flex',alignItems:'center',gap:6,padding:'7px 12px',
+          borderBottom:'0.5px solid rgba(0,0,0,0.1)',flexShrink:0,
+          background:'#fff',flexWrap:'wrap'}}>
           <div style={{display:'flex',gap:2}}>
             {VIEWS.map(v=>(
               <button key={v.id} onClick={()=>setActiveView(v.id)}
-                style={{padding:'4px 12px',borderRadius:7,border:'none',cursor:'pointer',background:activeView===v.id?'rgba(10,132,255,0.18)':'transparent',color:activeView===v.id?'var(--blue)':'rgba(255,255,255,0.38)',fontSize:12,fontWeight:activeView===v.id?600:400,transition:'background 0.12s',fontFamily:"'IBM Plex Sans'"}}>{v.label}</button>
+                style={{padding:'4px 12px',borderRadius:7,border:'none',cursor:'pointer',
+                  background:activeView===v.id?'#0A84FF':'transparent',
+                  color:activeView===v.id?'#fff':'rgba(0,0,0,0.4)',
+                  fontSize:12,fontWeight:activeView===v.id?600:400,transition:'all 0.12s'}}>
+                {v.label}
+              </button>
             ))}
           </div>
-          <div style={{width:0.5,height:14,background:'var(--sep)'}}/>
-          <div style={{display:'flex',gap:5}}>
-            {toggleBtn('Sep', showSep, setShowSep)}
-            {toggleBtn('Ground', showGE, setShowGE)}
-          </div>
-          {geo && activeView==='top' && (
-            <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:4}}>
-              <span style={{fontSize:11,color:'var(--text-tertiary)'}}>Yaw</span>
-              <div style={{position:'relative',width:72,height:18,display:'flex',alignItems:'center'}}>
-                <div style={{position:'absolute',left:0,right:0,height:2,borderRadius:9999,background:'var(--bg3)'}}>
-                  <div style={{position:'absolute',left:'50%',top:0,height:'100%',width:`${Math.abs(yawAngle)/15*50}%`,background:'var(--blue)',borderRadius:9999,transform:yawAngle>=0?'none':'translateX(-100%)'}}/>
-                </div>
-                <input type="range" min={-15} max={15} value={yawAngle} onChange={e=>setYawAngle(Number(e.target.value))} style={{position:'absolute',inset:0,width:'100%',opacity:0,cursor:'pointer',zIndex:2}}/>
-                <div style={{position:'absolute',top:'50%',transform:'translate(-50%,-50%)',left:`${((yawAngle+15)/30)*100}%`,width:14,height:14,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 5px rgba(0,0,0,0.5)',pointerEvents:'none',zIndex:1}}/>
-              </div>
-              <span style={{fontSize:11,fontWeight:600,color:'var(--blue)',fontFamily:"'IBM Plex Mono'",width:28,textAlign:'right'}}>{yawAngle>0?'+':''}{yawAngle}°</span>
-            </div>
-          )}
+          <div style={{width:0.5,height:14,background:'rgba(0,0,0,0.1)'}}/>
+          <button onClick={()=>setShowSep(p=>!p)}
+            style={{padding:'3px 10px',borderRadius:6,fontSize:11,fontWeight:500,cursor:'pointer',
+              border:`1px solid ${showSep?'#0A84FF':'rgba(0,0,0,0.1)'}`,
+              background:showSep?'rgba(10,132,255,0.08)':'transparent',
+              color:showSep?'#0A84FF':'rgba(0,0,0,0.4)'}}>Sep</button>
           <button onClick={exportSVG}
-            style={{marginLeft:'auto',padding:'4px 12px',borderRadius:7,border:'0.5px solid var(--sep)',background:'transparent',color:'var(--text-tertiary)',fontSize:11,cursor:'pointer',transition:'all 0.12s'}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(10,132,255,0.4)';e.currentTarget.style.color='var(--blue)'}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--sep)';e.currentTarget.style.color='rgba(255,255,255,0.38)'}}>
+            style={{marginLeft:'auto',padding:'4px 12px',borderRadius:7,
+              border:'1px solid rgba(0,0,0,0.1)',background:'transparent',
+              color:'rgba(0,0,0,0.4)',fontSize:11,cursor:'pointer',transition:'all 0.12s'}}
+            onMouseEnter={e=>e.currentTarget.style.color='#0A84FF'}
+            onMouseLeave={e=>e.currentTarget.style.color='rgba(0,0,0,0.4)'}>
             Export SVG
           </button>
         </div>
 
-        <div ref={svgRef} style={{flex:1,display:'flex',flexDirection:'column',padding:'14px',gap:12,overflow:'hidden',background:'#030608'}}>
+        {/* Dark canvas */}
+        <div ref={svgRef} style={{flex:1,display:'flex',flexDirection:'column',
+          padding:'14px',gap:10,overflow:'hidden',background:'#030608'}}>
           {!geo && !isRunning && !traceProgress ? (
-            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16}}>
-              <div style={{width:64,height:64,borderRadius:16,background:'var(--bg1)',border:'0.5px solid var(--sep)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5"><path d="M2 12c0-5.5 4.5-10 10-10s10 4.5 10 10-4.5 10-10 10S2 17.5 2 12z"/><path d="M12 8v4l3 3"/></svg>
+            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',
+              justifyContent:'center',gap:16}}>
+              <div style={{width:60,height:60,borderRadius:16,background:'rgba(255,255,255,0.04)',
+                border:'0.5px solid rgba(255,255,255,0.08)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5">
+                  <path d="M2 12c0-5.5 4.5-10 10-10s10 4.5 10 10-4.5 10-10 10S2 17.5 2 12z"/>
+                  <path d="M12 8v4l3 3"/>
+                </svg>
               </div>
-              <div style={{textAlign:'center',maxWidth:380}}>
-                <div style={{fontSize:15,fontWeight:600,color:'var(--text-secondary)',marginBottom:8}}>YOLO Vehicle Outline</div>
-                <div style={{fontSize:12,color:'var(--text-quaternary)',lineHeight:1.7}}>Upload a side-on photo. YOLOv8x-seg segments the vehicle, SAM2 refines the boundary, and the outline is traced live.</div>
+              <div style={{textAlign:'center',maxWidth:360}}>
+                <div style={{fontSize:14,fontWeight:600,color:'rgba(255,255,255,0.6)',marginBottom:6}}>
+                  YOLO Vehicle Outline
+                </div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',lineHeight:1.7}}>
+                  Upload a side-on photo or paste a URL.<br/>
+                  Choose analysis mode then click Analyse.
+                </div>
               </div>
-              <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',justifyContent:'center'}}>
-                {['YOLOv8x-seg','SAM2','2000pt contour','Catmull-Rom','Keypoints'].map((s,i,a)=>(
-                  <span key={i} style={{display:'flex',alignItems:'center',gap:5}}>
-                    <span style={{padding:'3px 10px',borderRadius:6,border:'0.5px solid var(--sep)',fontSize:10,fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)',background:'var(--bg1)'}}>{s}</span>
-                    {i<a.length-1&&<span style={{fontSize:10,color:'var(--text-quaternary)'}}>→</span>}
+              <div style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap',justifyContent:'center'}}>
+                {['Preprocessor','YOLOv8x-seg','SAM2','2000pt contour','Catmull-Rom','Florence-2','Moondream2'].map((s,i,a)=>(
+                  <span key={i} style={{display:'flex',alignItems:'center',gap:4}}>
+                    <span style={{padding:'2px 8px',borderRadius:5,border:'0.5px solid rgba(255,255,255,0.1)',
+                      fontSize:9,fontFamily:"'IBM Plex Mono'",color:'rgba(255,255,255,0.3)',
+                      background:'rgba(255,255,255,0.03)'}}>{s}</span>
+                    {i<a.length-1&&<span style={{fontSize:9,color:'rgba(255,255,255,0.15)'}}>→</span>}
                   </span>
                 ))}
               </div>
             </div>
+          ) : isRunning && traceProgress ? (
+            <div style={{flex:1}}>
+              <PipelineLoader pct={traceProgress.pct} msg={traceProgress.msg} mode={analysisMode}/>
+            </div>
           ) : (
             <>
-              <div style={{flex:1,...card,display:'flex',alignItems:'center',justifyContent:'center',padding:'12px',overflow:'hidden'}}>
+              <div style={{flex:1,background:'#070d14',borderRadius:12,
+                border:'0.5px solid rgba(255,255,255,0.06)',display:'flex',
+                alignItems:'center',justifyContent:'center',padding:'12px',overflow:'hidden'}}>
                 <div style={{width:'100%',height:'100%',maxHeight:295}}>
-                  {activeView==='side'  && <SideView  g={geo} showSep={showSep} traceProgress={traceProgress} traceAnimating={traceAnimating}/>}
+                  {activeView==='side'  && <SideView g={geo} showSep={showSep} mode={analysisMode}
+                    traceProgress={traceProgress} traceAnimating={traceAnimating}/>}
                   {activeView==='front' && <FrontView g={geo}/>}
                   {activeView==='top'   && <TopView   g={geo} yawAngle={yawAngle}/>}
-                  {activeView==='under' && <UnderView g={geo} showGroundEffect={showGE}/>}
+                  {activeView==='under' && <UnderView g={geo}/>}
                 </div>
               </div>
+              {/* Thumbnails */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,flexShrink:0}}>
                 {VIEWS.map(v=>(
                   <button key={v.id} onClick={()=>setActiveView(v.id)}
-                    style={{borderRadius:10,border:`0.5px solid ${activeView===v.id?'rgba(10,132,255,0.45)':'rgba(255,255,255,0.06)'}`,background:activeView===v.id?'rgba(10,132,255,0.1)':'var(--bg1)',overflow:'hidden',cursor:'pointer',padding:4,transition:'border-color 0.15s'}}>
+                    style={{borderRadius:10,
+                      border:`1px solid ${activeView===v.id?'rgba(10,132,255,0.5)':'rgba(255,255,255,0.06)'}`,
+                      background:activeView===v.id?'rgba(10,132,255,0.08)':'rgba(255,255,255,0.02)',
+                      overflow:'hidden',cursor:'pointer',padding:4,transition:'all 0.15s'}}>
                     <div style={{width:'100%',aspectRatio:'5/3',pointerEvents:'none'}}>
                       {v.id==='side'  && <SideView  g={geo} showSep={false} showPanels={false}/>}
                       {v.id==='front' && <FrontView g={geo}/>}
                       {v.id==='top'   && <TopView   g={geo} yawAngle={0}/>}
-                      {v.id==='under' && <UnderView g={geo} showGroundEffect={false}/>}
+                      {v.id==='under' && <UnderView g={geo}/>}
                     </div>
-                    <div style={{fontSize:10,color:activeView===v.id?'var(--blue)':'rgba(255,255,255,0.3)',textAlign:'center',padding:'3px 0',fontWeight:activeView===v.id?600:400}}>{v.label}</div>
+                    <div style={{fontSize:10,color:activeView===v.id?'#0A84FF':'rgba(255,255,255,0.25)',
+                      textAlign:'center',padding:'3px 0',fontWeight:activeView===v.id?600:400}}>
+                      {v.label}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -742,27 +899,34 @@ export default function Views2DPage() {
         </div>
       </div>
 
-      <div style={{width:210,flexShrink:0,borderLeft:'0.5px solid var(--sep)',overflowY:'auto',padding:'16px 14px',background:'var(--bg0)'}}>
+      {/* ── RIGHT PANEL — white background ── */}
+      <div style={{width:210,flexShrink:0,borderLeft:'0.5px solid rgba(0,0,0,0.1)',
+        overflowY:'auto',padding:'16px 14px',background:'#fff'}}>
         {geo ? (
           <>
             <SL n="03" t="Wheels"/>
-            <div style={{...card,padding:'10px 12px',marginBottom:14}}>
-              {(geo._keypoints?.wheels ?? []).length === 0 ? (
-                <div style={{fontSize:11,color:'var(--text-quaternary)',textAlign:'center',padding:'8px 0'}}>No wheels detected</div>
-              ) : (geo._keypoints?.wheels ?? []).map((w,i)=>(
-                <div key={i} style={{marginBottom:8,paddingBottom:8,borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
-                  <div style={{fontSize:10,fontWeight:600,color:'var(--blue)',marginBottom:4,fontFamily:"'IBM Plex Mono'"}}>Wheel {i+1}</div>
+            <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+              {(geo._keypoints?.wheels??[]).length===0 ? (
+                <div style={{fontSize:11,color:'rgba(0,0,0,0.3)',textAlign:'center',padding:'6px 0'}}>
+                  No wheels detected
+                </div>
+              ) : (geo._keypoints?.wheels??[]).map((w,i)=>(
+                <div key={i} style={{marginBottom:7,paddingBottom:7,borderBottom:'0.5px solid rgba(0,0,0,0.06)'}}>
+                  <div style={{fontSize:10,fontWeight:700,color:'#0A84FF',marginBottom:3,fontFamily:"'IBM Plex Mono'"}}>
+                    Wheel {i+1}
+                  </div>
                   {[['cx',(w.nx*100).toFixed(1)+'%'],['cy',(w.ny*100).toFixed(1)+'%'],['r',(w.nr*100).toFixed(1)+'%']].map(([k,v])=>(
                     <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'1px 0'}}>
-                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
-                      <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'"}}>{v}</span>
+                      <span style={{color:'rgba(0,0,0,0.35)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'rgba(0,0,0,0.65)',fontFamily:"'IBM Plex Mono'"}}>{v}</span>
                     </div>
                   ))}
                 </div>
               ))}
             </div>
+
             <SL n="04" t="Geometry"/>
-            <div style={{...card,padding:'10px 12px',marginBottom:14}}>
+            <div style={{...card,padding:'9px 11px',marginBottom:10}}>
               {[
                 ['Hood',      ((geo.hoodRatio??0)*100).toFixed(0)+'%'],
                 ['Cabin',     ((geo.cabinRatio??0)*100).toFixed(0)+'%'],
@@ -771,66 +935,75 @@ export default function Views2DPage() {
                 ['WS rake',   (geo.wsAngleDeg??0).toFixed(0)+'°'],
                 ['Rear drop', ((geo.rearDrop??0)*100).toFixed(0)+'%'],
               ].map(([k,v])=>(
-                <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)'}}>{k}</span>
-                  <span style={{fontFamily:"'IBM Plex Mono'",color:'var(--blue)'}}>{v}</span>
+                <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
+                  padding:'3px 0',borderBottom:'0.5px solid rgba(0,0,0,0.05)'}}>
+                  <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                  <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
                 </div>
               ))}
             </div>
+
             <SL n="05" t="Confidence"/>
-            <div style={{...card,padding:'10px 12px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:6}}>
-                <span style={{fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)'}}>score</span>
-                <span style={{fontFamily:"'IBM Plex Mono'",color:'var(--blue)'}}>{((geo.confidence??0)*100).toFixed(0)}%</span>
+            <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:5}}>
+                <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>score</span>
+                <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>
+                  {((geo.confidence??0)*100).toFixed(0)}%
+                </span>
               </div>
-              <div style={{height:4,borderRadius:2,background:'var(--bg3)',overflow:'hidden'}}>
-                <div style={{height:'100%',borderRadius:2,width:`${(geo.confidence??0)*100}%`,background:(geo.confidence??0)>0.7?'var(--green)':(geo.confidence??0)>0.4?'var(--orange)':'var(--red)',transition:'width 0.5s'}}/>
+              <div style={{height:4,borderRadius:2,background:'rgba(0,0,0,0.06)'}}>
+                <div style={{height:'100%',borderRadius:2,width:`${(geo.confidence??0)*100}%`,
+                  background:(geo.confidence??0)>0.7?'#30d158':(geo.confidence??0)>0.4?'#ff9f0a':'#ff453a',
+                  transition:'width 0.5s'}}/>
               </div>
             </div>
 
-            {/* Mode C: Aero analysis panel */}
-            {geo?._aero && (
+            {/* Mode C: Aero ID */}
+            {geo._aero && (
               <>
                 <SL n="06" t="Aero ID"/>
-                <div style={{...card,padding:'10px 12px',marginBottom:14}}>
-                  <div style={{fontSize:12,fontWeight:600,color:'var(--blue)',marginBottom:6,fontFamily:"'IBM Plex Mono'"}}>{geo._aero.car_id}</div>
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#0A84FF',marginBottom:6,fontFamily:"'IBM Plex Mono'"}}>{geo._aero.car_id}</div>
                   {[
-                    ['Cd est.',    geo._aero.estimated_cd?.toFixed(3) ?? '—'],
-                    ['Body',      geo._aero.body_type ?? '—'],
-                    ['Spoiler',   geo._aero.features?.spoiler ?? '—'],
-                    ['Diffuser',  geo._aero.features?.diffuser ?? '—'],
-                    ['Grille',    geo._aero.features?.grille ?? '—'],
+                    ['Cd est.',  geo._aero.estimated_cd?.toFixed(3)?? '—'],
+                    ['Body',     geo._aero.body_type??'—'],
+                    ['Spoiler',  geo._aero.features?.spoiler??'—'],
+                    ['Diffuser', geo._aero.features?.diffuser??'—'],
+                    ['Grille',   geo._aero.features?.grille??'—'],
                   ].map(([k,v])=>(
-                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
-                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
-                      <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'",textTransform:'capitalize'}}>{v}</span>
+                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,
+                      padding:'2px 0',borderBottom:'0.5px solid rgba(0,0,0,0.05)'}}>
+                      <span style={{color:'rgba(0,0,0,0.4)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'rgba(0,0,0,0.65)',fontFamily:"'IBM Plex Mono'",textTransform:'capitalize'}}>{v}</span>
                     </div>
                   ))}
                 </div>
 
                 <SL n="07" t="Drag Regions"/>
-                <div style={{...card,padding:'10px 12px',marginBottom:14}}>
-                  {Object.entries(geo._aero.region_cd ?? {}).map(([region, val])=>(
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  {Object.entries(geo._aero.region_cd??{}).map(([region,val])=>(
                     <div key={region} style={{marginBottom:6}}>
                       <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
-                        <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{region}</span>
-                        <span style={{color:'var(--blue)',fontFamily:"'IBM Plex Mono'"}}>{(val*100).toFixed(1)}%</span>
+                        <span style={{color:'rgba(0,0,0,0.45)',fontFamily:"'IBM Plex Mono'"}}>{region}</span>
+                        <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>
+                          {(val*100).toFixed(1)}%
+                        </span>
                       </div>
-                      <div style={{height:3,borderRadius:2,background:'var(--bg3)'}}>
-                        <div style={{height:'100%',borderRadius:2,background:'rgba(10,132,255,0.6)',
+                      <div style={{height:3,borderRadius:2,background:'rgba(0,0,0,0.06)'}}>
+                        <div style={{height:'100%',borderRadius:2,background:'rgba(10,132,255,0.5)',
                           width:`${Math.min(100,(val/(geo._aero.estimated_cd??0.3))*100)}%`}}/>
                       </div>
                     </div>
                   ))}
                 </div>
 
-                {geo._aero.improvements?.length > 0 && (
+                {geo._aero.improvements?.length>0 && (
                   <>
                     <SL n="08" t="Improvements"/>
-                    <div style={{...card,padding:'10px 12px'}}>
+                    <div style={{...card,padding:'9px 11px'}}>
                       {geo._aero.improvements.map((imp,i)=>(
-                        <div key={i} style={{fontSize:10,color:'var(--text-secondary)',padding:'3px 0',
-                          borderBottom:'0.5px solid rgba(255,255,255,0.04)',lineHeight:1.5}}>
+                        <div key={i} style={{fontSize:10,color:'rgba(0,0,0,0.6)',padding:'3px 0',
+                          borderBottom:'0.5px solid rgba(0,0,0,0.05)',lineHeight:1.5}}>
                           {i+1}. {imp}
                         </div>
                       ))}
@@ -841,8 +1014,9 @@ export default function Views2DPage() {
             )}
           </>
         ) : (
-          <div style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'40px 0',textAlign:'center'}}>
-            <span style={{fontSize:12,color:'var(--text-quaternary)'}}>Results appear here after analysis</span>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',
+            padding:'40px 0',textAlign:'center'}}>
+            <span style={{fontSize:12,color:'rgba(0,0,0,0.3)'}}>Results appear here after analysis</span>
           </div>
         )}
       </div>
