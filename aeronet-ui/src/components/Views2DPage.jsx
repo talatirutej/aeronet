@@ -373,9 +373,22 @@ export default function Views2DPage() {
     setTraceProgress({ pct: 5, msg: 'Waking up server…', pts: [] })
     setTraceAnimating(true); setStage('analyzing')
 
-    // Wake the Space
-    try { await fetch(`${BACKEND}/health`, { method: 'GET' }) }
-    catch(e) { console.warn('[aeronet] wakeup ping failed:', e.message) }
+    // Wake the Space — retry for up to 90s since HF free tier takes 30-60s to cold start
+    setTraceProgress({ pct: 5, msg: 'Waking up server…', pts: [] })
+    let awake = false
+    for (let i = 0; i < 18; i++) {
+      try {
+        const r = await fetch(`${BACKEND}/health`, { method: 'GET', signal: AbortSignal.timeout(8000) })
+        if (r.ok) { awake = true; break }
+      } catch(e) {}
+      const waited = (i + 1) * 5
+      setTraceProgress({ pct: 5, msg: `Waking server… ${waited}s`, pts: [] })
+      await new Promise(r => setTimeout(r, 5000))
+    }
+    if (!awake) {
+      setError('Server is not responding. Go to huggingface.co/spaces/rutejtalati/aeronet and make sure it is Running, then try again.')
+      setTraceAnimating(false); setStage('idle'); return
+    }
 
     // Start the background job
     setTraceProgress({ pct: 10, msg: 'Uploading image…', pts: [] })
