@@ -6,7 +6,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 
-const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? 'http://127.0.0.1:8000'
+const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? ''
 
 const SUGGESTIONS = [
   "What does my Cd value mean?",
