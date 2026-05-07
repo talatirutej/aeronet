@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? 'http://127.0.0.1:8000'
+// On HuggingFace Spaces the frontend and backend share the same origin,
+// so a relative path works without CORS issues.
+// Locally, set VITE_AERONET_BACKEND=http://127.0.0.1:8000 in your .env file.
+const BACKEND = import.meta.env?.VITE_AERONET_BACKEND ?? ''
 
 // ── Cp helpers ────────────────────────────────────────────────────────────────
 function cpAtPoint(t, hz, isFront) {
@@ -361,90 +364,91 @@ export default function Views2DPage() {
     return () => window.removeEventListener('paste', handlePaste)
   }, [handlePaste])
 
-  // ── YOLO contour stream — the only analysis path ──────────────────────────
+  // ── YOLO contour — single blocking POST, no streaming ───────────────────
+  // HF free tier nginx resets long SSE connections. We use the non-streaming
+  // /analyze-contour endpoint instead and animate the outline locally after.
   const run = async () => {
     if (!file) return
     setError(null); setGeo(null)
-    setTraceProgress({ pct: 0, msg: 'Connecting…', pts: [] })
+    setTraceProgress({ pct: 10, msg: 'Waking up server…', pts: [] })
     setTraceAnimating(true); setStage('analyzing')
+
+    // Ping /health to wake the Space if sleeping
+    try {
+      await fetch(`${BACKEND}/health`, { method: 'GET' })
+    } catch(e) {
+      console.warn('[aeronet] wakeup ping failed:', e.message)
+    }
+
+    setTraceProgress({ pct: 20, msg: 'Running YOLO segmentation… (30-60s)', pts: [] })
 
     try {
       const fd = new FormData(); fd.append('file', file)
-      const res = await fetch(`${BACKEND}/analyze-contour-stream`, { method:'POST', body:fd })
+      const res = await fetch(`${BACKEND}/analyze-contour`, {
+        method: 'POST',
+        body: fd,
+      })
+
       if (!res.ok) {
-        setError(`Server error ${res.status} — is the backend running?`)
+        const txt = await res.text().catch(()=>'')
+        setError(`Server error ${res.status}${txt ? ': ' + txt.slice(0,200) : ''}`)
         setTraceAnimating(false); setStage('idle'); return
       }
 
-      const reader = res.body.getReader()
-      const dec    = new TextDecoder()
-      let buffer   = '', finalResult = null
+      const result = await res.json()
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += dec.decode(value, { stream: true })
-        const lines = buffer.split('\n'); buffer = lines.pop()
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const evt = JSON.parse(line.slice(6))
-            if (evt.stage === 'error') {
-              setError(evt.msg); setTraceAnimating(false); setStage('idle'); return
-            }
-            if (evt.stage === 'done') {
-              finalResult = evt.result
-              const allPts = evt.result?.smooth_pts ?? []
-              if (allPts.length > 0) {
-                const steps = 30, delay = 1500 / steps
-                setTraceAnimating(true)
-                for (let step = 0; step <= steps; step++) {
-                  setTimeout(() => {
-                    const visible = Math.round((step / steps) * allPts.length)
-                    setTraceProgress({ pct:100, msg: step<steps?`Tracing… ${Math.round(step/steps*100)}%`:'Done ✓', pts: allPts.slice(0, visible), done: step===steps })
-                    if (step === steps) setTraceAnimating(false)
-                  }, step * delay)
-                }
-              } else {
-                setTraceAnimating(false)
-              }
-            } else {
-              setTraceProgress(prev => ({ pct: evt.pct, msg: evt.msg, pts: prev?.pts ?? [] }))
-            }
-          } catch {}
-        }
-      }
-
-      if (finalResult?.geometry) {
-        const cg = finalResult.geometry
-        setGeo({
-          aspectRatio: cg.aspectRatio ?? 2.0,
-          hoodRatio:   cg.hoodRatio   ?? 0.28,
-          cabinRatio:  cg.cabinRatio  ?? 0.44,
-          bootRatio:   cg.bootRatio   ?? 0.28,
-          wsAngleDeg:  cg.wsAngleDeg  ?? 58,
-          rearDrop:    cg.rearDrop    ?? 0.15,
-          cabinH:      cg.cabinH      ?? 0.58,
-          rideH:       cg.rideH       ?? 0.08,
-          w1:          cg.w1          ?? 0.22,
-          w2:          cg.w2          ?? 0.76,
-          confidence:  cg.confidence  ?? 0.97,
-          _contourPts: finalResult.smooth_pts ?? finalResult.outline_pts,
-          _smoothPts:  finalResult.smooth_pts,
-          _catmullCps: finalResult.catmull_rom_cps,
-          _catmullPts: finalResult.catmull_rom_pts,
-          _bboxAspect: finalResult.bbox ? finalResult.bbox.w / Math.max(1, finalResult.bbox.h) : undefined,
-          _keypoints:  finalResult.keypoints,
-          _method:     finalResult.method,
-        })
-      } else if (!finalResult) {
+      if (!result?.geometry) {
         setError('No vehicle outline found. Try a clear side-on photo against a plain background.')
+        setTraceAnimating(false); setStage('idle'); return
       }
+
+      // Animate the outline tracing itself locally now that we have the data
+      const allPts = result.smooth_pts ?? []
+      if (allPts.length > 0) {
+        const steps = 30, delay = 1500 / steps
+        for (let step = 0; step <= steps; step++) {
+          setTimeout(() => {
+            const visible = Math.round((step / steps) * allPts.length)
+            setTraceProgress({
+              pct:  100,
+              msg:  step < steps ? `Tracing… ${Math.round(step/steps*100)}%` : 'Done ✓',
+              pts:  allPts.slice(0, visible),
+              done: step === steps,
+            })
+            if (step === steps) setTraceAnimating(false)
+          }, step * delay)
+        }
+        setTraceAnimating(true)
+      } else {
+        setTraceAnimating(false)
+      }
+
+      const cg = result.geometry
+      setGeo({
+        aspectRatio: cg.aspectRatio ?? 2.0,
+        hoodRatio:   cg.hoodRatio   ?? 0.28,
+        cabinRatio:  cg.cabinRatio  ?? 0.44,
+        bootRatio:   cg.bootRatio   ?? 0.28,
+        wsAngleDeg:  cg.wsAngleDeg  ?? 58,
+        rearDrop:    cg.rearDrop    ?? 0.15,
+        cabinH:      cg.cabinH      ?? 0.58,
+        rideH:       cg.rideH       ?? 0.08,
+        w1:          cg.w1          ?? 0.22,
+        w2:          cg.w2          ?? 0.76,
+        confidence:  cg.confidence  ?? 0.97,
+        _contourPts: result.smooth_pts ?? result.outline_pts,
+        _smoothPts:  result.smooth_pts,
+        _catmullCps: result.catmull_rom_cps,
+        _catmullPts: result.catmull_rom_pts,
+        _bboxAspect: result.bbox ? result.bbox.w / Math.max(1, result.bbox.h) : undefined,
+        _keypoints:  result.keypoints,
+        _method:     result.method,
+      })
       setStage('done')
+
     } catch(e) {
       setTraceAnimating(false)
-      setError(`Connection failed: ${e.message}`)
+      setError(`Request failed: ${e.message}`)
       setStage('idle')
     }
   }
