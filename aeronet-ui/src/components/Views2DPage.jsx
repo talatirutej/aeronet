@@ -153,54 +153,80 @@ function SideView({g,cpOn,showSep,showIso,traceProgress,traceAnimating}){
   const keypoints  = g?._keypoints
 
   if (contourPts && contourPts.length > 10) {
-    // Use Catmull-Rom bezier if we have control points, else polyline
-    const crCps  = g?._catmullCps
-    const rawPts = g?._smoothPts ?? contourPts
+    // Use Catmull-Rom bezier control points (150pt) if available.
+    // _catmullCps matches the 150-pt catmull_rom_pts, NOT the 500-pt smooth_pts.
+    // So we must use catmull_rom_pts as the anchor points when drawing bezier curves.
+    const crCps  = g?._catmullCps   // 150 control-point quads
+    const crPts  = g?._catmullPts   // 150 anchor points (same count as crCps)
+    const rawPts = g?._smoothPts ?? contourPts  // 500pt for polyline fallback
 
-    // JS smoothing pass — extra insurance against any remaining jitter
+    // Preserve the car's real aspect ratio inside the SVG canvas.
+    // The normalised points span [0,1]×[0,1] relative to the bounding box.
+    // The bounding box aspect ratio (bw/bh) rarely equals scale_x/scale_y,
+    // so we must compute a uniform scale that fits the bbox inside the canvas
+    // and centre it — otherwise the outline is squished horizontally or vertically.
+    const bboxAspect = g._bboxAspect ?? (scale_x / scale_y) // fallback: fill canvas
+    let draw_w, draw_h
+    if (bboxAspect > scale_x / scale_y) {
+      // Car is wider than canvas ratio — constrain by width
+      draw_w = scale_x
+      draw_h = scale_x / bboxAspect
+    } else {
+      // Car is taller — constrain by height
+      draw_h = scale_y
+      draw_w = scale_y * bboxAspect
+    }
+    const draw_ox = off_x + (scale_x - draw_w) / 2
+    const draw_oy = off_y + (scale_y - draw_h) / 2
+
+    const toSVG = ([nx, ny]) => [draw_ox + nx * draw_w, draw_oy + ny * draw_h]
+
+    // JS smoothing pass on the 500pt rawPts — extra insurance against jitter
     const n = rawPts.length
     const smoothed = rawPts.map((_,i) => {
       const pts5 = [-2,-1,0,1,2].map(d=>rawPts[(i+d+n)%n])
       return [pts5.reduce((s,p)=>s+p[0],0)/5, pts5.reduce((s,p)=>s+p[1],0)/5]
     })
 
-    const mapped = smoothed.map(([nx,ny]) => [off_x+nx*scale_x, off_y+ny*scale_y])
-
     let pathD
-    if (crCps && crCps.length === mapped.length) {
-      // Catmull-Rom cubic bezier — smooth curves through every point
-      pathD = mapped.map((p,i) => {
+    if (crCps && crPts && crCps.length === crPts.length && crCps.length > 10) {
+      // Catmull-Rom cubic bezier path using 150-pt anchors + matching control points
+      pathD = crPts.map((pt, i) => {
+        const [px, py] = toSVG(pt)
         const cp  = crCps[i]
-        const c1x = (off_x+cp[0]*scale_x).toFixed(2)
-        const c1y = (off_y+cp[1]*scale_y).toFixed(2)
-        const c2x = (off_x+cp[2]*scale_x).toFixed(2)
-        const c2y = (off_y+cp[3]*scale_y).toFixed(2)
-        return i===0
-          ? `M${p[0].toFixed(2)},${p[1].toFixed(2)}`
-          : `C${c1x},${c1y} ${c2x},${c2y} ${p[0].toFixed(2)},${p[1].toFixed(2)}`
+        const [c1x, c1y] = toSVG([cp[0], cp[1]])
+        const [c2x, c2y] = toSVG([cp[2], cp[3]])
+        return i === 0
+          ? `M${px.toFixed(2)},${py.toFixed(2)}`
+          : `C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${px.toFixed(2)},${py.toFixed(2)}`
       }).join(' ') + ' Z'
     } else {
-      pathD = mapped.map((p,i)=>`${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ' Z'
+      // Polyline fallback using 500pt smoothed points
+      pathD = smoothed.map((p,i)=>{const [sx,sy]=toSVG(p);return`${i===0?'M':'L'}${sx.toFixed(1)},${sy.toFixed(1)}`}).join(' ') + ' Z'
     }
+
+    // Remap helpers for keypoints using same aspect-correct scale
+    const kpX = (nx) => draw_ox + nx * draw_w
+    const kpY = (ny) => draw_oy + ny * draw_h
 
     const gY = CH - 16
 
     // Cp colour bands
     const cpBands = Array.from({length:16},(_,i)=>{
       const f=(i+0.5)/16
-      return { x:off_x+i*(scale_x/16), w:scale_x/16+1, c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd)) }
+      return { x:draw_ox+i*(draw_w/16), w:draw_w/16+1, c:cpToRgb(cpAtPoint(f,0.7,f<0.15,g.Cd)) }
     })
 
-    // Wheels
+    // Wheels — use aspect-correct mapping
     const wheels = (keypoints?.wheels??[]).map(w=>({
-      cx: off_x+w.nx*scale_x, cy: off_y+w.ny*scale_y,
-      r:  Math.max(10, w.nr*scale_x),
+      cx: kpX(w.nx), cy: kpY(w.ny),
+      r:  Math.max(10, w.nr * draw_w),
     }))
 
-    // Roofline
+    // Roofline — aspect-correct
     const roofPts = keypoints?.roofline??[]
     const roofPath = roofPts.length > 1
-      ? roofPts.map((p,i)=>`${i===0?'M':'L'}${(off_x+p.nx*scale_x).toFixed(1)},${(off_y+p.ny*scale_y).toFixed(1)}`).join(' ')
+      ? roofPts.map((p,i)=>`${i===0?'M':'L'}${kpX(p.nx).toFixed(1)},${kpY(p.ny).toFixed(1)}`).join(' ')
       : null
 
     const method = g?._method ?? ''
@@ -243,8 +269,8 @@ function SideView({g,cpOn,showSep,showIso,traceProgress,traceAnimating}){
         {/* Separation line */}
         {showSep && keypoints?.bumpers?.rear && (
           <line
-            x1={off_x+keypoints.bumpers.rear.x*scale_x} y1={off_y}
-            x2={off_x+keypoints.bumpers.rear.x*scale_x} y2={gY}
+            x1={kpX(keypoints.bumpers.rear.x)} y1={draw_oy}
+            x2={kpX(keypoints.bumpers.rear.x)} y2={gY}
             stroke="rgba(255,100,80,0.5)" strokeWidth="1" strokeDasharray="3 2"/>
         )}
 
@@ -862,8 +888,20 @@ export default function Views2DPage() {
         _contourPts: contourResult.smooth_pts ?? contourResult.outline_pts,
         _smoothPts:  contourResult.smooth_pts,
         _catmullCps: contourResult.catmull_rom_cps,
+        _catmullPts: contourResult.catmull_rom_pts,
+        _bboxAspect: contourResult.bbox
+          ? contourResult.bbox.w / Math.max(1, contourResult.bbox.h)
+          : undefined,
         _keypoints:  contourResult.keypoints,
-      } : { ...cg, _contourPts: contourResult.outline_pts, _keypoints: contourResult.keypoints })
+      } : {
+        ...cg,
+        _contourPts: contourResult.outline_pts,
+        _catmullPts: contourResult.catmull_rom_pts,
+        _bboxAspect: contourResult.bbox
+          ? contourResult.bbox.w / Math.max(1, contourResult.bbox.h)
+          : undefined,
+        _keypoints: contourResult.keypoints,
+      })
     }
 
     setStage('done')
