@@ -373,37 +373,45 @@ export default function Views2DPage() {
     setTraceProgress({ pct: 5, msg: 'Waking up server…', pts: [] })
     setTraceAnimating(true); setStage('analyzing')
 
-    // Wake the Space — retry for up to 90s since HF free tier takes 30-60s to cold start
-    setTraceProgress({ pct: 5, msg: 'Waking up server…', pts: [] })
-    let awake = false
-    for (let i = 0; i < 18; i++) {
+    // Start job directly — retry on connection failure (handles HF cold start)
+    // Don't wait for /health first — just try the actual endpoint
+    let jobId = null
+    const MAX_WAKE_ATTEMPTS = 24  // 24 × 5s = 2 min max
+    for (let attempt = 0; attempt < MAX_WAKE_ATTEMPTS; attempt++) {
+      const waited = attempt * 5
+      if (attempt === 0) {
+        setTraceProgress({ pct: 5, msg: 'Connecting to server…', pts: [] })
+      } else {
+        setTraceProgress({ pct: 5, msg: `Waking server… ${waited}s`, pts: [] })
+      }
       try {
-        const r = await fetch(`${BACKEND}/health`, { method: 'GET', signal: AbortSignal.timeout(8000) })
-        if (r.ok) { awake = true; break }
-      } catch(e) {}
-      const waited = (i + 1) * 5
-      setTraceProgress({ pct: 5, msg: `Waking server… ${waited}s`, pts: [] })
-      await new Promise(r => setTimeout(r, 5000))
+        const fd = new FormData(); fd.append('file', file)
+        const res = await fetch(`${BACKEND}/analyze-contour/start`, {
+          method: 'POST', body: fd,
+          signal: AbortSignal.timeout(20000)
+        })
+        if (res.ok) {
+          const data = await res.json()
+          jobId = data.job_id
+          break
+        }
+        // Non-OK status — real error, don't retry
+        setError(`Server error ${res.status}`)
+        setTraceAnimating(false); setStage('idle'); return
+      } catch(e) {
+        // Connection error — server still waking, wait and retry
+        if (attempt >= MAX_WAKE_ATTEMPTS - 1) {
+          setError('Server not responding after 2 minutes. Visit huggingface.co/spaces/rutejtalati16/Aeronet and click Restart.')
+          setTraceAnimating(false); setStage('idle'); return
+        }
+        await new Promise(r => setTimeout(r, 5000))
+      }
     }
-    if (!awake) {
-      setError('Server is not responding. Go to huggingface.co/spaces/rutejtalati/aeronet and make sure it is Running, then try again.')
+    if (!jobId) {
+      setError('Failed to start analysis.')
       setTraceAnimating(false); setStage('idle'); return
     }
-
-    // Start the background job
-    setTraceProgress({ pct: 10, msg: 'Uploading image…', pts: [] })
-    let jobId
-    try {
-      const fd = new FormData(); fd.append('file', file)
-      const res = await fetch(`${BACKEND}/analyze-contour/start`, { method: 'POST', body: fd })
-      if (!res.ok) {
-        setError(`Server error ${res.status}`); setTraceAnimating(false); setStage('idle'); return
-      }
-      const data = await res.json()
-      jobId = data.job_id
-    } catch(e) {
-      setError(`Upload failed: ${e.message}`); setTraceAnimating(false); setStage('idle'); return
-    }
+    setTraceProgress({ pct: 12, msg: 'Job started ✓ — YOLO segmentation running…', pts: [] })
 
     // Poll for result every 3 seconds
     setTraceProgress({ pct: 20, msg: 'YOLO segmentation running…', pts: [] })
