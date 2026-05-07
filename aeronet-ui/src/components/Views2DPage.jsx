@@ -720,8 +720,7 @@ export default function Views2DPage() {
           const { done, value } = await reader.read()
           if (done) break
           buffer += dec.decode(value, { stream: true })
-          const lines = buffer.split('
-')
+          const lines = buffer.split('\n')
           buffer = lines.pop() // keep incomplete line
 
           for (const line of lines) {
