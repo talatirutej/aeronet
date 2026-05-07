@@ -428,11 +428,18 @@ export default function Views2DPage() {
       try {
         const fd = new FormData()
         fd.append('file', uploadFile)
-        const res = await fetch(`${BACKEND}/analyze-contour/start`, {
-          method: 'POST',
-          body: fd,
-          signal: AbortSignal.timeout(25000),
-        })
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 25000)
+        let res
+        try {
+          res = await fetch(`${BACKEND}/analyze-contour/start`, {
+            method: 'POST',
+            body: fd,
+            signal: controller.signal,
+          })
+        } finally {
+          clearTimeout(timer)
+        }
         if (res.ok) {
           const data = await res.json()
           jobId = data.job_id
@@ -471,9 +478,16 @@ export default function Views2DPage() {
 
       let poll
       try {
-        const res = await fetch(`${BACKEND}/analyze-contour/result/${jobId}`, {
-          signal: AbortSignal.timeout(10000),
-        })
+        const pc = new AbortController()
+        const pt = setTimeout(() => pc.abort(), 10000)
+        let res
+        try {
+          res = await fetch(`${BACKEND}/analyze-contour/result/${jobId}`, {
+            signal: pc.signal,
+          })
+        } finally {
+          clearTimeout(pt)
+        }
         if (!res.ok) {
           setError(`Poll error ${res.status}`)
           setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
