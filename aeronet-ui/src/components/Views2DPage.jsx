@@ -2,10 +2,36 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-// On HuggingFace Spaces the frontend and backend share the same origin,
-// so a relative path works without CORS issues.
-// Locally, set VITE_AERONET_BACKEND=http://127.0.0.1:8000 in your .env file.
-const BACKEND = (typeof __AERONET_BACKEND__ !== 'undefined' ? __AERONET_BACKEND__ : null) || import.meta.env?.VITE_AERONET_BACKEND || 'https://rutejtalati16-aeronet.hf.space'
+const BACKEND = (typeof __AERONET_BACKEND__ !== 'undefined' ? __AERONET_BACKEND__ : null)
+  || import.meta.env?.VITE_AERONET_BACKEND
+  || 'https://rutejtalati16-aeronet.hf.space'
+
+// ── Image compression ─────────────────────────────────────────────────────────
+// HuggingFace free-tier nginx drops multipart uploads > ~1MB (ERR_CONNECTION_RESET).
+// Compress to max 800px / JPEG 82% = ~100-200KB — plenty for YOLO detection.
+async function compressImage(file, maxWidth = 800, quality = 0.82) {
+  return new Promise((resolve) => {
+    const img = new window.Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const scale  = Math.min(1, maxWidth / img.width)
+      const w      = Math.round(img.width  * scale)
+      const h      = Math.round(img.height * scale)
+      const canvas = document.createElement('canvas')
+      canvas.width  = w
+      canvas.height = h
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+      canvas.toBlob(
+        (blob) => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })),
+        'image/jpeg',
+        quality
+      )
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.src = url
+  })
+}
 
 // ── Cp helpers ────────────────────────────────────────────────────────────────
 function cpAtPoint(t, hz, isFront) {
@@ -38,7 +64,7 @@ function SideView({ g, cpOn, showSep, traceProgress, traceAnimating }) {
   const off_x   = CPAD
   const off_y   = 20
 
-  // Loading / tracing animation
+  // Animation / loading state
   if (traceAnimating || (traceProgress && traceProgress.pct < 100 && traceProgress.pct > 0)) {
     const pts = traceProgress?.pts ?? []
     const pct = traceProgress?.pct ?? 0
@@ -88,7 +114,6 @@ function SideView({ g, cpOn, showSep, traceProgress, traceAnimating }) {
     const crPts  = g?._catmullPts
     const rawPts = g?._smoothPts ?? contourPts
 
-    // Preserve the car's bbox aspect ratio so outline isn't squished
     const bboxAspect = g._bboxAspect ?? (scale_x / scale_y)
     let draw_w, draw_h
     if (bboxAspect > scale_x / scale_y) {
@@ -331,7 +356,7 @@ export default function Views2DPage() {
   const acceptFile = useCallback((f) => {
     if (!f || !f.type.startsWith('image/')) return
     setFile(f); setPreview(URL.createObjectURL(f))
-    setGeo(null); setError(null); setTraceProgress(null)
+    setGeo(null); setError(null); setTraceProgress(null); setTraceAnimating(false)
     setStage('ready'); setUrlError('')
   }, [])
 
@@ -339,12 +364,19 @@ export default function Views2DPage() {
     const trimmed = url?.trim(); if (!trimmed) return
     setUrlError(''); setStage('analyzing'); setGeo(null)
     try {
-      const proxies = [`https://api.allorigins.win/raw?url=${encodeURIComponent(trimmed)}`,`https://corsproxy.io/?${encodeURIComponent(trimmed)}`]
+      const proxies = [
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(trimmed)}`,
+        `https://corsproxy.io/?${encodeURIComponent(trimmed)}`,
+      ]
       let blob = null
       if (!trimmed.startsWith('data:')) {
-        for (const proxy of proxies) { try{const r=await fetch(proxy);if(r.ok){blob=await r.blob();break}}catch{} }
+        for (const proxy of proxies) {
+          try { const r = await fetch(proxy); if (r.ok) { blob = await r.blob(); break } } catch {}
+        }
         if (!blob) throw new Error('Image blocked by CORS — try uploading the file directly')
-      } else { const res=await fetch(trimmed);if(!res.ok)throw new Error(`HTTP ${res.status}`);blob=await res.blob() }
+      } else {
+        const res = await fetch(trimmed); if (!res.ok) throw new Error(`HTTP ${res.status}`); blob = await res.blob()
+      }
       if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) throw new Error('URL does not point to an image')
       const f = new File([blob], trimmed.split('/').pop()?.split('?')[0]||'car.jpg', {type:blob.type})
       setFile(f); setPreview(URL.createObjectURL(blob)); setUrlInput(''); setUrlMode(false); setStage('ready')
@@ -364,57 +396,74 @@ export default function Views2DPage() {
     return () => window.removeEventListener('paste', handlePaste)
   }, [handlePaste])
 
-  // ── YOLO contour — background job + polling (bypasses HF 60s timeout) ──────
-  // 1. POST /analyze-contour/start  → get job_id immediately
-  // 2. GET  /analyze-contour/result/{job_id} every 3s until done
+  // ── Main analysis function ────────────────────────────────────────────────
   const run = async () => {
     if (!file) return
-    setError(null); setGeo(null)
-    setTraceProgress({ pct: 5, msg: 'Waking up server…', pts: [] })
-    setTraceAnimating(true); setStage('analyzing')
+    setError(null); setGeo(null); setTraceAnimating(false)
 
-    // Start job directly — retry on connection failure (handles HF cold start)
-    // Don't wait for /health first — just try the actual endpoint
+    // Compress image first — HF free-tier nginx drops uploads > ~1MB
+    // (shows as ERR_CONNECTION_RESET before server even sees the file)
+    setTraceProgress({ pct: 2, msg: 'Compressing image…', pts: [] })
+    setStage('analyzing')
+    let uploadFile
+    try {
+      uploadFile = await compressImage(file)
+      console.log(`[StatCFD] Compressed: ${(file.size/1024).toFixed(0)}KB → ${(uploadFile.size/1024).toFixed(0)}KB`)
+    } catch(e) {
+      uploadFile = file // fallback to original if canvas fails
+    }
+
+    // Start job — retry on connection failure (handles HF cold start / nginx blips)
     let jobId = null
-    const MAX_WAKE_ATTEMPTS = 24  // 24 × 5s = 2 min max
-    for (let attempt = 0; attempt < MAX_WAKE_ATTEMPTS; attempt++) {
+    const MAX_ATTEMPTS = 8   // 8 × 5s = 40s max wait — enough for a cold start
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const waited = attempt * 5
-      if (attempt === 0) {
-        setTraceProgress({ pct: 5, msg: 'Connecting to server…', pts: [] })
-      } else {
-        setTraceProgress({ pct: 5, msg: `Waking server… ${waited}s`, pts: [] })
-      }
+      setTraceProgress({
+        pct: 5,
+        msg: attempt === 0
+          ? 'Connecting to server…'
+          : `Retrying… (${waited}s elapsed)`,
+        pts: [],
+      })
       try {
-        const fd = new FormData(); fd.append('file', file)
+        const fd = new FormData()
+        fd.append('file', uploadFile)
         const res = await fetch(`${BACKEND}/analyze-contour/start`, {
-          method: 'POST', body: fd,
-          signal: AbortSignal.timeout(20000)
+          method: 'POST',
+          body: fd,
+          signal: AbortSignal.timeout(25000),
         })
         if (res.ok) {
           const data = await res.json()
           jobId = data.job_id
           break
         }
-        // Non-OK status — real error, don't retry
-        setError(`Server error ${res.status}`)
-        setTraceAnimating(false); setStage('idle'); return
+        // Server returned a real HTTP error — no point retrying
+        const text = await res.text().catch(() => '')
+        setError(`Server error ${res.status}${text ? ': ' + text.slice(0,120) : ''}`)
+        setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
       } catch(e) {
-        // Connection error — server still waking, wait and retry
-        if (attempt >= MAX_WAKE_ATTEMPTS - 1) {
-          setError('Server not responding after 2 minutes. Visit huggingface.co/spaces/rutejtalati16/Aeronet and click Restart.')
-          setTraceAnimating(false); setStage('idle'); return
+        console.warn(`[StatCFD] Attempt ${attempt+1} failed:`, e.message)
+        if (attempt >= MAX_ATTEMPTS - 1) {
+          setError(
+            `Could not reach the server after ${MAX_ATTEMPTS * 5}s. ` +
+            `Check https://huggingface.co/spaces/rutejtalati16/Aeronet — it may need a manual restart.`
+          )
+          setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
         }
         await new Promise(r => setTimeout(r, 5000))
       }
     }
-    if (!jobId) {
-      setError('Failed to start analysis.')
-      setTraceAnimating(false); setStage('idle'); return
-    }
-    setTraceProgress({ pct: 12, msg: 'Job started ✓ — YOLO segmentation running…', pts: [] })
 
-    // Poll for result every 3 seconds
-    setTraceProgress({ pct: 20, msg: 'YOLO segmentation running…', pts: [] })
+    if (!jobId) {
+      setError('Failed to start analysis job.')
+      setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
+    }
+
+    // Job accepted — now show the animation dot and poll for result
+    setTraceAnimating(true)
+    setTraceProgress({ pct: 15, msg: 'Job queued — YOLO loading…', pts: [] })
+
     const startTime = Date.now()
     while (true) {
       await new Promise(r => setTimeout(r, 3000))
@@ -422,37 +471,42 @@ export default function Views2DPage() {
 
       let poll
       try {
-        const res = await fetch(`${BACKEND}/analyze-contour/result/${jobId}`)
+        const res = await fetch(`${BACKEND}/analyze-contour/result/${jobId}`, {
+          signal: AbortSignal.timeout(10000),
+        })
         if (!res.ok) {
-          setError(`Poll error ${res.status}`); setTraceAnimating(false); setStage('idle'); return
+          setError(`Poll error ${res.status}`)
+          setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
         }
         poll = await res.json()
       } catch(e) {
-        setError(`Connection lost: ${e.message}`); setTraceAnimating(false); setStage('idle'); return
+        setError(`Connection lost while polling: ${e.message}`)
+        setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
       }
 
       if (poll.status === 'error') {
-        setError(poll.error ?? 'Analysis failed'); setTraceAnimating(false); setStage('idle'); return
+        setError(poll.error ?? 'Analysis failed on server')
+        setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
       }
 
       if (poll.status === 'running' || poll.status === 'pending') {
-        // Update progress message with elapsed time so user knows it's alive
-        const pct = Math.min(85, 20 + elapsed)
-        setTraceProgress({ pct, msg: `YOLO running… ${elapsed}s`, pts: [] })
+        const pct = Math.min(88, 15 + elapsed * 1.2)
+        setTraceProgress({ pct: Math.round(pct), msg: `YOLO+SAM2 running… ${elapsed}s`, pts: [] })
         continue
       }
 
       if (poll.status === 'done') {
         const result = poll.result
         if (!result?.geometry) {
-          setError('No vehicle outline found. Try a clear side-on photo against a plain background.')
-          setTraceAnimating(false); setStage('idle'); return
+          setError('No vehicle outline found. Use a clear side-on photo with plain background.')
+          setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
         }
 
-        // Animate the outline tracing itself
+        // Animate the outline tracing over 1.5s
         const allPts = result.smooth_pts ?? []
         if (allPts.length > 0) {
-          const steps = 30, delay = 1500 / steps
+          const steps = 30
+          const delay = 1500 / steps
           setTraceAnimating(true)
           for (let step = 0; step <= steps; step++) {
             setTimeout(() => {
@@ -463,13 +517,18 @@ export default function Views2DPage() {
                 pts: allPts.slice(0, visible),
                 done: step === steps,
               })
-              if (step === steps) setTraceAnimating(false)
+              if (step === steps) {
+                setTraceAnimating(false)
+                setTraceProgress(null)
+              }
             }, step * delay)
           }
         } else {
           setTraceAnimating(false)
+          setTraceProgress(null)
         }
 
+        // Set geo immediately so outline renders as soon as animation ends
         const cg = result.geometry
         setGeo({
           aspectRatio: cg.aspectRatio ?? 2.0,
@@ -501,7 +560,7 @@ export default function Views2DPage() {
     const svg = svgRef.current?.querySelector('svg'); if (!svg) return
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([svg.outerHTML], {type:'image/svg+xml'}))
-    a.download = `aeronet_${activeView}.svg`; a.click()
+    a.download = `statcfd_${activeView}.svg`; a.click()
   }
 
   const isRunning = stage === 'analyzing'
@@ -522,7 +581,8 @@ export default function Views2DPage() {
 
           {/* Drop zone */}
           <div
-            onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)}
+            onDragOver={e=>{e.preventDefault();setDragOver(true)}}
+            onDragLeave={()=>setDragOver(false)}
             onDrop={e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files?.[0];if(f){acceptFile(f);return}const url=e.dataTransfer.getData('text/uri-list')||e.dataTransfer.getData('text/plain');if(url&&/^https?:\/\//i.test(url))acceptUrl(url)}}
             onClick={()=>fileRef.current?.click()}
             style={{borderRadius:12,border:`0.5px dashed ${dragOver?'var(--blue)':'rgba(255,255,255,0.12)'}`,background:dragOver?'rgba(10,132,255,0.06)':'var(--bg1)',cursor:'pointer',overflow:'hidden',minHeight:130,transition:'border-color 0.15s, background 0.15s',marginBottom:10,display:'flex',flexDirection:'column'}}>
@@ -560,7 +620,8 @@ export default function Views2DPage() {
                 {urlError && <span style={{fontSize:10,color:'var(--red)'}}>{urlError}</span>}
               </div>
             ) : (
-              <button onClick={()=>setUrlMode(true)} style={{width:'100%',height:32,borderRadius:8,border:'0.5px solid rgba(255,255,255,0.08)',background:'transparent',cursor:'pointer',color:'var(--text-quaternary)',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'all 0.12s'}}
+              <button onClick={()=>setUrlMode(true)}
+                style={{width:'100%',height:32,borderRadius:8,border:'0.5px solid rgba(255,255,255,0.08)',background:'transparent',cursor:'pointer',color:'var(--text-quaternary)',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'all 0.12s'}}
                 onMouseEnter={e=>{e.currentTarget.style.background='var(--bg2)';e.currentTarget.style.color='var(--text-tertiary)'}}
                 onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--text-quaternary)'}}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -576,7 +637,8 @@ export default function Views2DPage() {
             </div>
           )}
 
-          <button onClick={run} disabled={!file||isRunning} style={{width:'100%',height:38,borderRadius:10,border:'none',marginBottom:14,background:!file||isRunning?'rgba(255,255,255,0.05)':'var(--blue)',color:!file||isRunning?'rgba(255,255,255,0.3)':'#fff',fontSize:13,fontWeight:600,cursor:!file||isRunning?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'opacity 0.15s'}}>
+          <button onClick={run} disabled={!file||isRunning}
+            style={{width:'100%',height:38,borderRadius:10,border:'none',marginBottom:14,background:!file||isRunning?'rgba(255,255,255,0.05)':'var(--blue)',color:!file||isRunning?'rgba(255,255,255,0.3)':'#fff',fontSize:13,fontWeight:600,cursor:!file||isRunning?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'opacity 0.15s'}}>
             {isRunning ? (
               <><svg className="anim-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5"><path d="M12 3a9 9 0 019 9"/></svg>Analysing…</>
             ) : (
@@ -618,7 +680,8 @@ export default function Views2DPage() {
         <div style={{display:'flex',alignItems:'center',gap:6,padding:'7px 12px',borderBottom:'0.5px solid var(--sep)',flexShrink:0,background:'rgba(0,0,0,0.4)',flexWrap:'wrap'}}>
           <div style={{display:'flex',gap:2}}>
             {VIEWS.map(v=>(
-              <button key={v.id} onClick={()=>setActiveView(v.id)} style={{padding:'4px 12px',borderRadius:7,border:'none',cursor:'pointer',background:activeView===v.id?'rgba(10,132,255,0.18)':'transparent',color:activeView===v.id?'var(--blue)':'rgba(255,255,255,0.38)',fontSize:12,fontWeight:activeView===v.id?600:400,transition:'background 0.12s',fontFamily:"'IBM Plex Sans'"}}>{v.label}</button>
+              <button key={v.id} onClick={()=>setActiveView(v.id)}
+                style={{padding:'4px 12px',borderRadius:7,border:'none',cursor:'pointer',background:activeView===v.id?'rgba(10,132,255,0.18)':'transparent',color:activeView===v.id?'var(--blue)':'rgba(255,255,255,0.38)',fontSize:12,fontWeight:activeView===v.id?600:400,transition:'background 0.12s',fontFamily:"'IBM Plex Sans'"}}>{v.label}</button>
             ))}
           </div>
           <div style={{width:0.5,height:14,background:'var(--sep)'}}/>
@@ -640,7 +703,8 @@ export default function Views2DPage() {
               <span style={{fontSize:11,fontWeight:600,color:'var(--blue)',fontFamily:"'IBM Plex Mono'",width:28,textAlign:'right'}}>{yawAngle>0?'+':''}{yawAngle}°</span>
             </div>
           )}
-          <button onClick={exportSVG} style={{marginLeft:'auto',padding:'4px 12px',borderRadius:7,border:'0.5px solid var(--sep)',background:'transparent',color:'var(--text-tertiary)',fontSize:11,cursor:'pointer',transition:'all 0.12s'}}
+          <button onClick={exportSVG}
+            style={{marginLeft:'auto',padding:'4px 12px',borderRadius:7,border:'0.5px solid var(--sep)',background:'transparent',color:'var(--text-tertiary)',fontSize:11,cursor:'pointer',transition:'all 0.12s'}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(10,132,255,0.4)';e.currentTarget.style.color='var(--blue)'}}
             onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--sep)';e.currentTarget.style.color='rgba(255,255,255,0.38)'}}>
             Export SVG
@@ -679,7 +743,8 @@ export default function Views2DPage() {
               </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,flexShrink:0}}>
                 {VIEWS.map(v=>(
-                  <button key={v.id} onClick={()=>setActiveView(v.id)} style={{borderRadius:10,border:`0.5px solid ${activeView===v.id?'rgba(10,132,255,0.45)':'rgba(255,255,255,0.06)'}`,background:activeView===v.id?'rgba(10,132,255,0.1)':'var(--bg1)',overflow:'hidden',cursor:'pointer',padding:4,transition:'border-color 0.15s'}}>
+                  <button key={v.id} onClick={()=>setActiveView(v.id)}
+                    style={{borderRadius:10,border:`0.5px solid ${activeView===v.id?'rgba(10,132,255,0.45)':'rgba(255,255,255,0.06)'}`,background:activeView===v.id?'rgba(10,132,255,0.1)':'var(--bg1)',overflow:'hidden',cursor:'pointer',padding:4,transition:'border-color 0.15s'}}>
                     <div style={{width:'100%',aspectRatio:'5/3',pointerEvents:'none'}}>
                       {v.id==='side'  && <SideView  g={geo} cpOn={cpOn} showSep={false}/>}
                       {v.id==='front' && <FrontView g={geo} cpOn={cpOn}/>}
