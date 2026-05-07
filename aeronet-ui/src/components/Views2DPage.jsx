@@ -127,25 +127,12 @@ function SideView({ g, cpOn, showSep, traceProgress, traceAnimating }) {
     const kpX = nx => draw_ox + nx * draw_w
     const kpY = ny => draw_oy + ny * draw_h
 
-    const n = rawPts.length
-    const smoothed = rawPts.map((_,i) => {
-      const pts5 = [-2,-1,0,1,2].map(d=>rawPts[(i+d+n)%n])
-      return [pts5.reduce((s,p)=>s+p[0],0)/5, pts5.reduce((s,p)=>s+p[1],0)/5]
-    })
-
-    let pathD
-    if (crCps && crPts && crCps.length === crPts.length && crCps.length > 10) {
-      pathD = crPts.map((pt, i) => {
-        const [px, py] = toSVG(pt)
-        const cp = crCps[i]
-        const [c1x,c1y] = toSVG([cp[0],cp[1]])
-        const [c2x,c2y] = toSVG([cp[2],cp[3]])
-        return i===0 ? `M${px.toFixed(2)},${py.toFixed(2)}`
-          : `C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${px.toFixed(2)},${py.toFixed(2)}`
-      }).join(' ') + ' Z'
-    } else {
-      pathD = smoothed.map((p,i)=>{const[sx,sy]=toSVG(p);return`${i===0?'M':'L'}${sx.toFixed(1)},${sy.toFixed(1)}`}).join(' ') + ' Z'
-    }
+    // Raw pixel-accurate outline — no smoothing, no Catmull-Rom
+    // Every point is a real boundary pixel from YOLO+SAM2 mask
+    const pathD = rawPts.map((p, i) => {
+      const [sx, sy] = toSVG(p)
+      return `${i === 0 ? 'M' : 'L'}${sx.toFixed(2)},${sy.toFixed(2)}`
+    }).join(' ') + ' Z'
 
     const gY = CH - 16
     const cpBands = Array.from({length:16},(_,i)=>{
@@ -179,7 +166,7 @@ function SideView({ g, cpOn, showSep, traceProgress, traceAnimating }) {
           </g>
         )}
         <path d={pathD} fill={cpOn?'rgba(2,8,14,0.15)':'rgba(8,18,28,0.5)'}
-          stroke="rgba(10,132,255,0.85)" strokeWidth="1.6" fillRule="nonzero" filter="url(#glow)"/>
+          stroke="rgba(10,132,255,1.0)" strokeWidth="1.0" fillRule="nonzero"/>
         {roofPath && (
           <path d={roofPath} fill="none" stroke="rgba(100,200,255,0.2)" strokeWidth="1" strokeDasharray="5 4"/>
         )}
@@ -428,11 +415,18 @@ export default function Views2DPage() {
       try {
         const fd = new FormData()
         fd.append('file', uploadFile)
-        const res = await fetch(`${BACKEND}/analyze-contour/start`, {
-          method: 'POST',
-          body: fd,
-          signal: AbortSignal.timeout(25000),
-        })
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 25000)
+        let res
+        try {
+          res = await fetch(`/api/proxy?path=analyze-contour/start`, {
+            method: 'POST',
+            body: fd,
+            signal: controller.signal,
+          })
+        } finally {
+          clearTimeout(timer)
+        }
         if (res.ok) {
           const data = await res.json()
           jobId = data.job_id
@@ -471,9 +465,16 @@ export default function Views2DPage() {
 
       let poll
       try {
-        const res = await fetch(`${BACKEND}/analyze-contour/result/${jobId}`, {
-          signal: AbortSignal.timeout(10000),
-        })
+        const pc = new AbortController()
+        const pt = setTimeout(() => pc.abort(), 10000)
+        let res
+        try {
+          res = await fetch(`/api/proxy?path=analyze-contour%2Fresult%2F${jobId}`, {
+            signal: pc.signal,
+          })
+        } finally {
+          clearTimeout(pt)
+        }
         if (!res.ok) {
           setError(`Poll error ${res.status}`)
           setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
@@ -505,7 +506,7 @@ export default function Views2DPage() {
         // Animate the outline tracing over 1.5s
         const allPts = result.smooth_pts ?? []
         if (allPts.length > 0) {
-          const steps = 30
+          const steps = 60
           const delay = 1500 / steps
           setTraceAnimating(true)
           for (let step = 0; step <= steps; step++) {
