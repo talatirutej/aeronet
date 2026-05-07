@@ -111,7 +111,9 @@ function SideView({ g, showSep, traceProgress, traceAnimating }) {
     const gY = CH - 16
     const wheels = (keypoints?.wheels??[]).map(w=>({
       cx: kpX(w.nx), cy: kpY(w.ny),
-      r: Math.max(draw_h * 0.08, Math.min(draw_h * 0.22, w.nr * draw_w)),
+      // Use draw_h as radius reference — stable across all aspect ratios
+      // nr is wheel_radius/bbox_width, convert to height-relative for supercars
+      r: Math.max(draw_h * 0.10, Math.min(draw_h * 0.30, w.nr * draw_w * 0.7)),
     }))
     const roofPts  = keypoints?.roofline ?? []
     const roofPath = roofPts.length > 1
