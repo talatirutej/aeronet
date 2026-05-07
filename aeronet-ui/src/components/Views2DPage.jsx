@@ -29,7 +29,7 @@ async function compressImage(file, maxWidth = 800, quality = 0.82) {
 }
 
 // ── SideView ──────────────────────────────────────────────────────────────────
-function SideView({ g, showSep, traceProgress, traceAnimating }) {
+function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true }) {
   const CW = 620, CH = 260, CPAD = 28
   const scale_x = CW - CPAD * 2
   const scale_y = CH - 40
@@ -142,16 +142,75 @@ function SideView({ g, showSep, traceProgress, traceAnimating }) {
             x2={kpX(keypoints.bumpers.rear.x)} y2={gY}
             stroke="rgba(255,100,80,0.4)" strokeWidth="1" strokeDasharray="3 2"/>
         )}
-        {/* Wheels — two concentric circles, outline only, no fill, no animation */}
+        {/* Wheels */}
         {wheels.map((w,i)=>(
           <g key={i}>
             <circle cx={w.cx} cy={w.cy} r={w.r}    fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth="1.5"/>
             <circle cx={w.cx} cy={w.cy} r={w.r*0.5} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="0.8"/>
           </g>
         ))}
+
+        {/* Panel lines (Mode B/C) */}
+        {showPanels && g?._panels?.lines?.map((l,i)=>{
+          const x1s = draw_ox + l.x1 * draw_w, y1s = draw_oy + l.y1 * draw_h
+          const x2s = draw_ox + l.x2 * draw_w, y2s = draw_oy + l.y2 * draw_h
+          const isPillar = l.type === 'pillar'
+          return (
+            <line key={i} x1={x1s.toFixed(1)} y1={y1s.toFixed(1)}
+              x2={x2s.toFixed(1)} y2={y2s.toFixed(1)}
+              stroke={isPillar ? 'rgba(100,200,255,0.35)' : 'rgba(10,132,255,0.28)'}
+              strokeWidth={isPillar ? '0.8' : '0.6'}
+              strokeDasharray={isPillar ? '3 3' : '4 4'}/>
+          )
+        })}
+
+        {/* Region markers (Mode B/C) */}
+        {showPanels && g?._panels?.markers?.map((m,i)=>{
+          const mx = draw_ox + m.nx * draw_w
+          const my = draw_oy + m.ny * draw_h
+          const isTop = m.ny < 0.35
+          const labelY = isTop ? my - 8 : my + 16
+          return (
+            <g key={i}>
+              <circle cx={mx.toFixed(1)} cy={my.toFixed(1)} r={3}
+                fill="rgba(10,132,255,0.9)" stroke="rgba(10,132,255,0.4)" strokeWidth="0.5"/>
+              <text x={mx.toFixed(1)} y={labelY.toFixed(1)}
+                textAnchor="middle" fill="rgba(10,132,255,0.65)" fontSize="7"
+                fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.05em">
+                {m.label}
+              </text>
+            </g>
+          )
+        })}
+
+        {/* ΔCd region annotations (Mode C) */}
+        {showPanels && g?._aero?.region_cd && Object.entries(g._aero.region_cd).map(([region, val], i) => {
+          // Position annotations along the car profile
+          const positions = {
+            'Front Face':  [0.08, 0.45], 'Underbody': [0.50, 0.92],
+            'Wheels':      [0.25, 0.80], 'Rear Wake': [0.92, 0.45],
+            'Greenhouse':  [0.50, 0.25],
+          }
+          const pos = positions[region]
+          if (!pos) return null
+          const ax = draw_ox + pos[0] * draw_w
+          const ay = draw_oy + pos[1] * draw_h
+          return (
+            <g key={i}>
+              <rect x={(ax-22).toFixed(1)} y={(ay-9).toFixed(1)} width="44" height="16" rx="4"
+                fill="rgba(0,0,0,0.75)" stroke="rgba(10,132,255,0.3)" strokeWidth="0.5"/>
+              <text x={ax.toFixed(1)} y={(ay+3).toFixed(1)}
+                textAnchor="middle" fill="rgba(255,200,50,0.9)" fontSize="7"
+                fontFamily="'IBM Plex Mono',monospace">
+                {region} {(val*100).toFixed(1)}%
+              </text>
+            </g>
+          )
+        })}
+
         <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.12)"
           fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
-          SIDE · {contourPts.length}pts · {method}
+          SIDE · {contourPts.length}pts · {method}{g?._panels ? ' · panels' : ''}{g?._aero ? ' · aero' : ''}
         </text>
       </svg>
     )
@@ -282,6 +341,7 @@ export default function Views2DPage() {
   const [activeView,     setActiveView]     = useState('side')
   const [showSep,        setShowSep]        = useState(true)
   const [showGE,         setShowGE]         = useState(false)
+  const [analysisMode,   setAnalysisMode]   = useState('A')  // A=Silhouette, B=Panels, C=Full Aero
   const [yawAngle,       setYawAngle]       = useState(0)
   const [urlInput,       setUrlInput]       = useState('')
   const [urlError,       setUrlError]       = useState('')
@@ -356,6 +416,7 @@ export default function Views2DPage() {
       try {
         const fd = new FormData()
         fd.append('file', uploadFile)
+        fd.append('mode', analysisMode)
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), 25000)
         let res
@@ -460,6 +521,8 @@ export default function Views2DPage() {
           _bboxAspect: result.bbox ? result.bbox.w / Math.max(1, result.bbox.h) : undefined,
           _keypoints:  result.keypoints,
           _method:     result.method,
+          _panels:     result.panels ?? null,
+          _aero:       result.aero ?? null,
         })
         setStage('done')
         return
@@ -539,6 +602,30 @@ export default function Views2DPage() {
               <span style={{fontSize:10,fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)',marginLeft:8,flexShrink:0}}>{(file.size/1024).toFixed(0)} KB</span>
             </div>
           )}
+          {/* Mode selector */}
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:10,color:'var(--text-quaternary)',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.08em',fontFamily:"'IBM Plex Mono'"}}>Analysis Mode</div>
+            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+              {[
+                {id:'A', label:'Silhouette', desc:'~30s · outline only', icon:'◎'},
+                {id:'B', label:'Panels',     desc:'~90s · lines + markers', icon:'⊞'},
+                {id:'C', label:'Full Aero',  desc:'~150s · panels + ΔCd', icon:'⬡'},
+              ].map(m=>(
+                <button key={m.id} onClick={()=>setAnalysisMode(m.id)}
+                  style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,
+                    border:`0.5px solid ${analysisMode===m.id?'rgba(10,132,255,0.6)':'rgba(255,255,255,0.08)'}`,
+                    background:analysisMode===m.id?'rgba(10,132,255,0.12)':'transparent',
+                    cursor:'pointer',textAlign:'left',transition:'all 0.12s'}}>
+                  <span style={{fontSize:14,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.3)'}}>{m.icon}</span>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.6)'}}>{m.label}</div>
+                    <div style={{fontSize:9,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{m.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <button onClick={run} disabled={!file||isRunning}
             style={{width:'100%',height:38,borderRadius:10,border:'none',marginBottom:14,background:!file||isRunning?'rgba(255,255,255,0.05)':'var(--blue)',color:!file||isRunning?'rgba(255,255,255,0.3)':'#fff',fontSize:13,fontWeight:600,cursor:!file||isRunning?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'opacity 0.15s'}}>
             {isRunning
@@ -641,7 +728,7 @@ export default function Views2DPage() {
                   <button key={v.id} onClick={()=>setActiveView(v.id)}
                     style={{borderRadius:10,border:`0.5px solid ${activeView===v.id?'rgba(10,132,255,0.45)':'rgba(255,255,255,0.06)'}`,background:activeView===v.id?'rgba(10,132,255,0.1)':'var(--bg1)',overflow:'hidden',cursor:'pointer',padding:4,transition:'border-color 0.15s'}}>
                     <div style={{width:'100%',aspectRatio:'5/3',pointerEvents:'none'}}>
-                      {v.id==='side'  && <SideView  g={geo} showSep={false}/>}
+                      {v.id==='side'  && <SideView  g={geo} showSep={false} showPanels={false}/>}
                       {v.id==='front' && <FrontView g={geo}/>}
                       {v.id==='top'   && <TopView   g={geo} yawAngle={0}/>}
                       {v.id==='under' && <UnderView g={geo} showGroundEffect={false}/>}
@@ -700,6 +787,58 @@ export default function Views2DPage() {
                 <div style={{height:'100%',borderRadius:2,width:`${(geo.confidence??0)*100}%`,background:(geo.confidence??0)>0.7?'var(--green)':(geo.confidence??0)>0.4?'var(--orange)':'var(--red)',transition:'width 0.5s'}}/>
               </div>
             </div>
+
+            {/* Mode C: Aero analysis panel */}
+            {geo?._aero && (
+              <>
+                <SL n="06" t="Aero ID"/>
+                <div style={{...card,padding:'10px 12px',marginBottom:14}}>
+                  <div style={{fontSize:12,fontWeight:600,color:'var(--blue)',marginBottom:6,fontFamily:"'IBM Plex Mono'"}}>{geo._aero.car_id}</div>
+                  {[
+                    ['Cd est.',    geo._aero.estimated_cd?.toFixed(3) ?? '—'],
+                    ['Body',      geo._aero.body_type ?? '—'],
+                    ['Spoiler',   geo._aero.features?.spoiler ?? '—'],
+                    ['Diffuser',  geo._aero.features?.diffuser ?? '—'],
+                    ['Grille',    geo._aero.features?.grille ?? '—'],
+                  ].map(([k,v])=>(
+                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'2px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'",textTransform:'capitalize'}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <SL n="07" t="Drag Regions"/>
+                <div style={{...card,padding:'10px 12px',marginBottom:14}}>
+                  {Object.entries(geo._aero.region_cd ?? {}).map(([region, val])=>(
+                    <div key={region} style={{marginBottom:6}}>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
+                        <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{region}</span>
+                        <span style={{color:'var(--blue)',fontFamily:"'IBM Plex Mono'"}}>{(val*100).toFixed(1)}%</span>
+                      </div>
+                      <div style={{height:3,borderRadius:2,background:'var(--bg3)'}}>
+                        <div style={{height:'100%',borderRadius:2,background:'rgba(10,132,255,0.6)',
+                          width:`${Math.min(100,(val/(geo._aero.estimated_cd??0.3))*100)}%`}}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {geo._aero.improvements?.length > 0 && (
+                  <>
+                    <SL n="08" t="Improvements"/>
+                    <div style={{...card,padding:'10px 12px'}}>
+                      {geo._aero.improvements.map((imp,i)=>(
+                        <div key={i} style={{fontSize:10,color:'var(--text-secondary)',padding:'3px 0',
+                          borderBottom:'0.5px solid rgba(255,255,255,0.04)',lineHeight:1.5}}>
+                          {i+1}. {imp}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </>
         ) : (
           <div style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'40px 0',textAlign:'center'}}>
