@@ -585,29 +585,42 @@ export default function Views2DPage() {
           }
         } else { setTraceAnimating(false); setTraceProgress(null) }
         const cg=result.geometry
+        // Use display_outline_pts (window=5 smooth) for rendering — smoother than technical (window=3)
+        const displayPts = result.display_outline_pts ?? result.smooth_pts ?? result.outline_pts
+        const techPts    = result.technical_outline_pts ?? result.outline_pts ?? displayPts
         setGeo({
-          aspectRatio:cg.aspectRatio??2.0,hoodRatio:cg.hoodRatio??0.28,
-          cabinRatio:cg.cabinRatio??0.44,bootRatio:cg.bootRatio??0.28,
-          wsAngleDeg:cg.wsAngleDeg??58,rearDrop:cg.rearDrop??0.15,
-          cabinH:cg.cabinH??0.58,rideH:cg.rideH??0.08,
-          w1:cg.w1??0.22,w2:cg.w2??0.76,confidence:cg.confidence??0.97,
-          _contourPts: result.technical_outline_pts ?? result.outline_pts,
-          _smoothPts:  result.display_outline_pts ?? result.smooth_pts,
-          _catmullCps: null,
-          _catmullPts: result.display_outline_pts ?? result.smooth_pts,
-          _bboxAspect: result.bbox?result.bbox.w/Math.max(1,result.bbox.h):undefined,
-          _keypoints:  result.keypoints,_method:result.method,
-          _panels:     result.panels??null,_aero:result.aero??null,
+          // Geometry ratios
+          aspectRatio:      cg.aspectRatio??2.0,
+          hoodRatio:        cg.hoodRatio??0.28,
+          cabinRatio:       cg.cabinRatio??0.44,
+          bootRatio:        cg.bootRatio??0.28,
+          wsAngleDeg:       cg.wsAngleDeg??58,
+          rearDrop:         cg.rearDrop??0.15,
+          cabinH:           cg.cabinH??0.58,
+          rideH:            cg.rideH??0.08,
+          w1:               cg.w1??0.22,
+          w2:               cg.w2??0.76,
+          confidence:       cg.confidence??0.97,
+          // CFD values — single source of truth, no duplicates
+          Cd:               cg.Cd??0,
+          CdA:              cg.CdA??0,
+          ahmedRegime:      cg.ahmedRegime??'intermediate',
+          rearSlantAngleDeg:cg.rearSlantAngleDeg??20,
+          wheelbaseNorm:    cg.wheelbaseNorm??0,
+          separationPointX: cg.separationPointX??0.75,
+          // Outline pts — display (window=5) for rendering, technical kept for CFD export
+          _contourPts:  displayPts,
+          _techPts:     techPts,
+          _smoothPts:   displayPts,
+          _catmullCps:  null,
+          _catmullPts:  displayPts,
+          _bboxAspect:  result.bbox ? result.bbox.w/Math.max(1,result.bbox.h) : undefined,
+          _keypoints:   result.keypoints,
+          _method:      result.method,
+          _panels:      result.panels??null,
+          _aero:        result.aero??null,
           _quality:     result.quality??null,
           _engineering: result.engineering??null,
-          ahmedRegime:        result.geometry?.ahmedRegime,
-          rearSlantAngleDeg:  result.geometry?.rearSlantAngleDeg,
-          CdA:                result.geometry?.CdA,
-          rearSlantAngleDeg:cg.rearSlantAngleDeg??20,
-          ahmedRegime:cg.ahmedRegime??'intermediate',
-          Cd:cg.Cd??0, CdA:cg.CdA??0,
-          wheelbaseNorm:cg.wheelbaseNorm??0,
-          separationPointX:cg.separationPointX??0.75,
         })
         setStage('done'); return
       }
