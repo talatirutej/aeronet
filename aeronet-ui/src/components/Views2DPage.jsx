@@ -9,19 +9,16 @@ async function prepareImage(file, maxWidth = 1440, quality = 0.93) {
     const url = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(url)
-      // Upscale small images, downscale huge ones
-      // For technical outline accuracy we need at least 800px wide
       const minWidth = 900
       const effectiveMax = Math.max(maxWidth, minWidth)
       const scale = img.width < minWidth
-        ? Math.min(3.0, effectiveMax / img.width)  // upscale tiny images
-        : Math.min(1.0, maxWidth / img.width)       // downscale large ones
+        ? Math.min(3.0, effectiveMax / img.width)
+        : Math.min(1.0, maxWidth / img.width)
       const w = Math.round(img.width  * scale)
       const h = Math.round(img.height * scale)
       const canvas = document.createElement('canvas')
       canvas.width = w; canvas.height = h
       const ctx = canvas.getContext('2d')
-      // White background for transparent PNGs
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, w, h)
       ctx.imageSmoothingEnabled  = true
@@ -40,7 +37,7 @@ async function prepareImage(file, maxWidth = 1440, quality = 0.93) {
 // ── URL fetcher with multi-proxy fallback ─────────────────────────────────────
 async function fetchImageFromUrl(url) {
   const proxies = [
-    u => u,  // try direct first
+    u => u,
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
     u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
     u => `https://proxy.cors.sh/${u}`,
@@ -98,7 +95,6 @@ function PipelineLoader({ pct, msg, mode }) {
           <text x={50} y={60} textAnchor="middle" fill="rgba(10,132,255,0.7)" fontSize={9}
             fontFamily="'IBM Plex Mono',monospace">%</text>
         </svg>
-        {/* Pulsing ring */}
         <div style={{
           position:'absolute',inset:-4,borderRadius:'50%',
           border:'1px solid rgba(10,132,255,0.3)',
@@ -183,9 +179,11 @@ function PipelineLoader({ pct, msg, mode }) {
 
 // ── SideView ──────────────────────────────────────────────────────────────────
 function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, mode='A' }) {
-  const CW = 620, CH = 260, CPAD = 28
-  const scale_x = CW - CPAD*2, scale_y = CH - 40
-  const off_x = CPAD, off_y = 20
+  // ── FIX: taller canvas (310 vs 260) + larger bottom reserve (70 vs 40)
+  // This gives points near ny=1.0 actual SVG space instead of being clipped.
+  const CW = 620, CH = 310, CPAD = 28
+  const scale_x = CW - CPAD*2, scale_y = CH - 70   // 70px bottom reserve
+  const off_x = CPAD, off_y = 14
 
   if (traceAnimating || (traceProgress && traceProgress.pct < 100 && traceProgress.pct > 0)) {
     return <PipelineLoader pct={traceProgress?.pct ?? 0} msg={traceProgress?.msg ?? 'Analysing…'} mode={mode}/>
@@ -210,20 +208,24 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   const bboxAspect  = g._bboxAspect ?? (scale_x / scale_y)
   const canvasAspect = scale_x / scale_y
   let draw_w, draw_h
+
+  // ── FIX: reduced scale factors (0.88/0.82 vs 0.94/0.88) so the car sits
+  // fully inside the SVG bounds with margin on all sides including bottom.
   if (bboxAspect > canvasAspect) {
-    draw_w = scale_x * 0.94; draw_h = draw_w / bboxAspect
+    draw_w = scale_x * 0.88; draw_h = draw_w / bboxAspect
   } else {
-    draw_h = scale_y * 0.88; draw_w = draw_h * bboxAspect
-    if (draw_w > scale_x * 0.96) { draw_w = scale_x * 0.96; draw_h = draw_w / bboxAspect }
+    draw_h = scale_y * 0.82; draw_w = draw_h * bboxAspect
+    if (draw_w > scale_x * 0.90) { draw_w = scale_x * 0.90; draw_h = draw_w / bboxAspect }
   }
+
   const draw_ox = off_x + (scale_x - draw_w) / 2
-  const draw_oy = off_y  + (scale_y - draw_h) / 2
+  // ── FIX: shift draw area 12px upward so the bottom outline clears the SVG edge
+  const draw_oy = off_y + (scale_y - draw_h) / 2 - 12
+
   const toSVG = ([nx,ny]) => [draw_ox + nx*draw_w, draw_oy + ny*draw_h]
   const kpX = nx => draw_ox + nx*draw_w
   const kpY = ny => draw_oy + ny*draw_h
 
-  // Technical outline: use dense polyline — no bezier smoothing
-  // outline_pts is already 2000pt arc-length resampled with spikes removed
   const pathD = rawPts.map((p,i)=>{
     const[sx,sy]=toSVG(p)
     return`${i===0?'M':'L'}${sx.toFixed(2)},${sy.toFixed(2)}`
@@ -232,9 +234,6 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   const gY = CH - 16
   const wheels = (keypoints?.wheels??[]).map(w=>({
     cx: kpX(w.nx), cy: kpY(w.ny),
-    // nr = wheel_r/bbox_w. Real wheels ~22% of car height.
-    // Factor 0.55 corrects for Hough over-estimating at high res.
-    // Clamp 10-22% of draw_h — tighter range prevents oversized circles.
     r: Math.max(draw_h*0.10, Math.min(draw_h*0.22, w.nr*draw_w*0.55)),
   }))
   const method = g?._method ?? ''
@@ -256,9 +255,15 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
       <ellipse cx={CW/2} cy={gY+5} rx={scale_x*0.44} ry={6} fill="rgba(0,0,0,0.4)"/>
       <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
 
-      {/* Car outline — double layer for glow effect */}
-      <path d={pathD} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="4" fillRule="nonzero"/>
-      <path d={pathD} fill="none" stroke="rgba(255,255,255,1.0)" strokeWidth="1.2"
+      {/*
+        ── FIX: car body fill changed from "none" to a near-opaque dark colour.
+        With fill="none" the SVG background bleeds through wheel-arch cutouts and
+        any concavity at the bottom, creating the illusion that the outline is
+        missing. The dark fill matches the canvas background so it's invisible
+        while blocking the background from showing through.
+      */}
+      <path d={pathD} fill="rgba(4,10,18,0.96)" stroke="rgba(255,255,255,0.12)" strokeWidth="4" fillRule="nonzero"/>
+      <path d={pathD} fill="rgba(4,10,18,0.96)" stroke="rgba(255,255,255,1.0)" strokeWidth="1.2"
         fillRule="nonzero" filter="url(#glow)"/>
 
       {/* Panel lines (Mode B/C) */}
@@ -552,7 +557,6 @@ export default function Views2DPage() {
       if (poll.status==='error') { setError(poll.error??'Analysis failed'); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
       if (poll.status==='running'||poll.status==='pending') {
         const pct = Math.min(88, 10+elapsed*1.2)
-        // Map elapsed time to stage messages
         const stageMsg = elapsed < 10 ? 'Preprocessing & YOLO detection…'
           : elapsed < 25 ? 'SAM2 boundary refinement…'
           : elapsed < 40 ? 'Contour extraction & smoothing…'
@@ -583,9 +587,7 @@ export default function Views2DPage() {
           wsAngleDeg:cg.wsAngleDeg??58,rearDrop:cg.rearDrop??0.15,
           cabinH:cg.cabinH??0.58,rideH:cg.rideH??0.08,
           w1:cg.w1??0.22,w2:cg.w2??0.76,confidence:cg.confidence??0.97,
-          // Technical outline — accurate, use for comparison/export
           _contourPts: result.technical_outline_pts ?? result.outline_pts,
-          // Display outline — window=5 smooth, for rendering
           _smoothPts:  result.display_outline_pts ?? result.smooth_pts,
           _catmullCps: null,
           _catmullPts: result.display_outline_pts ?? result.smooth_pts,
@@ -594,7 +596,6 @@ export default function Views2DPage() {
           _panels:     result.panels??null,_aero:result.aero??null,
           _quality:     result.quality??null,
           _engineering: result.engineering??null,
-          // CFD geometry extras
           ahmedRegime:        result.geometry?.ahmedRegime,
           rearSlantAngleDeg:  result.geometry?.rearSlantAngleDeg,
           CdA:                result.geometry?.CdA,
@@ -618,14 +619,13 @@ export default function Views2DPage() {
 
   const isRunning = stage==='analyzing'
 
-  // White card style for left panel
   const card = {background:'var(--bg1)',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
   const darkCard = {background:'var(--bg1)',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
 
   return (
     <div style={{display:'flex',height:'100%',overflow:'hidden',background:'var(--bg0)'}}>
 
-      {/* ── LEFT PANEL — white background ── */}
+      {/* ── LEFT PANEL ── */}
       <div style={{width:240,flexShrink:0,display:'flex',flexDirection:'column',
         borderRight:'0.5px solid var(--sep)',overflow:'hidden',background:'var(--bg0)'}}>
         <div style={{flex:1,overflowY:'auto',padding:'16px 14px'}}>
@@ -807,7 +807,7 @@ export default function Views2DPage() {
         </div>
       </div>
 
-      {/* ── CENTRE: canvas (dark) ── */}
+      {/* ── CENTRE: canvas ── */}
       <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
         {/* Toolbar */}
@@ -880,10 +880,11 @@ export default function Views2DPage() {
             </div>
           ) : (
             <>
+              {/* ── FIX: maxHeight increased from 295 → 340 to match taller SVG (CH=310) */}
               <div style={{flex:1,background:'#070d14',borderRadius:12,
                 border:'0.5px solid rgba(255,255,255,0.06)',display:'flex',
                 alignItems:'center',justifyContent:'center',padding:'12px',overflow:'hidden'}}>
-                <div style={{width:'100%',height:'100%',maxHeight:295}}>
+                <div style={{width:'100%',height:'100%',maxHeight:340}}>
                   {activeView==='side'  && <SideView g={geo} showSep={showSep} mode={analysisMode}
                     traceProgress={traceProgress} traceAnimating={traceAnimating}/>}
                   {activeView==='front' && <FrontView g={geo}/>}
@@ -917,7 +918,7 @@ export default function Views2DPage() {
         </div>
       </div>
 
-      {/* ── RIGHT PANEL — white background ── */}
+      {/* ── RIGHT PANEL ── */}
       <div style={{width:210,flexShrink:0,borderLeft:'0.5px solid var(--sep)',
         overflowY:'auto',padding:'16px 14px',background:'#fff'}}>
         {geo ? (
@@ -1047,7 +1048,7 @@ export default function Views2DPage() {
               </>
             )}
 
-            {/* Engineering data (always shown when geo exists) */}
+            {/* Engineering data */}
             {geo._engineering?.shape_descriptors && (
               <>
                 <SL n={geo._aero ? "09" : "06"} t="Shape"/>
