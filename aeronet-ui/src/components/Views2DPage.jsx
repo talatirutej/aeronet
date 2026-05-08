@@ -3,27 +3,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 // ── Image preprocessing ───────────────────────────────────────────────────────
-async function prepareImage(file, maxWidth = 1440, quality = 0.93) {
+async function prepareImage(file, maxWidth = 1440) {
   return new Promise((resolve) => {
     const img = new window.Image()
     const url = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(url)
-      const minWidth = 900
+      const minWidth = 960          // upscale tiny images for better segmentation
       const effectiveMax = Math.max(maxWidth, minWidth)
       const scale = img.width < minWidth
-        ? Math.min(3.0, effectiveMax / img.width)
+        ? Math.min(2.5, effectiveMax / img.width)   // cap upscale at 2.5×
         : Math.min(1.0, maxWidth / img.width)
       const w = Math.round(img.width  * scale)
       const h = Math.round(img.height * scale)
       const canvas = document.createElement('canvas')
       canvas.width = w; canvas.height = h
       const ctx = canvas.getContext('2d')
+      // Use white background for transparent PNGs (segmentation needs solid BG)
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, w, h)
-      ctx.imageSmoothingEnabled  = true
-      ctx.imageSmoothingQuality  = 'high'
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
       ctx.drawImage(img, 0, 0, w, h)
+      // Quality: 0.95 for small images, 0.90 for large (saves bandwidth, no quality loss visible)
+      const quality = w * h < 800 * 600 ? 0.95 : 0.90
       canvas.toBlob(
         (blob) => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })),
         'image/jpeg', quality
@@ -35,25 +38,72 @@ async function prepareImage(file, maxWidth = 1440, quality = 0.93) {
 }
 
 // ── URL fetcher with multi-proxy fallback ─────────────────────────────────────
-async function fetchImageFromUrl(url) {
-  const proxies = [
-    u => u,
-    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+// ── URL normaliser: convert sharing URLs to direct image URLs ─────────────────
+function normaliseImageUrl(url) {
+  try {
+    // Google Drive: /file/d/{id}/view  or  /open?id={id}
+    const gdrive1 = url.match(/drive\.google\.com\/file\/d\/([^/]+)/)
+    if (gdrive1) return `https://drive.google.com/uc?export=download&id=${gdrive1[1]}`
+    const gdrive2 = url.match(/drive\.google\.com\/open\?id=([^&]+)/)
+    if (gdrive2) return `https://drive.google.com/uc?export=download&id=${gdrive2[1]}`
+    // Dropbox: ?dl=0 → ?raw=1
+    if (url.includes('dropbox.com')) return url.replace(/[?&]dl=0/, '').replace(/[?&]raw=\d/,'') + (url.includes('?') ? '&raw=1' : '?raw=1')
+    // Imgur: gallery/album → direct .jpg
+    const imgur = url.match(/imgur\.com\/(?:gallery\/|a\/)?([A-Za-z0-9]+)(?:\.[a-z]+)?$/)
+    if (imgur && !url.match(/\.(jpg|jpeg|png|webp|gif)$/i)) return `https://i.imgur.com/${imgur[1]}.jpg`
+    // Reddit preview → direct
+    if (url.includes('preview.redd.it')) return url.replace('preview.redd.it','i.redd.it').split('?')[0]
+    // Wikipedia File: page → skip (needs API)
+    // Twitter/X: strip query params that break CORS
+    if (url.includes('pbs.twimg.com')) return url.split('?')[0] + '?format=jpg&name=large'
+    // GitHub blob → raw
+    if (url.includes('github.com') && url.includes('/blob/')) return url.replace('github.com','raw.githubusercontent.com').replace('/blob/','/')
+  } catch {}
+  return url
+}
+
+async function fetchImageFromUrl(rawUrl) {
+  const url = normaliseImageUrl(rawUrl.trim())
+
+  // Parallel proxy race — fastest working proxy wins
+  const PROXIES = [
+    u => u,                                                              // direct (works for CORS-open hosts)
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, // reliable fallback
     u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    u => `https://proxy.cors.sh/${u}`,
     u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+    u => `https://proxy.cors.sh/${u}`,
   ]
-  for (const proxy of proxies) {
-    try {
-      const r = await fetch(proxy(url), { signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined })
-      if (!r.ok) continue
-      const blob = await r.blob()
-      if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) continue
-      const filename = url.split('/').pop()?.split('?')[0] || 'car.jpg'
-      return new File([blob], filename, { type: blob.type.startsWith('image/') ? blob.type : 'image/jpeg' })
-    } catch { continue }
+
+  const tryFetch = async (proxyFn, signal) => {
+    const r = await fetch(proxyFn(url), { signal })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    const blob = await r.blob()
+    // Accept image/* and octet-stream; reject HTML error pages
+    if (blob.size < 500) throw new Error('Response too small — likely an error page')
+    if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) throw new Error(`Bad type: ${blob.type}`)
+    const filename = url.split('/').pop()?.split('?')[0]?.replace(/[^a-z0-9._-]/gi,'_') || 'car.jpg'
+    return new File([blob], filename, { type: blob.type.startsWith('image/') ? blob.type : 'image/jpeg' })
   }
-  throw new Error('Could not fetch image — try downloading and uploading the file directly')
+
+  // Try direct first (fast, no proxy overhead if CORS-open)
+  try {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 6000)
+    const file = await tryFetch(PROXIES[0], ac.signal).finally(() => clearTimeout(timer))
+    return file
+  } catch {}
+
+  // Race remaining proxies — return whichever responds first
+  const errors = []
+  for (const proxyFn of PROXIES.slice(1)) {
+    try {
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), 9000)
+      const file = await tryFetch(proxyFn, ac.signal).finally(() => clearTimeout(timer))
+      return file
+    } catch (e) { errors.push(e.message); continue }
+  }
+  throw new Error(`Could not fetch image (${errors.slice(-2).join('; ')}). Try downloading and uploading directly.`)
 }
 
 // ── Pipeline stage config ─────────────────────────────────────────────────────
