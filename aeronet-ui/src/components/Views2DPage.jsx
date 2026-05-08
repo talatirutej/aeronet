@@ -589,7 +589,12 @@ export default function Views2DPage() {
           _bboxAspect: result.bbox?result.bbox.w/Math.max(1,result.bbox.h):undefined,
           _keypoints:  result.keypoints,_method:result.method,
           _panels:     result.panels??null,_aero:result.aero??null,
-          _quality:    result.quality??null,
+          _quality:     result.quality??null,
+          _engineering: result.engineering??null,
+          // CFD geometry extras
+          ahmedRegime:        result.geometry?.ahmedRegime,
+          rearSlantAngleDeg:  result.geometry?.rearSlantAngleDeg,
+          CdA:                result.geometry?.CdA,
           rearSlantAngleDeg:cg.rearSlantAngleDeg??20,
           ahmedRegime:cg.ahmedRegime??'intermediate',
           Cd:cg.Cd??0, CdA:cg.CdA??0,
@@ -1037,6 +1042,78 @@ export default function Views2DPage() {
                   </>
                 )}
               </>
+            )}
+
+            {/* Engineering data (always shown when geo exists) */}
+            {geo._engineering?.shape_descriptors && (
+              <>
+                <SL n={geo._aero ? "09" : "06"} t="Shape"/>
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  {[
+                    ['Hood slope',   (geo._engineering.shape_descriptors.hood_slope_deg??0).toFixed(1)+'°'],
+                    ['Rear taper',   (geo._engineering.shape_descriptors.rear_taper_deg??0).toFixed(1)+'°'],
+                    ['WS rake',      (geo._engineering.shape_descriptors.ws_rake_deg??0).toFixed(1)+'°'],
+                    ['Roof curve',   (geo._engineering.shape_descriptors.roof_curvature_range??0).toFixed(3)],
+                    ['Taper onset',  ((geo._engineering.shape_descriptors.taper_onset_x??0)*100).toFixed(0)+'%'],
+                    ['GH ratio',     (geo._engineering.shape_descriptors.greenhouse_ratio??0).toFixed(3)],
+                    ['CdA',          (geo.CdA??geo._engineering?.exports?.json_descriptor?.geometry?.cda_estimate??0).toFixed(4)],
+                  ].map(([k,v])=>(
+                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,
+                      padding:'2px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'var(--blue)',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* CFD Heuristics */}
+            {geo._engineering?.cfd_heuristics && (
+              <>
+                <SL n={geo._aero ? "10" : "07"} t="CFD Hints"/>
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  {Object.entries(geo._engineering.cfd_heuristics)
+                    .filter(([k]) => k !== 'ahmed_regime' && k !== 'note')
+                    .map(([k,v])=>{
+                      const label = k.replace(/_/g,' ').replace(/tendency|likelihood|fraction|factor/,'').trim()
+                      const pct = Math.round(Number(v)*100)
+                      return (
+                        <div key={k} style={{marginBottom:5}}>
+                          <div style={{display:'flex',justifyContent:'space-between',fontSize:9,marginBottom:2}}>
+                            <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'",
+                              textTransform:'capitalize'}}>{label}</span>
+                            <span style={{color: pct>65?'#ff453a':pct>35?'#ff9f0a':'#30d158',
+                              fontFamily:"'IBM Plex Mono'",fontWeight:600,fontSize:10}}>{pct}%</span>
+                          </div>
+                          <div style={{height:3,borderRadius:2,background:'rgba(255,255,255,0.06)'}}>
+                            <div style={{height:'100%',borderRadius:2,
+                              background: pct>65?'#ff453a':pct>35?'#ff9f0a':'#30d158',
+                              width:`${pct}%`,transition:'width 0.4s'}}/>
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </>
+            )}
+
+            {/* Ahmed regime badge */}
+            {geo.ahmedRegime && (
+              <div style={{...card,padding:'8px 11px',marginBottom:10,
+                display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:10,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>Ahmed</span>
+                <span style={{fontSize:10,fontWeight:700,fontFamily:"'IBM Plex Mono'",
+                  color: geo.ahmedRegime==='critical'?'#ff453a':
+                         geo.ahmedRegime==='separated'?'#ff9f0a':
+                         geo.ahmedRegime==='attached'?'#30d158':'var(--blue)',
+                  padding:'2px 8px',borderRadius:4,
+                  background: geo.ahmedRegime==='critical'?'rgba(255,69,58,0.12)':
+                              geo.ahmedRegime==='separated'?'rgba(255,159,10,0.12)':
+                              geo.ahmedRegime==='attached'?'rgba(48,209,88,0.12)':'rgba(10,132,255,0.12)'}}>
+                  {geo.ahmedRegime?.toUpperCase()} {geo.rearSlantAngleDeg?.toFixed(1)}°
+                </span>
+              </div>
             )}
           </>
         ) : (
