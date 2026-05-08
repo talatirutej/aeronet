@@ -3,16 +3,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 // ── Image preprocessing ───────────────────────────────────────────────────────
-async function prepareImage(file, maxWidth = 1200, quality = 0.92) {
+async function prepareImage(file, maxWidth = 1440, quality = 0.93) {
   return new Promise((resolve) => {
     const img = new window.Image()
     const url = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(url)
       // Upscale small images, downscale huge ones
-      const scale = file.size < 50000
-        ? Math.min(3.0, maxWidth / img.width)   // upscale tiny images
-        : Math.min(1.0, maxWidth / img.width)    // downscale large ones
+      // For technical outline accuracy we need at least 800px wide
+      const minWidth = 900
+      const effectiveMax = Math.max(maxWidth, minWidth)
+      const scale = img.width < minWidth
+        ? Math.min(3.0, effectiveMax / img.width)  // upscale tiny images
+        : Math.min(1.0, maxWidth / img.width)       // downscale large ones
       const w = Math.round(img.width  * scale)
       const h = Math.round(img.height * scale)
       const canvas = document.createElement('canvas')
@@ -219,17 +222,12 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   const kpX = nx => draw_ox + nx*draw_w
   const kpY = ny => draw_oy + ny*draw_h
 
-  let pathD
-  if (crCps && crPts && crCps.length === crPts.length && crCps.length > 10) {
-    pathD = crPts.map((pt,i) => {
-      const [px,py] = toSVG(pt); const cp = crCps[i]
-      const [c1x,c1y] = toSVG([cp[0],cp[1]]); const [c2x,c2y] = toSVG([cp[2],cp[3]])
-      return i===0 ? `M${px.toFixed(2)},${py.toFixed(2)}`
-        : `C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${px.toFixed(2)},${py.toFixed(2)}`
-    }).join(' ') + ' Z'
-  } else {
-    pathD = rawPts.map((p,i)=>{const[sx,sy]=toSVG(p);return`${i===0?'M':'L'}${sx.toFixed(2)},${sy.toFixed(2)}`}).join(' ') + ' Z'
-  }
+  // Technical outline: use dense polyline — no bezier smoothing
+  // outline_pts is already 2000pt arc-length resampled with spikes removed
+  const pathD = rawPts.map((p,i)=>{
+    const[sx,sy]=toSVG(p)
+    return`${i===0?'M':'L'}${sx.toFixed(2)},${sy.toFixed(2)}`
+  }).join(' ') + ' Z'
 
   const gY = CH - 16
   const wheels = (keypoints?.wheels??[]).map(w=>({
@@ -582,12 +580,21 @@ export default function Views2DPage() {
           wsAngleDeg:cg.wsAngleDeg??58,rearDrop:cg.rearDrop??0.15,
           cabinH:cg.cabinH??0.58,rideH:cg.rideH??0.08,
           w1:cg.w1??0.22,w2:cg.w2??0.76,confidence:cg.confidence??0.97,
-          _contourPts:result.smooth_pts??result.outline_pts,
-          _smoothPts:result.smooth_pts,_catmullCps:result.catmull_rom_cps,
-          _catmullPts:result.catmull_rom_pts,
-          _bboxAspect:result.bbox?result.bbox.w/Math.max(1,result.bbox.h):undefined,
-          _keypoints:result.keypoints,_method:result.method,
-          _panels:result.panels??null,_aero:result.aero??null,
+          // Technical outline — accurate, use for comparison/export
+          _contourPts: result.technical_outline_pts ?? result.outline_pts,
+          // Display outline — window=5 smooth, for rendering
+          _smoothPts:  result.display_outline_pts ?? result.smooth_pts,
+          _catmullCps: null,
+          _catmullPts: result.display_outline_pts ?? result.smooth_pts,
+          _bboxAspect: result.bbox?result.bbox.w/Math.max(1,result.bbox.h):undefined,
+          _keypoints:  result.keypoints,_method:result.method,
+          _panels:     result.panels??null,_aero:result.aero??null,
+          _quality:    result.quality??null,
+          rearSlantAngleDeg:cg.rearSlantAngleDeg??20,
+          ahmedRegime:cg.ahmedRegime??'intermediate',
+          Cd:cg.Cd??0, CdA:cg.CdA??0,
+          wheelbaseNorm:cg.wheelbaseNorm??0,
+          separationPointX:cg.separationPointX??0.75,
         })
         setStage('done'); return
       }
@@ -770,11 +777,15 @@ export default function Views2DPage() {
               <SL n="02" t="Result"/>
               <div style={{...card,padding:'9px 11px',marginBottom:10}}>
                 {[
-                  ['Method', geo._method??'—'],
-                  ['Points', (geo._contourPts?.length??0)+' pt'],
-                  ['Wheels', (geo._keypoints?.wheels?.length??0)+' found'],
-                  ['Aspect', (geo.aspectRatio??0).toFixed(2)],
-                  ['WS rake',(geo.wsAngleDeg??0).toFixed(0)+'°'],
+                  ['Method',   geo._method??'—'],
+                  ['Points',   (geo._contourPts?.length??0)+' pt'],
+                  ['Wheels',   (geo._keypoints?.wheels?.length??0)+' found'],
+                  ['Aspect',   (geo.aspectRatio??0).toFixed(2)],
+                  ['WS rake',  (geo.wsAngleDeg??0).toFixed(0)+'°'],
+                  ['Rear slant',(geo.rearSlantAngleDeg??0).toFixed(0)+'°'],
+                  ['Ahmed',    geo.ahmedRegime??'—'],
+                  ['Cd est.',  (geo.Cd??0).toFixed(3)],
+                  ['CdA',      (geo.CdA??0).toFixed(4)],
                 ].map(([k,v])=>(
                   <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
                     padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
@@ -942,19 +953,35 @@ export default function Views2DPage() {
               ))}
             </div>
 
-            <SL n="05" t="Confidence"/>
+            <SL n="05" t="Quality"/>
             <div style={{...card,padding:'9px 11px',marginBottom:10}}>
-              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:5}}>
-                <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>score</span>
-                <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>
-                  {((geo.confidence??0)*100).toFixed(0)}%
-                </span>
-              </div>
-              <div style={{height:4,borderRadius:2,background:'var(--bg3)'}}>
-                <div style={{height:'100%',borderRadius:2,width:`${(geo.confidence??0)*100}%`,
-                  background:(geo.confidence??0)>0.7?'#30d158':(geo.confidence??0)>0.4?'#ff9f0a':'#ff453a',
-                  transition:'width 0.5s'}}/>
-              </div>
+              {geo._quality ? (
+                <>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                    <span style={{fontSize:11,fontWeight:700,
+                      color: geo._quality.score>=90?'#30d158': geo._quality.score>=75?'#0A84FF': geo._quality.score>=55?'#ff9f0a':'#ff453a',
+                      fontFamily:"'IBM Plex Mono'"}}>
+                      {geo._quality.score}/100
+                    </span>
+                    <span style={{fontSize:9,color:'var(--text-quaternary)',textTransform:'uppercase',
+                      letterSpacing:'0.06em',fontFamily:"'IBM Plex Mono'"}}>{geo._quality.status}</span>
+                  </div>
+                  <div style={{height:4,borderRadius:2,background:'var(--bg3)',marginBottom:8}}>
+                    <div style={{height:'100%',borderRadius:2,
+                      width:`${geo._quality.score}%`,
+                      background: geo._quality.score>=90?'#30d158': geo._quality.score>=75?'#0A84FF': geo._quality.score>=55?'#ff9f0a':'#ff453a',
+                      transition:'width 0.6s'}}/>
+                  </div>
+                  {geo._quality.warnings?.map((w,i)=>(
+                    <div key={i} style={{fontSize:9,color:'#ff9f0a',fontFamily:"'IBM Plex Mono'",
+                      padding:'2px 0',lineHeight:1.5,borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                      ⚠ {w}
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div style={{fontSize:11,color:'var(--text-quaternary)',textAlign:'center'}}>—</div>
+              )}
             </div>
 
             {/* Mode C: Aero ID */}
