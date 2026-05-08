@@ -179,11 +179,10 @@ function PipelineLoader({ pct, msg, mode }) {
 
 // ── SideView ──────────────────────────────────────────────────────────────────
 function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, mode='A' }) {
-  // ── FIX: taller canvas (310 vs 260) + larger bottom reserve (70 vs 40)
-  // This gives points near ny=1.0 actual SVG space instead of being clipped.
-  const CW = 620, CH = 310, CPAD = 28
-  const scale_x = CW - CPAD*2, scale_y = CH - 70   // 70px bottom reserve
-  const off_x = CPAD, off_y = 14
+  // Canvas: wider usable area, explicit top/bottom margins
+  const CW = 620, CH = 310, CPAD = 20
+  const scale_x = CW - CPAD*2
+  const off_x = CPAD, off_y = 10
 
   if (traceAnimating || (traceProgress && traceProgress.pct < 100 && traceProgress.pct > 0)) {
     return <PipelineLoader pct={traceProgress?.pct ?? 0} msg={traceProgress?.msg ?? 'Analysing…'} mode={mode}/>
@@ -205,22 +204,28 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   const crPts  = g?._catmullPts
   const rawPts = g?._smoothPts ?? contourPts
 
-  const bboxAspect  = g._bboxAspect ?? (scale_x / scale_y)
-  const canvasAspect = scale_x / scale_y
-  let draw_w, draw_h
+  // Ground line Y — car bottom anchors here
+  const gY = CH - 22
+  // Top margin — roof must clear the top edge
+  const topMargin = off_y + 8
 
-  // ── FIX: reduced scale factors (0.88/0.82 vs 0.94/0.88) so the car sits
-  // fully inside the SVG bounds with margin on all sides including bottom.
-  if (bboxAspect > canvasAspect) {
-    draw_w = scale_x * 0.88; draw_h = draw_w / bboxAspect
-  } else {
-    draw_h = scale_y * 0.82; draw_w = draw_h * bboxAspect
-    if (draw_w > scale_x * 0.90) { draw_w = scale_x * 0.90; draw_h = draw_w / bboxAspect }
+  const bboxAspect = g._bboxAspect ?? 2.5
+  // Max drawable area
+  const maxDrawH   = gY - topMargin - 6
+  const maxDrawW   = scale_x
+
+  // Fill the canvas as much as possible while preserving bbox aspect ratio
+  let draw_w = maxDrawW
+  let draw_h = draw_w / bboxAspect
+  if (draw_h > maxDrawH) {
+    draw_h = maxDrawH
+    draw_w = draw_h * bboxAspect
+    if (draw_w > maxDrawW) { draw_w = maxDrawW; draw_h = draw_w / bboxAspect }
   }
 
+  // Horizontal centre; vertical: bottom of drawn bbox sits ON the ground line
   const draw_ox = off_x + (scale_x - draw_w) / 2
-  // ── FIX: shift draw area 12px upward so the bottom outline clears the SVG edge
-  const draw_oy = off_y + (scale_y - draw_h) / 2 - 12
+  const draw_oy = gY - draw_h
 
   const toSVG = ([nx,ny]) => [draw_ox + nx*draw_w, draw_oy + ny*draw_h]
   const kpX = nx => draw_ox + nx*draw_w
@@ -231,7 +236,6 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
     return`${i===0?'M':'L'}${sx.toFixed(2)},${sy.toFixed(2)}`
   }).join(' ') + ' Z'
 
-  const gY = CH - 16
   const wheels = (keypoints?.wheels??[]).map(w=>({
     cx: kpX(w.nx), cy: kpY(w.ny),
     r: Math.max(draw_h*0.10, Math.min(draw_h*0.22, w.nr*draw_w*0.55)),
