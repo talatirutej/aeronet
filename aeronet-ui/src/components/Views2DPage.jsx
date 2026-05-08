@@ -288,7 +288,10 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
 
   const wheels = (keypoints?.wheels??[]).map(w=>({
     cx: kpX(w.nx), cy: kpY(w.ny),
-    r: Math.max(draw_h*0.10, Math.min(draw_h*0.22, w.nr*draw_w*0.55)),
+    // nr = wheel_radius / bbox_width from backend
+    // Physically: side-view wheel diameter ≈ 22-28% of car height → radius 11-14%
+    // Hard cap at 14% of draw_h prevents false-detection wheels from being huge
+    r: Math.max(draw_h*0.09, Math.min(draw_h*0.14, w.nr*draw_w*0.50)),
   }))
   const method = g?._method ?? ''
 
