@@ -232,7 +232,10 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   const gY = CH - 16
   const wheels = (keypoints?.wheels??[]).map(w=>({
     cx: kpX(w.nx), cy: kpY(w.ny),
-    r: Math.max(draw_h*0.12, Math.min(draw_h*0.26, w.nr*draw_w*0.60)),
+    // nr = wheel_r/bbox_w. Real wheels ~22% of car height.
+    // Factor 0.55 corrects for Hough over-estimating at high res.
+    // Clamp 10-22% of draw_h — tighter range prevents oversized circles.
+    r: Math.max(draw_h*0.10, Math.min(draw_h*0.22, w.nr*draw_w*0.55)),
   }))
   const method = g?._method ?? ''
 
