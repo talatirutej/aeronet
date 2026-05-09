@@ -390,6 +390,36 @@ function UnderView({ geo, carDims }) {
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function Views2DPage() {
+  // Suppress WebGL context loss errors — these come from Three.js in the
+  // Vite bundle (possibly a HF Spaces default component). Our views are
+  // pure SVG and are unaffected, but we silence the console noise.
+  React.useEffect(() => {
+    const suppress = (e) => {
+      if (e?.message?.includes?.("Context Lost") ||
+          e?.message?.includes?.("WebGL") ||
+          e?.message?.includes?.("THREE")) {
+        e.preventDefault?.();
+        e.stopPropagation?.();
+      }
+    };
+    const suppressUnhandled = (e) => {
+      if (e?.reason?.message?.includes?.("Context") ||
+          e?.reason?.message?.includes?.("WebGL")) {
+        e.preventDefault?.();
+      }
+    };
+    window.addEventListener("error", suppress);
+    window.addEventListener("unhandledrejection", suppressUnhandled);
+    // Also handle WebGL context lost on any canvas elements
+    const handleContextLost = (e) => { e.preventDefault(); };
+    document.querySelectorAll("canvas").forEach(c =>
+      c.addEventListener("webglcontextlost", handleContextLost));
+    return () => {
+      window.removeEventListener("error", suppress);
+      window.removeEventListener("unhandledrejection", suppressUnhandled);
+    };
+  }, []);
+
   const [imageFile, setImageFile]     = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [imageUrl, setImageUrl]       = useState("");
