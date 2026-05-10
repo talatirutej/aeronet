@@ -531,6 +531,8 @@ export default function Views2DPage() {
   const [urlError,       setUrlError]       = useState('')
   const [urlMode,        setUrlMode]        = useState(false)
   const [analysisMode,   setAnalysisMode]   = useState('A')
+  const [bgRemovedImg,   setBgRemovedImg]   = useState(null)   // base64 JPEG from backend
+  const [debugOpen,      setDebugOpen]      = useState(false)  // debug panel visibility
   const svgRef  = useRef(null)
   const fileRef = useRef(null)
 
@@ -538,7 +540,7 @@ export default function Views2DPage() {
     if (!f || !f.type.startsWith('image/')) return
     setFile(f); setPreview(URL.createObjectURL(f))
     setGeo(null); setError(null); setTraceProgress(null); setTraceAnimating(false)
-    setStage('ready'); setUrlError('')
+    setStage('ready'); setUrlError(''); setBgRemovedImg(null); setDebugOpen(false)
   }, [])
 
   const acceptUrl = useCallback(async (url) => {
@@ -656,6 +658,9 @@ export default function Views2DPage() {
             }, step*delay)
           }
         } else { setTraceAnimating(false); setTraceProgress(null) }
+        if (result.bg_removed_image) {
+          setBgRemovedImg(`data:image/jpeg;base64,${result.bg_removed_image}`)
+        }
         const cg=result.geometry
         setGeo({
           aspectRatio:cg.aspectRatio??2.0,hoodRatio:cg.hoodRatio??0.28,
@@ -672,6 +677,10 @@ export default function Views2DPage() {
           _panels:     result.panels??null,_aero:result.aero??null,
           _quality:     result.quality??null,
           _engineering: result.engineering??null,
+          // Wheelbase-normalised pts for compare_contours (benchmarking)
+          _pts_wb:      result.engineering?._pts_wb ?? null,
+          // Computed geometry
+          archDepth:    cg.archDepth??null,
           ahmedRegime:        result.geometry?.ahmedRegime,
           rearSlantAngleDeg:  result.geometry?.rearSlantAngleDeg,
           CdA:                result.geometry?.CdA,
@@ -907,6 +916,16 @@ export default function Views2DPage() {
               border:`1px solid ${showSep?'#0A84FF':'rgba(0,0,0,0.1)'}`,
               background:showSep?'rgba(10,132,255,0.08)':'transparent',
               color:showSep?'#0A84FF':'rgba(0,0,0,0.4)'}}>Sep</button>
+          {bgRemovedImg && (
+            <button onClick={()=>setDebugOpen(p=>!p)}
+              style={{padding:'3px 10px',borderRadius:6,fontSize:11,fontWeight:500,cursor:'pointer',
+                border:`1px solid ${debugOpen?'#ff9f0a':'rgba(0,0,0,0.1)'}`,
+                background:debugOpen?'rgba(255,159,10,0.10)':'transparent',
+                color:debugOpen?'#ff9f0a':'rgba(0,0,0,0.4)',
+                display:'flex',alignItems:'center',gap:4}}>
+              <span style={{fontSize:9}}>◑</span> BG Debug
+            </button>
+          )}
           <button onClick={exportSVG}
             style={{marginLeft:'auto',padding:'4px 12px',borderRadius:7,
               border:'1px solid rgba(0,0,0,0.1)',background:'transparent',
@@ -960,13 +979,67 @@ export default function Views2DPage() {
               <div style={{flex:1,background:'#070d14',borderRadius:12,
                 border:'0.5px solid rgba(255,255,255,0.06)',display:'flex',
                 alignItems:'center',justifyContent:'center',padding:'12px',overflow:'hidden'}}>
-                <div style={{width:'100%',height:'100%',maxHeight:345}}>
-                  {activeView==='side'  && <SideView g={geo} showSep={showSep} mode={analysisMode}
-                    traceProgress={traceProgress} traceAnimating={traceAnimating}/>}
-                  {activeView==='front' && <FrontView g={geo}/>}
-                  {activeView==='top'   && <TopView   g={geo} yawAngle={yawAngle}/>}
-                  {activeView==='under' && <UnderView g={geo}/>}
-                </div>
+                {debugOpen && bgRemovedImg ? (
+                  /* Debug split: bg-removed image (left) + outline (right)
+                     Shows exactly what the model saw before contour extraction.
+                     If segmentation missed part of the car or included background,
+                     you'll see it here immediately and understand why the outline is wrong. */
+                  <div style={{width:'100%',height:'100%',display:'flex',gap:8}}>
+                    <div style={{flex:1,display:'flex',flexDirection:'column',gap:4}}>
+                      <div style={{fontSize:9,color:'#ff9f0a',fontFamily:"'IBM Plex Mono'",
+                        letterSpacing:'0.06em',textAlign:'center',flexShrink:0}}>
+                        ◑ BG-REMOVED · WHAT THE MODEL SAW
+                      </div>
+                      <div style={{flex:1,position:'relative',borderRadius:8,overflow:'hidden',
+                        border:'0.5px solid rgba(255,159,10,0.35)',minHeight:0}}>
+                        <img src={bgRemovedImg} alt="bg removed"
+                          style={{width:'100%',height:'100%',objectFit:'contain',display:'block'}}/>
+                        {geo?._quality && (
+                          <div style={{position:'absolute',top:6,left:6,
+                            background:'rgba(0,0,0,0.82)',borderRadius:5,padding:'3px 7px',
+                            fontSize:9,fontFamily:"'IBM Plex Mono'",
+                            color: geo._quality.score>=75?'#30d158':geo._quality.score>=50?'#ff9f0a':'#ff453a'}}>
+                            SEG {geo._quality.score}/100
+                          </div>
+                        )}
+                        {geo?._quality?.score < 60 && (
+                          <div style={{position:'absolute',bottom:6,left:4,right:4,
+                            background:'rgba(255,69,58,0.88)',borderRadius:5,padding:'3px 6px',
+                            fontSize:8,fontFamily:"'IBM Plex Mono'",color:'white',textAlign:'center',lineHeight:1.4}}>
+                            ⚠ Low seg quality — background bleed or missing car section
+                          </div>
+                        )}
+                        {geo?._quality?.warnings?.slice(0,2).map((w,i)=>(
+                          <div key={i} style={{position:'absolute',
+                            bottom: geo._quality.score < 60 ? (28+i*16) : (6+i*16),
+                            left:4,right:4,
+                            background:'rgba(0,0,0,0.75)',borderRadius:4,padding:'2px 5px',
+                            fontSize:8,fontFamily:"'IBM Plex Mono'",color:'#ff9f0a',lineHeight:1.3}}>
+                            ⚠ {w}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{flex:1,display:'flex',flexDirection:'column',gap:4}}>
+                      <div style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:"'IBM Plex Mono'",
+                        letterSpacing:'0.06em',textAlign:'center',flexShrink:0}}>
+                        EXTRACTED OUTLINE
+                      </div>
+                      <div style={{flex:1,border:'0.5px solid rgba(255,255,255,0.06)',borderRadius:8,overflow:'hidden',minHeight:0}}>
+                        <SideView g={geo} showSep={showSep} mode={analysisMode}
+                          traceProgress={null} traceAnimating={false}/>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{width:'100%',height:'100%',maxHeight:345}}>
+                    {activeView==='side'  && <SideView g={geo} showSep={showSep} mode={analysisMode}
+                      traceProgress={traceProgress} traceAnimating={traceAnimating}/>}
+                    {activeView==='front' && <FrontView g={geo}/>}
+                    {activeView==='top'   && <TopView   g={geo} yawAngle={yawAngle}/>}
+                    {activeView==='under' && <UnderView g={geo}/>}
+                  </div>
+                )}
               </div>
               {/* Thumbnails */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,flexShrink:0}}>
@@ -1035,6 +1108,8 @@ export default function Views2DPage() {
                 ['Aspect',    (geo.aspectRatio??0).toFixed(2)],
                 ['WS rake',   (geo.wsAngleDeg??0).toFixed(0)+'°'],
                 ['Rear drop', ((geo.rearDrop??0)*100).toFixed(0)+'%'],
+                ['Ride height',geo.rideH!=null?(geo.rideH*100).toFixed(1)+'%':'—'],
+                ['Arch depth', geo.archDepth!=null?(geo.archDepth*100).toFixed(1)+'%':'—'],
               ].map(([k,v])=>(
                 <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
                   padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
