@@ -616,6 +616,8 @@ export default function AeroNetV2() {
   const [traceProgress, setTraceProgress] = useState({ pct: 0, msg: 'Waiting…', sub: '' })
   const [isDrawing, setIsDrawing]         = useState(false)
   const [drawDone, setDrawDone]           = useState(false)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [exportMsg,      setExportMsg]      = useState('')
   const svgRef = useRef(null)
 
   const isRunning = stage === 'analyzing'
@@ -775,9 +777,6 @@ export default function AeroNetV2() {
       }
     }
   }
-
-  const [exportMenuOpen, setExportMenuOpen] = useState(false)
-  const [exportMsg,      setExportMsg]      = useState('')
 
   // Build a clean standalone SVG string with embedded fonts + black background
   const buildSVGString = () => {
