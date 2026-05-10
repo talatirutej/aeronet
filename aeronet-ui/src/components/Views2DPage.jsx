@@ -240,19 +240,29 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   // Ground line: sit just below the lowest contour point (ny=1.0 in draw coords)
   const contourBottom = draw_oy + draw_h
   const gY = Math.min(contourBottom + 10, CH - 10)
-  // ── Wheel geometry — read from backend, pinned to ground line ──────────────
-  // r and rimR are computed from nr/nrr (normalised to bbox width).
-  // cy is pinned so the tyre bottom = gY minus a 4px ground-clearance gap,
-  // so wheels always sit correctly regardless of where the Hough centre landed.
+  // ── Wheel geometry — read from backend, pinned to arch bottom ──────────────
+  // r: nr*draw_w is already the correct pixel radius (nr = wheel_r / bbox_w).
+  //    No extra scale factor — the previous *0.52 was shrinking wheels too much.
+  //    Clamp: min=13% draw_h (never invisible), max=26% draw_h (never giant).
+  // cy: pinned to the lowest contour point in the wheel's x-band (arch bottom),
+  //     so the wheel sits correctly inside the arch regardless of gY position.
+  // rimR: from backend nrr field (image-read rim radius), fallback 0.68×r.
   const wheels = (keypoints?.wheels??[]).map(w=>{
     const cx   = kpX(w.nx)
-    const r    = Math.max(draw_h*0.11, Math.min(draw_h*0.22, w.nr  * draw_w * 0.52))
-    // nrr = normalised rim radius exported from Python _nw(); fallback 0.68×r
+    const r    = Math.max(draw_h*0.13, Math.min(draw_h*0.26, w.nr * draw_w))
     const rimR = w.nrr
-      ? Math.max(draw_h*0.07, Math.min(r * 0.90, w.nrr * draw_w * 0.52))
+      ? Math.max(draw_h*0.08, Math.min(r * 0.90, w.nrr * draw_w))
       : r * 0.68
-    // Pin bottom of tyre to ground line with 4px clearance gap
-    const cy   = gY - r - 4
+    // Find the lowest contour point within ±1.4r of this wheel's x — that's
+    // the wheel arch bottom. Wheel centre sits exactly one radius above it.
+    const archBandPts = rawPts.filter(p => {
+      const sx = draw_ox + p[0]*draw_w
+      return Math.abs(sx - cx) < r * 1.4
+    })
+    const archBottomY = archBandPts.length > 0
+      ? Math.max(...archBandPts.map(p => draw_oy + p[1]*draw_h))
+      : (gY - r)
+    const cy = archBottomY - r
     return { cx, cy, r, rimR, spokes: w.spokes ?? 5 }
   })
   const method = g?._method ?? ''
@@ -342,6 +352,14 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
         )
         return (
           <g key={i}>
+            {/* Arch cutout — filled circle matches canvas BG, simulating the
+                wheel arch opening cut into the body silhouette. Drawn first
+                so the outline strokes render over it at the arch lip. */}
+            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={(w.r * 1.06).toFixed(1)}
+              fill="#070d14" stroke="none"/>
+            {/* Arch lip — thin ring where tyre meets the body panel */}
+            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={(w.r * 1.06).toFixed(1)}
+              fill="none" stroke="rgba(255,255,255,0.50)" strokeWidth="0.8"/>
             {/* Outer tyre ring */}
             <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r}
               fill="none" stroke="rgba(255,255,255,0.90)" strokeWidth="1.8"/>
