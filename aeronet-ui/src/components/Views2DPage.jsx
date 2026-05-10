@@ -1,1383 +1,1142 @@
-# contour_analysis.py
-# Technical Vehicle Outline Extraction — CFD Benchmarking Pipeline
-# Mahindra Research Valley / StatCFD / statinsite.com
-#
-# PURPOSE:
-#   Input vehicle image → accurate segmentation → dense technical contour
-#   Engineering-grade outline for CFD benchmarking and vehicle comparison.
-#   NOT an aesthetic silhouette generator.
-#
-# PIPELINE:
-#   Stage 0  — Input:       EXIF fix, resize 1536px, PNG alpha, BG removal, enhance
-#   Stage 1  — Localize:    YOLOv8x-seg (best-car selection by conf×area×centrality)
-#   Stage 2  — Refine:      SAM2.1-hiera-tiny (adaptive bbox padding 10-15%)
-#   Stage 3  — Mask:        Conservative cleanup — 3×3 kernel, hole fill, island remove
-#   Stage 4  — Underbody:   Wheel-arch floor clamping, shadow/reflection removal
-#   Stage 5  — Contour:     cv2.CHAIN_APPROX_NONE (every boundary pixel)
-#   Stage 6  — Spike clean: Local angle deviation filter (< 4px protrusions only)
-#   Stage 7  — Edge snap:   Canny-guided local refinement (bumpers, arches, roof)
-#   Stage 8  — Resample:    2000pt arc-length uniform spacing
-#   Stage 9  — Smooth:      window=3 moving average, 1 pass only
-#   Stage 10 — Keypoints:   Wheels (Hough), roofline, A-pillar, bumpers, sill
-#   Stage 11 — CFD Geom:    Ahmed body params, Cd/CdA, separation point
-#   Stage 12 — Quality:     10-signal real score, no hardcoded values
-#
-# OUTPUT:
-#   technical_outline_pts  — 2000pt, window=3 smooth (PRIMARY for CFD)
-#   display_outline_pts    — 2000pt, window=5 smooth (for UI rendering)
-#   raw_contour_pts        — every boundary pixel, no processing
-#   simplified_outline_pts — 200pt, for debug/overview only
-#   outline_svg            — SVG polyline, white on black
-#   quality                — score/100, status, warnings[], signals{}
-#
-# RULES:
-#   ✓ cv2.CHAIN_APPROX_NONE
-#   ✓ 3×3 morphology kernels max
-#   ✓ Spike removal (< 4px protrusions, angle > 45°)
-#   ✓ Edge snapping via Canny guidance
-#   ✓ Arc-length resampling
-#   ✓ window=3 smooth max (technical), window=5 (display)
-#   ✗ No Catmull-Rom
-#   ✗ No approxPolyDP with large epsilon
-#   ✗ No Gaussian blur > sigma 1.0
-#   ✗ No morphology kernels > 3×3
-#   ✗ No hardcoded confidence values
-#
-# Copyright (c) 2026 Rutej Talati / statinsite.com. All rights reserved.
+// Copyright (c) 2026 Rutej Talati. All rights reserved.
 
-from __future__ import annotations
-import io, math, time
-from typing import Generator
-import cv2
-import numpy as np
-from PIL import Image, ExifTags
-try:
-    from geometry_engine import run_geometry_engine, compare_contours
-    _GEO_ENGINE = True
-except ImportError:
-    _GEO_ENGINE = False
-    print("[warn] geometry_engine.py not found — engineering analysis disabled")
+import { useCallback, useEffect, useRef, useState } from 'react'
 
-# ── Constants ──────────────────────────────────────────────────────────────────
-TARGET_W               = 1536   # working resolution (longest side)
-N_TECHNICAL            = 2000   # technical outline points
-N_SIMPLIFIED           = 200    # simplified debug outline
-SPIKE_ANGLE_DEG        = 45     # local angle deviation threshold for spike detection
-SPIKE_WINDOW           = 6      # ± pts window for spike detection
-SPIKE_MAX_DIST_PX      = 4.0    # max protrusion distance to count as spike
-SMOOTH_WINDOW_TECHNICAL = 3     # moving average window — technical mode
-SMOOTH_WINDOW_DISPLAY   = 5     # moving average window — display mode
-MIN_CAR_FRAC           = 0.03   # minimum contour area / image area
-BBOX_PAD_FRAC          = 0.12   # bbox expansion (12% → recovers bumpers/mirrors)
-EDGE_SNAP_RADIUS       = 5      # px radius for Canny edge snapping
-VEHICLE_CLASSES        = {2:'car', 3:'motorcycle', 5:'bus', 7:'truck'}
+// ── Backend base URL ──────────────────────────────────────────────────────────
+// Reads NEXT_PUBLIC_API_URL if set (e.g. in .env.local), otherwise hits the
+// HuggingFace Space directly. Change this one constant to redirect to any backend.
+const API_BASE =
+  (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) ||
+  'https://rutejtalati16-aeronet.hf.space'
 
-
-def _expand_bbox(x, y, w, h, iw, ih, pad=BBOX_PAD_FRAC):
-    px, py = int(w*pad), int(h*pad)
-    return (max(0,x-px), max(0,y-py),
-            min(iw,x+w+px)-max(0,x-px),
-            min(ih,y+h+py)-max(0,y-py))
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 0 — INPUT LAYER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _fix_exif(pil: Image.Image) -> Image.Image:
-    try:
-        exif = pil._getexif()
-        if exif is None: return pil
-        tag = next((k for k,v in ExifTags.TAGS.items() if v=='Orientation'), None)
-        if tag and tag in exif:
-            rot = {3:180, 6:270, 8:90}.get(exif[tag])
-            if rot:
-                pil = pil.rotate(rot, expand=True)
-                print(f"[input] EXIF rotate {rot}°")
-    except Exception:
-        pass
-    return pil
-
-
-def _detect_view_type(img_rgb: np.ndarray) -> str:
-    """
-    Heuristic view classification.
-    Side view: car is wide relative to height (aspect > 1.6)
-    Front/rear: car is narrow relative to height (aspect < 1.2)
-    3/4: intermediate
-    Returns: 'side' | 'front' | 'rear' | 'quarter' | 'unknown'
-    """
-    h, w = img_rgb.shape[:2]
-    aspect = w / max(h, 1)
-    if aspect > 1.6:   return 'side'
-    if aspect < 1.15:  return 'front_or_rear'
-    return 'quarter'
-
-
-def _classify_bg(img_rgb: np.ndarray) -> dict:
-    h, w = img_rgb.shape[:2]
-    corners = [img_rgb[5:25,5:25], img_rgb[5:25,w-25:w-5],
-               img_rgb[h-25:h-5,5:25], img_rgb[h-25:h-5,w-25:w-5]]
-    means = [float(np.mean(p)) for p in corners if p.size > 0]
-    stds  = [float(np.std(p))  for p in corners if p.size > 0]
-    m, s  = float(np.mean(means)), float(np.mean(stds))
-    is_checker = False
-    try:
-        p = img_rgb[5:45,5:45].astype(float)
-        is_checker = float(np.std(p.reshape(-1,3),axis=0).mean()) > 28 and m > 155
-    except Exception:
-        pass
-    return {
-        'mean':m,'std':s,
-        'is_white':   m>200 and s<25,
-        'is_dark':    m<50  and s<25,
-        'is_plain':   s<22  or m>200 or is_checker,
-        'is_checker': is_checker,
+// ── Image preprocessing ───────────────────────────────────────────────────────
+async function prepareImage(file, maxWidth = 1440, quality = 0.93) {
+  return new Promise((resolve) => {
+    const img = new window.Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const minWidth = 900
+      const effectiveMax = Math.max(maxWidth, minWidth)
+      const scale = img.width < minWidth
+        ? Math.min(3.0, effectiveMax / img.width)
+        : Math.min(1.0, maxWidth / img.width)
+      const w = Math.round(img.width  * scale)
+      const h = Math.round(img.height * scale)
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+      ctx.imageSmoothingEnabled  = true
+      ctx.imageSmoothingQuality  = 'high'
+      ctx.drawImage(img, 0, 0, w, h)
+      canvas.toBlob(
+        (blob) => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })),
+        'image/jpeg', quality
+      )
     }
-
-
-def _remove_bg(img: np.ndarray, bg: dict, raw: bytes|None) -> np.ndarray:
-    h, w = img.shape[:2]
-    GREY = np.array([118,118,118], dtype=np.uint8)
-    fg   = None
-    # Priority 1: PNG alpha channel
-    if raw is not None:
-        try:
-            p = Image.open(io.BytesIO(raw))
-            if p.mode == 'RGBA':
-                a   = np.array(p.convert('RGBA'))[:,:,3]
-                a   = cv2.resize(a,(w,h),cv2.INTER_LINEAR)
-                fg  = (a>30).astype(np.uint8)*255
-                print("[input] PNG alpha channel used")
-        except Exception:
-            pass
-    if fg is None and bg['is_plain']:
-        lab = cv2.cvtColor(img,cv2.COLOR_BGR2LAB)
-        if bg['is_white'] or bg['is_checker']:
-            _,fg = cv2.threshold(lab[:,:,0],228,255,cv2.THRESH_BINARY_INV)
-            fg[int(h*0.80):,:] = 0  # hard-wipe bottom 20% (ground/shadow)
-            for gy in range(int(h*0.68),int(h*0.80)):
-                if float(np.mean(lab[gy,:,0])) > 208:
-                    fg[gy,:] = 0
-        elif bg['is_dark']:
-            hsv = cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
-            _,fg = cv2.threshold(hsv[:,:,2],40,255,cv2.THRESH_BINARY)
-        else:
-            gc=np.zeros(img.shape[:2],np.uint8)
-            bgd=np.zeros((1,65),np.float64); fgd=np.zeros((1,65),np.float64)
-            mx,my=int(w*0.12),int(h*0.08)
-            try:
-                cv2.grabCut(img,gc,(mx,my,w-2*mx,h-2*my),bgd,fgd,5,cv2.GC_INIT_WITH_RECT)
-                fg=np.where((gc==2)|(gc==0),0,255).astype(np.uint8)
-            except Exception:
-                fg=np.ones(img.shape[:2],np.uint8)*255
-    if fg is None: return img
-    ko=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(5,5))
-    kc=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(19,19))
-    fg=cv2.morphologyEx(fg,cv2.MORPH_OPEN, ko,iterations=1)
-    fg=cv2.morphologyEx(fg,cv2.MORPH_CLOSE,kc,iterations=3)
-    nc,lbl,sts,_=cv2.connectedComponentsWithStats(fg,8)
-    if nc>1:
-        best=1+int(np.argmax(sts[1:,cv2.CC_STAT_AREA]))
-        fg=np.where(lbl==best,255,0).astype(np.uint8)
-    out=img.copy(); out[fg==0]=GREY
-    return out
-
-
-def _enhance(img: np.ndarray) -> np.ndarray:
-    blur=cv2.GaussianBlur(img,(0,0),1.8)
-    img =cv2.addWeighted(img,1.40,blur,-0.40,0)
-    lab=cv2.cvtColor(img,cv2.COLOR_BGR2LAB)
-    L,A,B=cv2.split(lab)
-    clahe=cv2.createCLAHE(clipLimit=1.5,tileGridSize=(8,8))
-    return cv2.cvtColor(cv2.merge([clahe.apply(L),A,B]),cv2.COLOR_LAB2BGR)
-
-
-def _preprocess(image_bytes: bytes, raw: bytes|None=None) -> tuple[bytes, str]:
-    """Returns (processed_bytes, view_type)"""
-    arr=np.frombuffer(image_bytes,np.uint8)
-    img=cv2.imdecode(arr,cv2.IMREAD_COLOR)
-    if img is None:
-        pil=_fix_exif(Image.open(io.BytesIO(image_bytes)).convert('RGB'))
-        img=cv2.cvtColor(np.array(pil),cv2.COLOR_RGB2BGR)
-    else:
-        try:
-            p=_fix_exif(Image.open(io.BytesIO(image_bytes)))
-            q=Image.open(io.BytesIO(image_bytes))
-            if p.size != q.size:
-                img=cv2.cvtColor(np.array(p.convert('RGB')),cv2.COLOR_RGB2BGR)
-        except Exception:
-            pass
-    h,w=img.shape[:2]
-    # Resize: longest side to TARGET_W, preserve aspect ratio
-    scale=TARGET_W/max(w,h)
-    if scale != 1.0:
-        img=cv2.resize(img,(int(w*scale),int(h*scale)),
-                       cv2.INTER_LANCZOS4 if scale>1 else cv2.INTER_AREA)
-        h,w=img.shape[:2]
-        print(f"[input] Resized → {w}×{h} (scale={scale:.2f})")
-    else:
-        print(f"[input] {w}×{h} (no resize needed)")
-    rgb=cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
-    view=_detect_view_type(rgb)
-    bg=_classify_bg(rgb)
-    print(f"[input] BG={'white' if bg['is_white'] else 'dark' if bg['is_dark'] else 'plain' if bg['is_plain'] else 'complex'} view={view}")
-    img=_remove_bg(img,bg,raw)
-    img=_enhance(img)
-    _,buf=cv2.imencode('.jpg',img,[cv2.IMWRITE_JPEG_QUALITY,95])
-    return bytes(buf), view
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 1 — VEHICLE LOCALIZATION (YOLO)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _yolo_mask(image_bytes: bytes) -> tuple[np.ndarray, np.ndarray, float]:
-    """Returns (rgb, mask, best_conf)"""
-    from ultralytics import YOLO
-    model=YOLO('yolov8x-seg.pt')
-    arr=np.frombuffer(image_bytes,np.uint8)
-    bgr=cv2.imdecode(arr,cv2.IMREAD_COLOR)
-    if bgr is None:
-        pil=Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        bgr=cv2.cvtColor(np.array(pil),cv2.COLOR_RGB2BGR)
-    h,w=bgr.shape[:2]
-    bgr=cv2.resize(bgr,(TARGET_W,int(h*TARGET_W/w)),cv2.INTER_AREA)
-    rgb=cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB); H,W=rgb.shape[:2]
-    t0=time.time(); results=model(bgr,verbose=False)
-    print(f"[yolo] {time.time()-t0:.1f}s")
-    best_mask,best_score,best_bbox,best_conf=None,0.0,None,0.0
-    for result in results:
-        if result.masks is None: continue
-        for i,cls in enumerate(result.boxes.cls.cpu().numpy()):
-            if int(cls) not in VEHICLE_CLASSES: continue
-            conf=float(result.boxes.conf[i].cpu())
-            m=result.masks.data[i].cpu().numpy()
-            mr=cv2.resize(m,(W,H),interpolation=cv2.INTER_LINEAR)
-            mb=(mr>0.5).astype(np.uint8)*255
-            area=float(mb.sum())
-            cw=1.0 if int(cls)==2 else 0.75
-            coords=cv2.findNonZero(mb)
-            cx_n=float(cv2.boundingRect(coords)[0]+cv2.boundingRect(coords)[2]/2)/W if coords is not None else 0.5
-            centrality=1.0-abs(cx_n-0.5)*2
-            score=area*conf*cw*(0.6+0.4*centrality)
-            if score>best_score:
-                best_score=score; best_mask=mb; best_conf=conf
-                if coords is not None: best_bbox=cv2.boundingRect(coords)
-    if best_mask is None:
-        raise ValueError("No vehicle detected. Use a clear side-on photo.")
-    if best_bbox:
-        ex,ey,ew,eh=_expand_bbox(*best_bbox,W,H)
-        k=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(7,7))
-        exp=cv2.dilate(best_mask,k,iterations=2)
-        clip=np.zeros_like(exp); clip[ey:ey+eh,ex:ex+ew]=255
-        best_mask=cv2.bitwise_and(exp,clip)
-    print(f"[yolo] conf={best_conf:.3f}")
-    return rgb,best_mask,best_conf
-
-
-def _birefnet_mask(image_bytes: bytes) -> tuple[np.ndarray, np.ndarray, float]:
-    from transformers import AutoModelForImageSegmentation
-    from torchvision import transforms
-    import torch
-    device='cuda' if torch.cuda.is_available() else 'cpu'
-    m=AutoModelForImageSegmentation.from_pretrained(
-        'ZhengPeng7/BiRefNet',trust_remote_code=True).eval().to(device)
-    tf=transforms.Compose([transforms.Resize((1024,1024)),transforms.ToTensor(),
-        transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])])
-    pil=Image.open(io.BytesIO(image_bytes)).convert('RGB')
-    ow,oh=pil.size
-    with torch.no_grad(): preds=m(tf(pil).unsqueeze(0).to(device))
-    alpha=(preds[0].squeeze().sigmoid().cpu().numpy()*255).astype(np.uint8)
-    scale=TARGET_W/max(ow,oh); nw,nh=int(ow*scale),int(oh*scale)
-    return (np.array(pil.resize((nw,nh),Image.LANCZOS)),
-            cv2.resize(alpha,(nw,nh),cv2.INTER_LINEAR), 0.0)
-
-
-def _rembg_mask(image_bytes: bytes) -> tuple[np.ndarray, np.ndarray, float]:
-    from rembg import remove, new_session
-    for m in ('birefnet-general','isnet-general-use','u2net'):
-        try:
-            s=new_session(m)
-            res=remove(image_bytes,session=s,only_mask=False,alpha_matting=True,
-                       alpha_matting_foreground_threshold=250,
-                       alpha_matting_background_threshold=5,alpha_matting_erode_size=2)
-            rgba=Image.open(io.BytesIO(res)).convert('RGBA')
-            w,h=rgba.size; scale=TARGET_W/max(w,h)
-            rgba=rgba.resize((int(w*scale),int(h*scale)),Image.LANCZOS)
-            arr=np.array(rgba)
-            return arr[:,:,:3],arr[:,:,3],0.0
-        except Exception as e:
-            print(f"[rembg] {m}: {e}")
-    raise RuntimeError("All segmentation models failed")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 2 — SAM2 BOUNDARY REFINEMENT
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _sam2_refine(rgb: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray|None, float]:
-    """Returns (refined_mask, sam2_score)"""
-    try:
-        import torch
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
-    except ImportError:
-        return None, 0.0
-    try:
-        _,bm=cv2.threshold(coarse,128,255,cv2.THRESH_BINARY)
-        coords=cv2.findNonZero(bm)
-        if coords is None: return None,0.0
-        x,y,w,h=cv2.boundingRect(coords); H,W=rgb.shape[:2]
-        pad=0.13 if (w*h)/(W*H)<0.25 else 0.10
-        x0,y0,ew,eh=_expand_bbox(x,y,w,h,W,H,pad=pad)
-        bbox=np.array([x0,y0,x0+ew,y0+eh],dtype=float)
-        pred=SAM2ImagePredictor.from_pretrained(
-            "facebook/sam2.1-hiera-tiny",device=torch.device("cpu"))
-        t0=time.time()
-        with torch.inference_mode():
-            pred.set_image(rgb)
-            masks,scores,_=pred.predict(box=bbox[None],multimask_output=True)
-        best=masks[int(np.argmax(scores))].astype(np.uint8)*255
-        sc=float(scores.max())
-        print(f"[sam2] {time.time()-t0:.1f}s score={sc:.3f}")
-        return best,sc
-    except Exception as e:
-        print(f"[sam2] {e}"); return None,0.0
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 3 — CONSERVATIVE MASK CLEANUP
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _clean_mask(mask: np.ndarray) -> np.ndarray:
-    """
-    Minimal mask cleanup — preserves ALL car geometry including thin sill/skirt.
-
-    CRITICAL: No MORPH_OPEN — it erodes thin underbody regions (sill ~3-5px wide)
-    and the subsequent largest-component filter then discards them permanently.
-
-    Operations:
-    1. MORPH_CLOSE 1 pass only — fills single-pixel JPEG gaps at boundaries
-    2. Connected components — keep MAIN body + anything touching/near it
-    3. Hole fill — windows, grille (< 3% image area)
-    4. NO MORPH_OPEN — never
-    5. NO row deletion — never
-    """
-    binary = (mask > 0).astype(np.uint8) * 255
-    h, w   = binary.shape
-
-    # Step 1: CLOSE only, 1 pass — fills 1-2px gaps without destroying thin features
-    k3     = np.ones((3,3), np.uint8)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, k3, iterations=1)
-
-    # Step 2: Component filtering — keep main body + anything geometrically close.
-    # Use a 5px dilation to test connectivity, but keep original pixel values.
-    nc_raw, labels_raw, stats_raw, _ = cv2.connectedComponentsWithStats(binary, 8)
-    if nc_raw <= 2:
-        pass  # 0 or 1 foreground components — nothing to filter
-    else:
-        main_idx  = 1 + int(np.argmax(stats_raw[1:, cv2.CC_STAT_AREA]))
-        main_area = int(stats_raw[main_idx, cv2.CC_STAT_AREA])
-
-        # Build a 5px-dilated version of the main body to test proximity
-        main_only = (labels_raw == main_idx).astype(np.uint8) * 255
-        k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        main_expanded = cv2.dilate(main_only, k5, iterations=1)
-
-        # Keep a secondary component if ANY of its pixels touch the expanded main body
-        # This preserves: thin sill strips, lower bumper lips, small skirt sections
-        keep = np.zeros_like(binary)
-        keep[labels_raw == main_idx] = 255  # always keep main body
-        for ci in range(1, nc_raw):
-            if ci == main_idx: continue
-            comp_px = (labels_raw == ci).astype(np.uint8) * 255
-            overlap = cv2.bitwise_and(comp_px, main_expanded)
-            area_ratio = int(stats_raw[ci, cv2.CC_STAT_AREA]) / max(main_area, 1)
-            if overlap.any() or area_ratio > 0.02:
-                keep[labels_raw == ci] = 255
-        binary = cv2.bitwise_and(binary, keep)
-
-    # Step 3: Fill interior holes (windows/grille) up to 3% of image
-    flood = binary.copy()
-    cv2.floodFill(flood, np.zeros((h+2,w+2), np.uint8), (0,0), 255)
-    interior = cv2.bitwise_and(cv2.bitwise_not(flood), cv2.bitwise_not(binary))
-    nc2, lb2, st2, _ = cv2.connectedComponentsWithStats(interior, 8)
-    max_hole = int(w * h * 0.03)
-    for i in range(1, nc2):
-        if st2[i, cv2.CC_STAT_AREA] < max_hole:
-            binary[lb2 == i] = 255
-
-    # Step 4: Sub-pixel boundary smoothing only
-    blurred = cv2.GaussianBlur(binary, (0,0), 0.5)
-    _, binary = cv2.threshold(blurred, 64, 255, cv2.THRESH_BINARY)
-    return binary
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 4 — UNDERBODY / SHADOW REMOVAL
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _clean_underbody(mask: np.ndarray,
-                      underbody_preserve: bool = True) -> tuple[np.ndarray, dict]:
-    """
-    Conservative underbody cleanup for engineering-grade CFD geometry.
-
-    PRESERVES (connected to main body):
-      - lower bumper lip / chin spoiler
-      - sill / rocker panel
-      - side skirt geometry
-      - diffuser hint / underbody ramp
-      - ride height variation
-      - wheel arch bottom transitions
-
-    REMOVES (disconnected only):
-      - ground shadow islands
-      - reflection blobs
-      - floating noise
-      - thin elongated shadow bands (low solidity, disconnected)
-
-    CRITICAL RULE: Never uses mask[y:,:]=0 row-deletion.
-    Only removes pixels that are disconnected from the main vehicle body.
-
-    Returns: (cleaned_mask, diagnostics_dict)
-    """
-    if not (mask > 127).any():
-        return mask, {"warning": "empty mask"}
-
-    binary = (mask > 127).astype(np.uint8) * 255
-    h, w   = binary.shape
-    diag   = {}
-
-    # ── Step 1: Find all connected components ─────────────────────────────────
-    nc, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, 8)
-
-    if nc <= 1:
-        # No components at all — return as-is
-        diag["components"] = 0
-        return binary, diag
-
-    if nc == 2:
-        # Only one foreground component — nothing to remove
-        diag["components"] = 1
-        diag["removed_blobs"] = 0
-        return binary, diag
-
-    # ── Step 2: Identify the MAIN vehicle component ───────────────────────────
-    # Largest area = main car body
-    areas = stats[1:, cv2.CC_STAT_AREA]
-    main_idx  = 1 + int(np.argmax(areas))
-    main_area = int(areas[main_idx - 1])
-
-    # ── Step 3: Decide which secondary components to remove ───────────────────
-    # Keep a component ONLY if it passes shadow/noise detection.
-    # Shadow blobs are characterised by:
-    #   a) Small area relative to main body  (< 3% of main)
-    #   b) Very low solidity (area / convex hull area < 0.3) — elongated smear
-    #   c) Located mostly below the main body centroid Y
-    #   d) Disconnected from main body (already guaranteed here)
-
-    main_cy   = float(centroids[main_idx][1])
-    main_bbox = stats[main_idx]
-    main_bottom_y = main_bbox[cv2.CC_STAT_TOP] + main_bbox[cv2.CC_STAT_HEIGHT]
-
-    removed_blobs = 0
-    kept_blobs    = 0
-    cleaned       = np.zeros_like(binary)
-    cleaned[labels == main_idx] = 255   # always keep main body
-
-    for ci in range(1, nc):
-        if ci == main_idx:
-            continue
-
-        comp_area = int(stats[ci, cv2.CC_STAT_AREA])
-        comp_x    = int(stats[ci, cv2.CC_STAT_LEFT])
-        comp_y    = int(stats[ci, cv2.CC_STAT_TOP])
-        comp_w    = int(stats[ci, cv2.CC_STAT_WIDTH])
-        comp_h    = int(stats[ci, cv2.CC_STAT_HEIGHT])
-        comp_cy   = float(centroids[ci][1])
-
-        area_ratio = comp_area / max(main_area, 1)
-
-        # Solidity: area / convex hull area (low = elongated shadow blob)
-        comp_mask  = (labels == ci).astype(np.uint8) * 255
-        contours_c, _ = cv2.findContours(comp_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        solidity = 1.0
-        if contours_c:
-            hull = cv2.convexHull(contours_c[0])
-            hull_area = cv2.contourArea(hull)
-            solidity  = comp_area / max(float(hull_area), 1.0)
-
-        # Aspect ratio of bounding box (elongated horizontal = shadow stripe)
-        comp_aspect = comp_w / max(comp_h, 1)
-
-        # Is this blob mostly below the main body?
-        below_main = comp_cy > main_cy
-
-        # Decision: remove if ALL of these hold:
-        #   - area < 3% of main body
-        #   - solidity < 0.45 (elongated / diffuse)  OR  below_main + aspect > 4
-        #   - located below the bottom 10% of the main body bbox
-        is_tiny     = area_ratio < 0.03
-        is_smear    = solidity < 0.45
-        is_stripe   = comp_aspect > 5.0 and below_main
-        is_below    = comp_cy > main_bottom_y * 0.92
-
-        # Conservative default — only remove if clearly a shadow/reflection:
-        # Must be ALL of: tiny (<1%), elongated smear or stripe, AND below main body
-        # This preserves: sills, diffusers, skirts, lower bumper lips
-        if underbody_preserve:
-            should_remove = (
-                area_ratio < 0.01        # very small relative to car
-                and is_below             # located below main body centroid
-                and (is_smear or is_stripe)  # elongated / diffuse shape
-                and comp_h < int(h * 0.05)  # thin (< 5% of image height)
-            )
-        else:
-            should_remove = is_tiny and (is_smear or is_stripe) and is_below
-
-        if should_remove:
-            removed_blobs += 1
-        else:
-            # Keep this component — it may be a sill, skirt, diffuser hint
-            cleaned[labels == ci] = 255
-            kept_blobs += 1
-
-    # ── Step 4: Underbody continuity diagnostics ──────────────────────────────
-    # Check if lower contour is unnaturally flat (over-cleaning warning)
-    rows_after  = np.where(cleaned > 127)[0]
-    if len(rows_after) > 0:
-        body_top_a  = int(rows_after.min())
-        body_bot_a  = int(rows_after.max())
-        car_h_a     = max(body_bot_a - body_top_a, 1)
-
-        # Sample the bottom Y at 20 horizontal positions
-        lower_zone  = cleaned[body_top_a + int(car_h_a*0.70):, :]
-        flat_count  = 0
-        prev_bot    = None
-        n_samples   = 20
-        for i in range(n_samples):
-            xc = int(i * w / n_samples)
-            col = lower_zone[:, xc]
-            fg  = np.where(col > 127)[0]
-            if len(fg) > 0:
-                bot_y = int(fg.max())
-                if prev_bot is not None and abs(bot_y - prev_bot) <= 1:
-                    flat_count += 1
-                prev_bot = bot_y
-
-        flat_fraction = flat_count / max(n_samples - 1, 1)
-        if flat_fraction > 0.40:
-            diag["warning_underbody"] = (
-                f"Possible underbody over-cleaning — lower contour is flat "
-                f"for {flat_fraction*100:.0f}% of vehicle length. "
-                f"Check segmentation mask quality."
-            )
-            print(f"[underbody] ⚠ flat lower contour {flat_fraction*100:.0f}%")
-
-        # Lower contour occupancy: fraction of bottom 20% of car height that has pixels
-        lower_band = cleaned[body_top_a + int(car_h_a*0.80):body_bot_a, :]
-        occupancy  = float((lower_band > 127).sum()) / max(lower_band.size, 1)
-        diag["lower_contour_occupancy"] = round(occupancy, 3)
-        diag["underbody_flat_fraction"] = round(flat_fraction, 3)
-
-    diag["components_input"]  = nc - 1
-    diag["removed_blobs"]     = removed_blobs
-    diag["kept_secondary"]    = kept_blobs
-    diag["preserve_mode"]     = underbody_preserve
-    print(f"[underbody] kept={kept_blobs} removed={removed_blobs} "
-          f"(preserve={'ON' if underbody_preserve else 'OFF'})")
-
-    return cleaned, diag
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 5 — TECHNICAL CONTOUR EXTRACTION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def extract_technical_outline(mask: np.ndarray) -> np.ndarray|None:
-    """CHAIN_APPROX_NONE — every boundary pixel. Returns largest valid contour."""
-    _,binary=cv2.threshold(mask,127,255,cv2.THRESH_BINARY)
-    contours,_=cv2.findContours(binary,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
-    if not contours: return None
-    h,w=mask.shape
-    valid=[c for c in contours if cv2.contourArea(c)>w*h*MIN_CAR_FRAC]
-    return max(valid or contours, key=cv2.contourArea)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 6 — SPIKE REMOVAL
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _remove_spikes(pts: np.ndarray) -> np.ndarray:
-    """
-    Remove single-pixel spike noise from contour.
-    Only removes protrusions < SPIKE_MAX_DIST_PX that deviate > SPIKE_ANGLE_DEG.
-    Preserves ALL real car geometry — bumpers, wheel arches, mirrors, spoilers.
-    """
-    n=len(pts); out=[]
-    for i in range(n):
-        prev=pts[(i-SPIKE_WINDOW)%n]; curr=pts[i]; nxt=pts[(i+SPIKE_WINDOW)%n]
-        v1=curr-prev; v2=nxt-curr
-        n1=np.linalg.norm(v1); n2=np.linalg.norm(v2)
-        if n1<1e-6 or n2<1e-6: out.append(curr); continue
-        cos_a=np.clip(np.dot(v1/n1,v2/n2),-1.0,1.0)
-        angle=math.degrees(math.acos(cos_a))
-        if angle>(180-SPIKE_ANGLE_DEG):
-            ln=np.linalg.norm(nxt-prev)
-            if ln>0:
-                t=np.clip(np.dot(curr-prev,nxt-prev)/ln**2,0,1)
-                proj=prev+t*(nxt-prev)
-                if np.linalg.norm(curr-proj)<SPIKE_MAX_DIST_PX:
-                    continue
-        out.append(curr)
-    return np.array(out)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 7 — CANNY EDGE SNAPPING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _edge_snap(pts: np.ndarray, img_rgb: np.ndarray,
-               radius: int = EDGE_SNAP_RADIUS) -> np.ndarray:
-    """
-    Pull each contour point toward the nearest strong Canny edge within `radius` px.
-    Improves accuracy at bumper corners, wheel arch lips, roof edges, spoiler edges.
-    Does NOT replace the segmentation boundary — only refines by up to `radius` px.
-
-    Strategy:
-    1. Compute Canny edge map on the RGB image
-    2. For each contour point, search a `radius`×`radius` window
-    3. If a strong edge pixel exists within radius, snap to it
-    4. Otherwise keep original point
-    """
-    # Canny on luminance channel
-    gray     = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-    enhanced = cv2.bilateralFilter(gray, 7, 50, 50)  # preserve edges, reduce noise
-    med      = float(np.median(enhanced))
-    lo,hi    = max(15, int(med*0.4)), min(255, int(med*1.2))
-    edges    = cv2.Canny(enhanced, lo, hi)
-
-    H, W     = img_rgb.shape[:2]
-    snapped  = pts.copy().astype(float)
-    n_snapped = 0
-
-    for i, pt in enumerate(pts):
-        x, y = int(round(pt[0])), int(round(pt[1]))
-        # Search window clamped to image bounds
-        x0 = max(0, x-radius); x1 = min(W, x+radius+1)
-        y0 = max(0, y-radius); y1 = min(H, y+radius+1)
-        patch = edges[y0:y1, x0:x1]
-        if patch.sum() == 0:
-            continue  # no edge in window — keep original
-        # Find closest edge pixel to current point
-        ey_local, ex_local = np.where(patch > 0)
-        if len(ex_local) == 0:
-            continue
-        ex_global = ex_local + x0
-        ey_global = ey_local + y0
-        dists = (ex_global - x)**2 + (ey_global - y)**2
-        closest = int(np.argmin(dists))
-        nx, ny  = float(ex_global[closest]), float(ey_global[closest])
-        # Only snap if the edge is closer than current position to image gradient
-        if dists[closest] < radius**2:
-            snapped[i] = [nx, ny]
-            n_snapped += 1
-
-    print(f"[snap] {n_snapped}/{len(pts)} pts snapped to Canny edges")
-    return snapped
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 8 — ARC-LENGTH RESAMPLING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _resample_arclen(pts: np.ndarray, n: int) -> np.ndarray:
-    closed  = np.vstack([pts, pts[0:1]])
-    diffs   = np.diff(closed, axis=0)
-    dists   = np.sqrt((diffs**2).sum(axis=1))
-    cumdist = np.concatenate([[0], np.cumsum(dists)])
-    total   = cumdist[-1]
-    if total < 1: return pts[:n] if len(pts)>=n else pts
-    sd = np.linspace(0, total, n, endpoint=False)
-    return np.column_stack([np.interp(sd,cumdist,closed[:,0]),
-                             np.interp(sd,cumdist,closed[:,1])])
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 9 — MINIMAL SMOOTHING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _smooth(pts: np.ndarray, w: int) -> np.ndarray:
-    """Moving average. window=3 for technical, window=5 for display. 1 pass only."""
-    if w <= 1: return pts
-    n, half = len(pts), w//2
-    out = np.zeros_like(pts)
-    for i in range(n):
-        idx = [(i+j-half)%n for j in range(w)]
-        out[i] = pts[idx].mean(axis=0)
-    return out
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 10 — KEYPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _keypoints(contour, mask, rgb, bbox):
-    bx,by,bw,bh=bbox; pts=contour.reshape(-1,2)
-    def band(y0,y1): return pts[(pts[:,1]>=by+bh*y0)&(pts[:,1]<by+bh*y1)]
-    rp=band(0,0.30); rp=rp[rp[:,0].argsort()] if len(rp) else rp
-    sp=band(0.60,0.82); sp=sp[sp[:,0].argsort()] if len(sp) else sp
-    mp=band(0.25,0.75); bumpers={"front":None,"rear":None}
-    if len(mp):
-        f=mp[mp[:,0].argmin()]; r=mp[mp[:,0].argmax()]
-        bumpers={"front":{"x":int(f[0]),"y":int(f[1])},
-                 "rear": {"x":int(r[0]),"y":int(r[1])}}
-    ws={}
-    fu=pts[(pts[:,0]<bx+bw*0.50)&(pts[:,1]<by+bh*0.65)]
-    if len(fu)>=2:
-        base=fu[fu[:,1].argmax()]; top=fu[fu[:,1].argmin()]
-        dy=float(base[1]-top[1]); dx=float(base[0]-top[0])
-        ws={"base":{"x":int(base[0]),"y":int(base[1])},
-            "top":{"x":int(top[0]),"y":int(top[1])},
-            "a_pillar_angle_deg":round(math.degrees(math.atan2(dy,max(abs(dx),1))),1)}
-    gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
-    _,bm=cv2.threshold(mask,127,255,cv2.THRESH_BINARY)
-    mg=cv2.bitwise_and(gray,bm)
-    ly=by+int(bh*0.40); roi=mg[ly:by+bh,bx:bx+bw]
-    wheels=[]
-    if roi.size>0:
-        blur=cv2.GaussianBlur(roi,(7,7),2)
-        circs=cv2.HoughCircles(blur,cv2.HOUGH_GRADIENT,1.1,
-            minDist=int(bw*0.22),param1=40,param2=22,
-            minRadius=max(8,int(bw*0.07)),maxRadius=max(16,int(bw*0.20)))
-        if circs is not None:
-            for cx2,cy2,r in sorted(np.uint16(np.around(circs[0]))[:2],key=lambda c:c[0]):
-                wheels.append({"cx":int(bx+cx2),"cy":int(ly+cy2),"r":int(r)})
-    step=lambda a:max(1,len(a)//40)
-    return {"wheels":wheels,
-            "roofline":[{"x":int(p[0]),"y":int(p[1])} for p in rp[::step(rp)]],
-            "sill":[{"x":int(p[0]),"y":int(p[1])} for p in sp[::step(sp)]],
-            "bumpers":bumpers,"windscreen":ws}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 11 — CFD GEOMETRY EXTRACTION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _cfd_geometry(dense, bbox, wheels, ws, img_shape):
-    bx,by,bw,bh=bbox; aspect=bw/max(bh,1)
-    if len(wheels)>=2:
-        wb_px=abs(wheels[1]["cx"]-wheels[0]["cx"])
-        hood_r=(wheels[0]["cx"]-bx)/bw
-        cabin_r=wb_px/bw
-        boot_r=(bx+bw-wheels[1]["cx"])/bw
-        wb_norm=wb_px/bh
-    else:
-        hood_r,cabin_r,boot_r=0.28,0.44,0.28; wb_norm=aspect*0.85
-    top_y=dense[:,1].min()
-    rm=dense[:,0]>bx+bw*0.72
-    rear_top=dense[rm,1].min() if rm.any() else top_y
-    rear_drop=(rear_top-top_y)/max(bh,1)
-    # Rear slant: Ahmed body equivalent angle
-    # Measure the slope of the rear upper surface (C-pillar to boot lid)
-    # Use rear 20% of car width, but ONLY the top half of car height
-    # to avoid the near-vertical bumper face corrupting the measurement
-    rear_zone = dense[dense[:,0] > bx + bw*0.78]
-    if len(rear_zone) >= 5:
-        # Restrict to upper 55% of car height (roofline to shoulder line)
-        # This avoids the vertical rear face of hatchbacks/SUVs
-        upper_y_limit = by + bh * 0.55
-        rear_upper    = rear_zone[rear_zone[:,1] < upper_y_limit]
-        if len(rear_upper) >= 4:
-            # Sort by x (front→rear within rear zone)
-            rear_upper_s = rear_upper[rear_upper[:,0].argsort()]
-            # Robust slope: linear regression on the upper rear points
-            xs = rear_upper_s[:,0].astype(float)
-            ys = rear_upper_s[:,1].astype(float)
-            # Normalise to avoid numerical issues
-            x_range = float(xs.max() - xs.min())
-            if x_range > bw * 0.02:
-                slope = float(np.polyfit(xs, ys, 1)[0])  # dy/dx in pixel coords
-                # positive slope = y increases as x increases = roof drops toward rear
-                raw_slant = math.degrees(math.atan(abs(slope)))
-                # Clamp to physical range: 0° (vertical rear) to 50° (fastback)
-                rear_slant = float(np.clip(raw_slant, 0.0, 50.0))
-            else:
-                rear_slant = float(np.clip(rear_drop * 60.0, 0.0, 45.0))
-        else:
-            rear_slant = float(np.clip(rear_drop * 60.0, 0.0, 45.0))
-    else:
-        rear_slant = 20.0
-    # Ahmed body Cd correlation (validated, Ahmed 1984 / Hucho 1998)
-    if rear_slant<12:    cd_ahmed=0.23+rear_slant*0.002
-    elif rear_slant<30:  cd_ahmed=0.25+(rear_slant-12)*0.009
-    elif rear_slant<35:  cd_ahmed=0.41+(rear_slant-30)*0.04
-    else:                cd_ahmed=0.45-(rear_slant-35)*0.003
-    ws_ang=ws.get("a_pillar_angle_deg",58.0)
-    ws_corr=max(0,(ws_ang-55)*0.0015)
-    if aspect>2.5:   bt="estate" if rear_drop>0.14 else "suv"
-    elif aspect>1.9:
-        if rear_drop>0.22:   bt="fastback"
-        elif rear_drop>0.10: bt="hatchback"
-        else:                bt="notchback"
-    elif aspect<1.6: bt="suv"
-    else:            bt="notchback"
-    bt_off={"fastback":-0.02,"notchback":0.02,"hatchback":0.0,"estate":0.03,"suv":0.09}.get(bt,0.0)
-    cd=float(np.clip(cd_ahmed+ws_corr+bt_off,0.18,0.52))
-    fa_norm=round(float(bh/bw*0.82),3)
-    return {
-        "bodyType":bt,"aspectRatio":round(float(aspect),3),
-        "hoodRatio":round(float(hood_r),3),"cabinRatio":round(float(cabin_r),3),
-        "bootRatio":round(float(boot_r),3),
-        "cabinH":round(float((by+bh-top_y)/max(bh,1)),3),
-        "wsAngleDeg":round(float(ws_ang),1),
-        "rearDrop":round(float(rear_drop),3),
-        "rearSlantAngleDeg":round(float(rear_slant),1),
-        "wheelbaseNorm":round(float(wb_norm),3),
-        "frontalAreaNorm":fa_norm,
-        "Cd":round(float(cd),3),
-        "CdA":round(float(cd*fa_norm),4),
-        "separationPointX":round(0.80+rear_drop*0.15 if bt in("fastback","hatchback") else 0.70,3),
-        "ahmedRegime":("attached"     if rear_slant<12 else
-                       "intermediate" if rear_slant<30 else
-                       "critical"     if rear_slant<36 else
-                       "separated"),
-        "w1":round(float(wheels[0]["cx"]/(bx+bw)),4) if wheels else 0.22,
-        "w2":round(float(wheels[1]["cx"]/(bx+bw)),4) if len(wheels)>=2 else 0.76,
-        "confidence":None,  # set by quality scorer
-        "rideH":0.07,
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.src = url
+  })
+}
+
+// ── URL fetcher with multi-proxy fallback ─────────────────────────────────────
+async function fetchImageFromUrl(url) {
+  const proxies = [
+    u => u,
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://proxy.cors.sh/${u}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  ]
+  for (const proxy of proxies) {
+    try {
+      const r = await fetch(proxy(url), { signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined })
+      if (!r.ok) continue
+      const blob = await r.blob()
+      if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) continue
+      const filename = url.split('/').pop()?.split('?')[0] || 'car.jpg'
+      return new File([blob], filename, { type: blob.type.startsWith('image/') ? blob.type : 'image/jpeg' })
+    } catch { continue }
+  }
+  throw new Error('Could not fetch image — try downloading and uploading the file directly')
+}
+
+// ── Pipeline stage config ─────────────────────────────────────────────────────
+const STAGES = [
+  { id: 'prep',      label: 'Preprocessing',        icon: '⚙', pct: [0,  8]  },
+  { id: 'yolo',      label: 'YOLO Detection',        icon: '◉', pct: [8,  32] },
+  { id: 'sam2',      label: 'SAM2 Refinement',       icon: '◎', pct: [32, 60] },
+  { id: 'contour',   label: 'Contour Extraction',    icon: '⬡', pct: [60, 72] },
+  { id: 'keypoints', label: 'Keypoint Mapping',      icon: '✦', pct: [72, 82] },
+  { id: 'panels',    label: 'Panel Detection',       icon: '⊞', pct: [82, 92] },
+  { id: 'aero',      label: 'Aero Analysis',         icon: '◈', pct: [92, 98] },
+  { id: 'done',      label: 'Complete',              icon: '✓', pct: [98, 100]},
+]
+
+// ── Loading animation ─────────────────────────────────────────────────────────
+function PipelineLoader({ pct, msg, mode }) {
+  const activeStage = STAGES.findLast(s => pct >= s.pct[0]) ?? STAGES[0]
+  const relevantStages = mode === 'A' ? STAGES.slice(0,6)
+    : mode === 'B' ? STAGES.slice(0,7)
+    : STAGES
+
+  return (
+    <div style={{
+      display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+      height:'100%',gap:24,padding:'24px 32px',background:'#030608'
+    }}>
+      {/* Big progress ring */}
+      <div style={{position:'relative',width:100,height:100}}>
+        <svg width={100} height={100} viewBox="0 0 100 100">
+          <circle cx={50} cy={50} r={44} fill="none" stroke="rgba(10,132,255,0.08)" strokeWidth={6}/>
+          <circle cx={50} cy={50} r={44} fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth={6}
+            strokeLinecap="round"
+            strokeDasharray={`${2*Math.PI*44}`}
+            strokeDashoffset={`${2*Math.PI*44*(1-pct/100)}`}
+            transform="rotate(-90 50 50)"
+            style={{transition:'stroke-dashoffset 0.6s ease'}}/>
+          <text x={50} y={46} textAnchor="middle" fill="white" fontSize={18} fontWeight={700}
+            fontFamily="'IBM Plex Mono',monospace">{Math.round(pct)}</text>
+          <text x={50} y={60} textAnchor="middle" fill="rgba(10,132,255,0.7)" fontSize={9}
+            fontFamily="'IBM Plex Mono',monospace">%</text>
+        </svg>
+        <div style={{
+          position:'absolute',inset:-4,borderRadius:'50%',
+          border:'1px solid rgba(10,132,255,0.3)',
+          animation:'pulse-ring 1.5s ease-out infinite'
+        }}/>
+      </div>
+
+      {/* Stage pipeline */}
+      <div style={{display:'flex',alignItems:'center',gap:0,flexWrap:'wrap',justifyContent:'center',maxWidth:480}}>
+        {relevantStages.map((s, i) => {
+          const done    = pct >= s.pct[1]
+          const active  = s.id === activeStage.id
+          const pending = pct < s.pct[0]
+          return (
+            <div key={s.id} style={{display:'flex',alignItems:'center'}}>
+              <div style={{
+                display:'flex',flexDirection:'column',alignItems:'center',gap:4,padding:'6px 8px',
+                borderRadius:8,transition:'all 0.3s',
+                background: active ? 'rgba(10,132,255,0.12)' : 'transparent',
+                border: active ? '0.5px solid rgba(10,132,255,0.3)' : '0.5px solid transparent',
+              }}>
+                <div style={{
+                  width:28,height:28,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
+                  fontSize:13,
+                  background: done ? 'rgba(10,132,255,0.9)' : active ? 'rgba(10,132,255,0.2)' : 'rgba(255,255,255,0.05)',
+                  border: active ? '1.5px solid rgba(10,132,255,0.8)' : '1px solid rgba(255,255,255,0.1)',
+                  color: done ? '#fff' : active ? 'rgba(10,132,255,1)' : 'rgba(255,255,255,0.25)',
+                  boxShadow: active ? '0 0 12px rgba(10,132,255,0.4)' : 'none',
+                  transition:'all 0.3s',
+                }}>
+                  {done ? '✓' : s.icon}
+                </div>
+                <span style={{
+                  fontSize:8,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:'0.04em',
+                  color: done ? 'rgba(10,132,255,0.8)' : active ? 'white' : 'rgba(255,255,255,0.2)',
+                  textAlign:'center',lineHeight:1.3,maxWidth:52,
+                  transition:'color 0.3s',
+                }}>
+                  {s.label}
+                </span>
+              </div>
+              {i < relevantStages.length-1 && (
+                <div style={{
+                  width:12,height:1,
+                  background: pct >= relevantStages[i+1].pct[0]
+                    ? 'rgba(10,132,255,0.6)' : 'rgba(255,255,255,0.1)',
+                  transition:'background 0.5s',marginBottom:18,
+                }}/>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Status message */}
+      <div style={{
+        background:'rgba(10,132,255,0.06)',border:'0.5px solid rgba(10,132,255,0.2)',
+        borderRadius:8,padding:'8px 20px',maxWidth:400,textAlign:'center',
+      }}>
+        <div style={{fontSize:11,color:'rgba(10,132,255,0.9)',fontFamily:"'IBM Plex Mono',monospace",
+          letterSpacing:'0.05em',lineHeight:1.6}}>
+          {msg}
+        </div>
+      </div>
+
+      {/* Animated scan line */}
+      <div style={{width:320,height:2,borderRadius:9999,background:'rgba(255,255,255,0.05)',overflow:'hidden'}}>
+        <div style={{
+          height:'100%',width:'40%',borderRadius:9999,
+          background:'linear-gradient(90deg,transparent,rgba(10,132,255,0.8),transparent)',
+          animation:'scan-line 1.8s ease-in-out infinite',
+        }}/>
+      </div>
+
+      <style>{`
+        @keyframes pulse-ring { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(1.3);opacity:0} }
+        @keyframes scan-line  { 0%{transform:translateX(-100%)} 100%{transform:translateX(350%)} }
+      `}</style>
+    </div>
+  )
+}
+
+// ── SideView ──────────────────────────────────────────────────────────────────
+function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, mode='A' }) {
+  // Canvas: wide enough to show car at good size; bottom reserve for ground line + shadow
+  const CW = 620, CH = 310, CPAD = 24
+  const scale_x = CW - CPAD*2, scale_y = CH - 52   // 52px bottom reserve (ground + shadow)
+  const off_x = CPAD, off_y = 10
+
+  if (traceAnimating || (traceProgress && traceProgress.pct < 100 && traceProgress.pct > 0)) {
+    return <PipelineLoader pct={traceProgress?.pct ?? 0} msg={traceProgress?.msg ?? 'Analysing…'} mode={mode}/>
+  }
+
+  const contourPts = g?._contourPts
+  const keypoints  = g?._keypoints
+  if (!contourPts || contourPts.length <= 10) {
+    return (
+      <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+        <rect width={CW} height={CH} fill="#050e18"/>
+        <text x={CW/2} y={CH/2} textAnchor="middle" fill="rgba(255,255,255,0.1)"
+          fontSize="12" fontFamily="'IBM Plex Mono',monospace">Upload a photo and click Analyse</text>
+      </svg>
+    )
+  }
+
+  const crCps  = g?._catmullCps
+  const crPts  = g?._catmullPts
+  const rawPts = g?._smoothPts ?? contourPts
+
+  const bboxAspect  = g._bboxAspect ?? (scale_x / scale_y)
+  const canvasAspect = scale_x / scale_y
+  let draw_w, draw_h
+
+  // Scale to fill canvas well — 93% wide (wide cars) or 90% tall (tall crops)
+  if (bboxAspect > canvasAspect) {
+    draw_w = scale_x * 0.93; draw_h = draw_w / bboxAspect
+  } else {
+    draw_h = scale_y * 0.90; draw_w = draw_h * bboxAspect
+    if (draw_w > scale_x * 0.93) { draw_w = scale_x * 0.93; draw_h = draw_w / bboxAspect }
+  }
+
+  const draw_ox = off_x + (scale_x - draw_w) / 2
+  // Anchor car to bottom of draw area (contour ny=1.0 maps to draw_oy+draw_h)
+  // then pull up by 8px so wheel bottoms clear the ground line with a small gap
+  const draw_oy = off_y + (scale_y - draw_h) - 8
+
+  const toSVG = ([nx,ny]) => [draw_ox + nx*draw_w, draw_oy + ny*draw_h]
+  const kpX = nx => draw_ox + nx*draw_w
+  const kpY = ny => draw_oy + ny*draw_h
+
+  const pathD = rawPts.map((p,i)=>{
+    const[sx,sy]=toSVG(p)
+    return`${i===0?'M':'L'}${sx.toFixed(2)},${sy.toFixed(2)}`
+  }).join(' ') + ' Z'
+
+  // Ground line: sit just below the lowest contour point (ny=1.0 in draw coords)
+  const contourBottom = draw_oy + draw_h
+  const gY = Math.min(contourBottom + 10, CH - 10)
+  const wheels = (keypoints?.wheels??[]).map(w=>({
+    cx: kpX(w.nx), cy: kpY(w.ny),
+    // nr = wheel_r / bbox_w. Use draw_w (not draw_h) since nr is relative to bbox width.
+    // Clamp to 9–20% of draw_h — prevents both over/undersized circles.
+    r: Math.max(draw_h*0.09, Math.min(draw_h*0.20, w.nr*draw_w*0.48)),
+  }))
+  const method = g?._method ?? ''
+
+  return (
+    <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="1.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-strong">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      {/* Ground shadow — centred on computed gY */}
+      <ellipse cx={CW/2} cy={gY+4} rx={scale_x*0.46} ry={5} fill="rgba(0,0,0,0.45)"/>
+      <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+
+      {/*
+        ── FIX: car body fill changed from "none" to a near-opaque dark colour.
+        With fill="none" the SVG background bleeds through wheel-arch cutouts and
+        any concavity at the bottom, creating the illusion that the outline is
+        missing. The dark fill matches the canvas background so it's invisible
+        while blocking the background from showing through.
+      */}
+      <path d={pathD} fill="rgba(4,10,18,0.96)" stroke="rgba(255,255,255,0.12)" strokeWidth="4" fillRule="nonzero"/>
+      <path d={pathD} fill="rgba(4,10,18,0.96)" stroke="rgba(255,255,255,1.0)" strokeWidth="1.2"
+        fillRule="nonzero" filter="url(#glow)"/>
+
+      {/* Panel lines (Mode B/C) */}
+      {showPanels && g?._panels?.lines
+        ?.filter(l => l.length > 0.12 && l.length < 0.85)
+        ?.slice(0, 18)
+        ?.map((l,i) => {
+          if (l.y1 > 0.65 && l.y2 > 0.65) return null
+          const x1s = draw_ox+l.x1*draw_w, y1s = draw_oy+l.y1*draw_h
+          const x2s = draw_ox+l.x2*draw_w, y2s = draw_oy+l.y2*draw_h
+          const isPillar = l.type === 'pillar'
+          return <line key={i} x1={x1s.toFixed(1)} y1={y1s.toFixed(1)}
+            x2={x2s.toFixed(1)} y2={y2s.toFixed(1)}
+            stroke={isPillar?'rgba(100,200,255,0.40)':'rgba(10,132,255,0.30)'}
+            strokeWidth={isPillar?'1.0':'0.7'} strokeDasharray={isPillar?'4 3':'5 4'}/>
+        })}
+
+      {/* Region markers (Mode B/C) */}
+      {showPanels && g?._panels?.markers?.map((m,i) => {
+        const mx = draw_ox+m.nx*draw_w, my = draw_oy+m.ny*draw_h
+        if (mx<draw_ox||mx>draw_ox+draw_w||my<draw_oy||my>draw_oy+draw_h) return null
+        const isTop=m.ny<0.40, isLeft=m.nx<0.30
+        const labelY = isTop ? my-10 : my+14
+        const anchor = isLeft?'start':(m.nx>0.70?'end':'middle')
+        return (
+          <g key={i}>
+            <line x1={mx.toFixed(1)} y1={my.toFixed(1)} x2={mx.toFixed(1)}
+              y2={(isTop?my-6:my+6).toFixed(1)} stroke="rgba(10,132,255,0.5)" strokeWidth="0.7"/>
+            <circle cx={mx.toFixed(1)} cy={my.toFixed(1)} r={2.5} fill="rgba(10,132,255,1.0)"/>
+            <text x={mx.toFixed(1)} y={labelY.toFixed(1)} textAnchor={anchor}
+              fill="rgba(160,210,255,0.9)" fontSize="7.5" fontFamily="'IBM Plex Mono',monospace"
+              letterSpacing="0.04em">{m.label}</text>
+          </g>
+        )
+      })}
+
+      {/* ΔCd annotations (Mode C) */}
+      {showPanels && g?._aero?.region_cd && Object.entries(g._aero.region_cd).map(([region,val],i) => {
+        const pos = {'Front Face':[0.08,0.45],'Underbody':[0.50,0.92],'Wheels':[0.25,0.80],'Rear Wake':[0.92,0.45],'Greenhouse':[0.50,0.25]}[region]
+        if (!pos) return null
+        const ax = draw_ox+pos[0]*draw_w, ay = draw_oy+pos[1]*draw_h
+        return (
+          <g key={i}>
+            <rect x={(ax-24).toFixed(1)} y={(ay-9).toFixed(1)} width="48" height="16" rx="4"
+              fill="rgba(0,0,0,0.8)" stroke="rgba(10,132,255,0.3)" strokeWidth="0.5"/>
+            <text x={ax.toFixed(1)} y={(ay+3).toFixed(1)} textAnchor="middle"
+              fill="rgba(255,200,50,0.95)" fontSize="7" fontFamily="'IBM Plex Mono',monospace">
+              {region.split(' ')[0]} {(val*100).toFixed(1)}%
+            </text>
+          </g>
+        )
+      })}
+
+      {/* Sep line */}
+      {showSep && keypoints?.bumpers?.rear && (
+        <line x1={kpX(keypoints.bumpers.rear.x).toFixed(1)} y1={draw_oy.toFixed(1)}
+          x2={kpX(keypoints.bumpers.rear.x).toFixed(1)} y2={gY.toFixed(1)}
+          stroke="rgba(255,100,80,0.35)" strokeWidth="1" strokeDasharray="3 2"/>
+      )}
+
+      {/* Wheels */}
+      {wheels.map((w,i)=>(
+        <g key={i}>
+          <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r} fill="none"
+            stroke="rgba(255,255,255,0.8)" strokeWidth="1.5"/>
+          <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r*0.5} fill="none"
+            stroke="rgba(255,255,255,0.25)" strokeWidth="0.7"/>
+        </g>
+      ))}
+
+      <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.10)"
+        fontSize="8" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
+        SIDE · {contourPts.length}pts · {method}{g?._panels?' · panels':''}{g?._aero?' · aero':''}
+      </text>
+    </svg>
+  )
+}
+
+// ── FrontView ─────────────────────────────────────────────────────────────────
+function FrontView({ g }) {
+  const W=320, H=240, cx=W/2, gY=H-16
+  const kp=g?._keypoints, wheels=kp?.wheels??[], roofPts=kp?.roofline??[], sillPts=kp?.sill??[]
+  const roofTopNY = roofPts.length ? Math.min(...roofPts.map(p=>p.ny)) : 0.15
+  const sillNY    = sillPts.length ? sillPts.reduce((s,p)=>s+p.ny,0)/sillPts.length : 0.80
+  const trackFrac = wheels.length>=2 ? Math.abs(wheels[1].nx-wheels[0].nx) : 0.48
+  const bw = Math.round(Math.min(110,Math.max(70,trackFrac*W*1.1)))
+  const bh = Math.round(Math.min(130,Math.max(75,(sillNY-roofTopNY)*H*1.15)))
+  const bodyBot=gY-bh*0.08, bodyTop=bodyBot-bh
+  const wsAngle=g?.wsAngleDeg??58
+  const roofNarrow=Math.max(0.28,Math.min(0.46,0.38-(wsAngle-55)*0.003))
+  const roofHW=bw*roofNarrow, shoulderHW=bw*0.50, sillHW=bw*0.46
+  const shoulderY=bodyTop+bh*0.55, sillY=bodyTop+bh*0.92
+  const frontPath=[`M ${cx} ${bodyTop}`,`C ${cx-roofHW*0.6} ${bodyTop} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,`C ${cx-shoulderHW} ${shoulderY+bh*0.12} ${cx-sillHW} ${sillY} ${cx-sillHW*0.80} ${bodyBot}`,`L ${cx+sillHW*0.80} ${bodyBot}`,`C ${cx+sillHW} ${sillY} ${cx+shoulderHW} ${shoulderY+bh*0.12} ${cx+shoulderHW} ${shoulderY}`,`C ${cx+shoulderHW} ${shoulderY-bh*0.22} ${cx+roofHW*0.6} ${bodyTop} ${cx} ${bodyTop}`,'Z'].join(' ')
+  const aBY=bodyTop+bh*0.55, aTY=bodyTop+bh*0.08, aBHW=shoulderHW*0.86, aTHW=roofHW*0.92
+  const wscPath=[`M ${cx-aTHW} ${aTY}`,`Q ${cx} ${aTY-2} ${cx+aTHW} ${aTY}`,`L ${cx+aBHW} ${aBY}`,`L ${cx-aBHW} ${aBY}`,'Z'].join(' ')
+  const wR=wheels.length>=1?Math.max(12,Math.min(24,wheels[0].r/800*W*0.9)):16
+  const w1x=cx-shoulderHW*1.05, w2x=cx+shoulderHW*1.05, wY=gY-wR
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <ellipse cx={cx} cy={gY+5} rx={shoulderHW*1.2} ry={7} fill="rgba(0,0,0,0.4)"/>
+      <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth="1.5"/>
+      <path d={frontPath} fill="none" stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
+      <path d={wscPath}   fill="none" stroke="rgba(10,132,255,0.4)" strokeWidth="0.9"/>
+      {[-1,1].map(s=><path key={s} d={`M ${cx+s*aTHW} ${aTY} L ${cx+s*aBHW} ${aBY}`} stroke="rgba(10,132,255,0.3)" strokeWidth="1.5" strokeLinecap="round"/>)}
+      {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i)=>(
+        <g key={i}>
+          <circle cx={wcx} cy={wcy} r={wR}     fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth="1.5"/>
+          <circle cx={wcx} cy={wcy} r={wR*0.5} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="0.8"/>
+        </g>
+      ))}
+      <text x={cx} y={H-3} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">FRONT</text>
+    </svg>
+  )
+}
+
+// ── TopView ───────────────────────────────────────────────────────────────────
+function TopView({ g, yawAngle }) {
+  const W=320,H=240,cx=W/2,cy=H/2+6
+  const kp=g?._keypoints,wheels=kp?.wheels??[]
+  const bl=Math.round(Math.min(180,Math.max(130,(g?.aspectRatio??2.0)*72))),bw=70
+  const hoodEnd=cy+bl*((g?.hoodRatio??0.28)-0.50), cabinEnd=cy+bl*((g?.hoodRatio??0.28)+(g?.cabinRatio??0.44)-0.50)
+  const ghW=bw*0.41
+  const fwy=wheels.length>=1?cy+bl*(wheels[0].nx*1.1-0.55):cy+bl*((g?.w1??0.22)-0.50)
+  const rwy=wheels.length>=2?cy+bl*(wheels[1].nx*1.1-0.55):cy+bl*((g?.w2??0.76)-0.50)
+  const wR=wheels.length>=1?Math.max(8,Math.min(18,wheels[0].r/800*W*0.9)):10,wTrack=bw*0.52
+  const body=[`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,`Q ${cx-bw*0.50} ${cy-bl/2+52} ${cx-bw*0.50} ${cy}`,`Q ${cx-bw*0.50} ${cy+bl*0.12} ${cx-bw*0.44} ${cy+bl/2-10}`,`Q ${cx-bw*0.30} ${cy+bl/2-2} ${cx} ${cy+bl/2-2}`,`Q ${cx+bw*0.30} ${cy+bl/2-2} ${cx+bw*0.44} ${cy+bl/2-10}`,`Q ${cx+bw*0.50} ${cy+bl*0.12} ${cx+bw*0.50} ${cy}`,`Q ${cx+bw*0.50} ${cy-bl/2+52} ${cx+bw*0.48} ${cy-bl/2+22}`,`Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ')
+  const ghPath=[`M ${cx} ${hoodEnd-4}`,`Q ${cx-ghW*0.50} ${hoodEnd+2} ${cx-ghW*0.52} ${hoodEnd+16}`,`L ${cx-ghW*0.52} ${cabinEnd-10}`,`Q ${cx-ghW*0.44} ${cabinEnd} ${cx} ${cabinEnd}`,`Q ${cx+ghW*0.44} ${cabinEnd} ${cx+ghW*0.52} ${cabinEnd-10}`,`L ${cx+ghW*0.52} ${hoodEnd+16}`,`Q ${cx+ghW*0.50} ${hoodEnd+2} ${cx} ${hoodEnd-4}`,'Z'].join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <path d={body}   fill="none" stroke="rgba(10,132,255,0.65)" strokeWidth="1.1"/>
+      <path d={ghPath} fill="none" stroke="rgba(10,132,255,0.35)" strokeWidth="0.9"/>
+      {[[-wTrack,fwy],[wTrack,fwy],[-wTrack,rwy],[wTrack,rwy]].map(([wx,wy],i)=>(
+        <ellipse key={i} cx={cx+wx} cy={wy} rx={wR*0.45} ry={wR} fill="none" stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
+      ))}
+      <text x={cx} y={H-4} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">TOP</text>
+    </svg>
+  )
+}
+
+// ── UnderView ─────────────────────────────────────────────────────────────────
+function UnderView({ g }) {
+  const W=320,H=240,cx=W/2,cy=H/2+6
+  const kp=g?._keypoints,wheels=kp?.wheels??[]
+  const bl=Math.round(Math.min(180,Math.max(130,(g?.aspectRatio??2.0)*72))),bw=70
+  const fwy=wheels.length>=1?cy+bl*(wheels[0].nx*1.1-0.55):cy+bl*((g?.w1??0.22)-0.50)
+  const rwy=wheels.length>=2?cy+bl*(wheels[1].nx*1.1-0.55):cy+bl*((g?.w2??0.76)-0.50)
+  const wR=wheels.length>=1?Math.max(8,Math.min(18,wheels[0].r/800*W*0.9)):10,wTrack=bw*0.52
+  const diffY=cy+bl/2-bl*0.14
+  const body=[`M ${cx} ${cy-bl/2+5}`,`Q ${cx-bw*0.24} ${cy-bl/2+1} ${cx-bw*0.48} ${cy-bl/2+22}`,`L ${cx-bw*0.50} ${cy+bl*0.08}`,`Q ${cx-bw*0.48} ${cy+bl/2-12} ${cx-bw*0.42} ${cy+bl/2-3}`,`L ${cx+bw*0.42} ${cy+bl/2-3}`,`Q ${cx+bw*0.48} ${cy+bl/2-12} ${cx+bw*0.50} ${cy+bl*0.08}`,`L ${cx+bw*0.48} ${cy-bl/2+22}`,`Q ${cx+bw*0.24} ${cy-bl/2+1} ${cx} ${cy-bl/2+5}`,'Z'].join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <path d={body} fill="none" stroke="rgba(10,132,255,0.65)" strokeWidth="1.1"/>
+      <rect x={cx-bw*0.28} y={cy-bl*0.35} width={bw*0.56} height={bl*0.62} rx="3" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="0.8"/>
+      <path d={`M ${cx-bw*0.38} ${diffY} L ${cx-bw*0.42} ${cy+bl/2-3} L ${cx+bw*0.42} ${cy+bl/2-3} L ${cx+bw*0.38} ${diffY} Z`} fill="none" stroke="rgba(10,132,255,0.4)" strokeWidth="0.9"/>
+      {[[-wTrack,fwy],[wTrack,fwy],[-wTrack,rwy],[wTrack,rwy]].map(([wx,wy],i)=>(
+        <ellipse key={i} cx={cx+wx} cy={wy} rx={wR*0.45} ry={wR} fill="none" stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
+      ))}
+      <text x={cx} y={H-4} textAnchor="middle" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">UNDERSIDE</text>
+    </svg>
+  )
+}
+
+// ── Section label ─────────────────────────────────────────────────────────────
+function SL({ n, t }) {
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+      <span style={{fontSize:9,fontWeight:700,color:'var(--blue)',fontFamily:"'IBM Plex Mono'"}}>{n}</span>
+      <div style={{flex:1,height:0.5,background:'var(--sep)'}}/>
+      <span style={{fontSize:9,fontWeight:600,color:'var(--text-quaternary)',letterSpacing:'0.08em',textTransform:'uppercase'}}>{t}</span>
+    </div>
+  )
+}
+
+const VIEWS = [{id:'side',label:'Side'},{id:'front',label:'Front'},{id:'top',label:'Top'},{id:'under',label:'Underside'}]
+
+export default function Views2DPage() {
+  const [dragOver,       setDragOver]       = useState(false)
+  const [file,           setFile]           = useState(null)
+  const [preview,        setPreview]        = useState(null)
+  const [stage,          setStage]          = useState('idle')
+  const [traceProgress,  setTraceProgress]  = useState(null)
+  const [traceAnimating, setTraceAnimating] = useState(false)
+  const [geo,            setGeo]            = useState(null)
+  const [error,          setError]          = useState(null)
+  const [activeView,     setActiveView]     = useState('side')
+  const [showSep,        setShowSep]        = useState(true)
+  const [yawAngle,       setYawAngle]       = useState(0)
+  const [urlInput,       setUrlInput]       = useState('')
+  const [urlError,       setUrlError]       = useState('')
+  const [urlMode,        setUrlMode]        = useState(false)
+  const [analysisMode,   setAnalysisMode]   = useState('A')
+  const svgRef  = useRef(null)
+  const fileRef = useRef(null)
+
+  const acceptFile = useCallback((f) => {
+    if (!f || !f.type.startsWith('image/')) return
+    setFile(f); setPreview(URL.createObjectURL(f))
+    setGeo(null); setError(null); setTraceProgress(null); setTraceAnimating(false)
+    setStage('ready'); setUrlError('')
+  }, [])
+
+  const acceptUrl = useCallback(async (url) => {
+    const trimmed = url?.trim(); if (!trimmed) return
+    setUrlError(''); setGeo(null); setStage('idle')
+    try {
+      setUrlError('Fetching image…')
+      const f = await fetchImageFromUrl(trimmed)
+      setFile(f); setPreview(URL.createObjectURL(f))
+      setUrlInput(''); setUrlMode(false); setStage('ready'); setUrlError('')
+    } catch(e) {
+      setUrlError(e.message); setStage('idle')
     }
+  }, [])
 
+  const handlePaste = useCallback((e) => {
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const imgItem = items.find(i=>i.type.startsWith('image/'))
+    if (imgItem) { acceptFile(imgItem.getAsFile()); return }
+    const text = e.clipboardData?.getData('text') ?? ''
+    if (/^https?:\/\//i.test(text)) acceptUrl(text)
+  }, [acceptFile, acceptUrl])
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 12 — QUALITY SCORING
-# ═══════════════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [handlePaste])
 
-def _quality_score(method, yolo_conf, sam2_score, mask_area_ratio,
-                   bbox_aspect, contour_len, touches_border,
-                   n_wheels, spike_pts_removed, total_pts,
-                   n_snap_pts, view_type) -> dict:
-    score=100; warnings=[]
+  const run = async () => {
+    if (!file) return
+    setError(null); setGeo(null); setTraceAnimating(false)
+    setTraceProgress({ pct: 2, msg: 'Preparing image…', pts: [] })
+    setStage('analyzing')
 
-    # Method penalties
-    if   method.startswith("birefnet"): score-=15; warnings.append("YOLO failed — BiRefNet fallback")
-    elif method.startswith("rembg"):    score-=25; warnings.append("YOLO+BiRefNet failed — rembg fallback")
-    else:
-        if   yolo_conf<0.70: score-=12; warnings.append(f"Low YOLO conf ({yolo_conf:.2f})")
-        elif yolo_conf<0.85: score-= 5
+    let uploadFile
+    try {
+      uploadFile = await prepareImage(file)
+      console.log(`[StatCFD] Prepared: ${(file.size/1024).toFixed(0)}KB → ${(uploadFile.size/1024).toFixed(0)}KB`)
+    } catch(e) { uploadFile = file }
 
-    # SAM2
-    if "+sam2" not in method:
-        score-=10; warnings.append("SAM2 unavailable — coarse mask only")
-    elif sam2_score<0.80:
-        score-=8;  warnings.append(f"Low SAM2 score ({sam2_score:.2f})")
-    elif sam2_score<0.90:
-        score-=3
-
-    # Mask coverage
-    if   mask_area_ratio<0.05: score-=15; warnings.append("Very small vehicle area in frame")
-    elif mask_area_ratio<0.10: score-= 5; warnings.append("Small vehicle area — mostly background")
-
-    # View type
-    if view_type=='front_or_rear':
-        score-=20; warnings.append("Image may be front/rear view — side view recommended for CFD")
-    elif view_type=='quarter':
-        score-=10; warnings.append("Possible 3/4 view — side view gives best results")
-
-    # Aspect ratio realism for side view
-    if bbox_aspect<1.2:
-        score-=20; warnings.append("Very low aspect ratio — check image orientation")
-    elif bbox_aspect<1.5:
-        score-=10; warnings.append("Low aspect ratio — possible non-side view")
-    elif bbox_aspect>5.5:
-        score-=8;  warnings.append("Very wide aspect — possible crop/padding issue")
-
-    # Contour density check
-    pts_per_unit=contour_len/max(1,bbox_aspect*100)
-    if pts_per_unit<1.5:
-        score-=8; warnings.append("Low contour density — mask may be over-simplified")
-
-    # Contour continuity (no large gaps)
-    spike_ratio=spike_pts_removed/max(total_pts,1)
-    if   spike_ratio>0.05: score-=8; warnings.append(f"High spike ratio ({spike_ratio:.1%}) — noisy boundary")
-    elif spike_ratio>0.02: score-=3
-
-    # Edge snapping coverage
-    snap_ratio=n_snap_pts/max(total_pts,1)
-    if snap_ratio<0.05:
-        warnings.append("Low edge snap rate — image may lack clear boundaries")
-
-    # Border clipping
-    if touches_border:
-        score-=12; warnings.append("Contour touches image border — vehicle may be clipped")
-
-    # Wheel detection
-    if   n_wheels==0: score-=10; warnings.append("No wheels detected — underbody may be missing")
-    elif n_wheels==1: score-= 5; warnings.append("Only 1 wheel detected")
-
-    # Mask consistency — check for implausible coverage ratios
-    if mask_area_ratio>0.80:
-        score-=10; warnings.append("Mask covers >80% of image — background removal may have failed")
-    # mask_consistency: ratio of filled area to bounding box area
-    mask_consistency = round(mask_area_ratio * (bbox_aspect / max(bbox_aspect, 1.0)), 3)
-    if mask_consistency < 0.08:
-        score-=5; warnings.append(f"Low mask consistency ({mask_consistency:.2f}) — check segmentation")
-
-    score=max(0,min(100,score))
-    status=("accepted" if score>=75 else "review" if score>=50 else "fallback")
-    return {
-        "score":score,"status":status,"warnings":warnings,
-        "signals":{
-            "method":method,"yolo_conf":round(yolo_conf,3),
-            "sam2_score":round(sam2_score,3),
-            "mask_coverage":round(mask_area_ratio,3),
-            "aspect_ratio":round(bbox_aspect,2),
-            "view_type":view_type,
-            "n_wheels":n_wheels,
-            "spike_ratio":round(spike_ratio,3),
-            "snap_ratio":round(snap_ratio,3),
-            "touches_border":touches_border,
+    let jobId = null
+    const MAX_ATTEMPTS = 8
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      setTraceProgress({
+        pct: 5,
+        msg: attempt === 0 ? 'Connecting to server…' : `Retrying… (${attempt*5}s elapsed)`,
+        pts: [],
+      })
+      try {
+        const fd = new FormData()
+        fd.append('file', uploadFile)
+        fd.append('mode', analysisMode)
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 25000)
+        let res
+        try {
+          res = await fetch(`${API_BASE}/analyze-contour/start`, {
+            method:'POST', body:fd, signal:controller.signal,
+          })
+        } finally { clearTimeout(timer) }
+        if (res.ok) { jobId = (await res.json()).job_id; break }
+        const text = await res.text().catch(()=>'')
+        setError(`Server error ${res.status}${text?': '+text.slice(0,120):''}`)
+        setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
+      } catch(e) {
+        if (attempt >= MAX_ATTEMPTS-1) {
+          setError(`Could not reach server after ${MAX_ATTEMPTS*5}s. Check https://huggingface.co/spaces/rutejtalati16/Aeronet`)
+          setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return
         }
+        await new Promise(r=>setTimeout(r,5000))
+      }
     }
+    if (!jobId) { setError('Failed to start job.'); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
 
+    setTraceAnimating(true)
+    setTraceProgress({ pct: 10, msg: 'Job queued — preprocessing image…', pts: [] })
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# EXPORT HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
+    const startTime = Date.now()
+    while (true) {
+      await new Promise(r=>setTimeout(r,3000))
+      const elapsed = Math.round((Date.now()-startTime)/1000)
+      let poll
+      try {
+        const pc = new AbortController(); const pt = setTimeout(()=>pc.abort(),10000)
+        let res
+        try { res = await fetch(`${API_BASE}/analyze-contour/result/${jobId}`,{signal:pc.signal}) }
+        finally { clearTimeout(pt) }
+        if (!res.ok) { setError(`Poll error ${res.status}`); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
+        poll = await res.json()
+      } catch(e) { setError(`Connection lost: ${e.message}`); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
 
-def _n(v,o,s): return round(float((v-o)/max(s,1)),4)
-def _npts(a,bx,by,bw,bh): return [[_n(p[0],bx,bw),_n(p[1],by,bh)] for p in a]
-def _nkp(k,bx,by,bw,bh): return {"x":_n(k["x"],bx,bw),"y":_n(k["y"],by,bh)} if k else None
-def _nw(w,bx,by,bw,bh): return {**w,"nx":_n(w["cx"],bx,bw),"ny":_n(w["cy"],by,bh),
-                                  "nr":round(w["r"]/max(bw,1),4)}
-
-def outline_to_svg(pts_norm: list, w: int=800, h: int=300) -> str:
-    """White 1px polyline on black — technical drawing. No curves, no fill."""
-    mapped=[(round(p[0]*w,2),round(p[1]*h,2)) for p in pts_norm]
-    path_d=" ".join(f"{'M' if i==0 else 'L'}{x},{y}" for i,(x,y) in enumerate(mapped))+" Z"
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
-            f'width="{w}" height="{h}" style="background:#000;font-family:monospace">'
-            f'<path d="{path_d}" fill="none" stroke="white" stroke-width="1" '
-            f'stroke-linejoin="round" stroke-linecap="round"/>'
-            f'</svg>')
-
-
-def draw_outline_png(rgb: np.ndarray, contour: np.ndarray) -> np.ndarray:
-    """White 1px outline on black — for technical_outline.png"""
-    canvas=np.zeros((rgb.shape[0],rgb.shape[1],3),dtype=np.uint8)
-    cv2.drawContours(canvas,[contour],-1,(255,255,255),1)
-    return canvas
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MODE B — PANEL DETECTION (unchanged)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _detect_panels(img_rgb,mask,bbox):
-    bx,by,bw,bh=bbox; H,W=img_rgb.shape[:2]
-    pad=10; x0,y0=max(0,bx-pad),max(0,by-pad)
-    x1,y1=min(W,bx+bw+pad),min(H,by+bh+pad)
-    crop=img_rgb[y0:y1,x0:x1]; cm=mask[y0:y1,x0:x1]
-    gray=cv2.cvtColor(crop,cv2.COLOR_RGB2GRAY)
-    _,bm=cv2.threshold(cm,127,255,cv2.THRESH_BINARY)
-    gm=cv2.bitwise_and(gray,bm)
-    clahe=cv2.createCLAHE(clipLimit=2.0,tileGridSize=(8,8))
-    filt=cv2.bilateralFilter(clahe.apply(gm),9,75,75)
-    med=float(np.median(filt[filt>0])) if (filt>0).any() else 128
-    edges=cv2.Canny(filt,max(10,int(med*0.5)),min(255,int(med*1.5)))
-    edges=cv2.bitwise_and(edges,bm)
-    for wx_f in(0.20,0.78):
-        cv2.circle(edges,(int(wx_f*bw),int(0.80*bh)),int(bh*0.18*1.3),0,-1)
-    lrs=cv2.HoughLinesP(edges,1,np.pi/180,25,minLineLength=int(bw*0.08),maxLineGap=int(bw*0.04))
-    lines=[]
-    if lrs is not None:
-        for l in lrs:
-            x1l,y1l,x2l,y2l=l[0]; dx,dy=x2l-x1l,y2l-y1l
-            ln=math.sqrt(dx*dx+dy*dy); ang=abs(math.degrees(math.atan2(dy,max(abs(dx),1))))
-            if ln<bw*0.06: continue
-            lines.append({"x1":_n(x0+x1l,bx,bw),"y1":_n(y0+y1l,by,bh),
-                          "x2":_n(x0+x2l,bx,bw),"y2":_n(y0+y2l,by,bh),
-                          "angle":round(ang,1),"length":round(ln/bw,3),
-                          "type":"pillar" if ang>40 else "panel"})
-    lines.sort(key=lambda l:l["length"],reverse=True)
-    markers=[{"nx":nx,"ny":ny,"label":lb,"region":rg} for nx,ny,lb,rg in [
-        (0.12,0.35,"Grille","front"),(0.08,0.55,"Front Light","front"),
-        (0.10,0.72,"Front Bumper","front"),(0.30,0.15,"Hood","top"),
-        (0.50,0.10,"Windscreen","top"),(0.65,0.15,"Roof","top"),
-        (0.78,0.20,"Rear Screen","top"),(0.88,0.35,"Boot/Trunk","rear"),
-        (0.92,0.55,"Rear Light","rear"),(0.90,0.72,"Rear Bumper","rear"),
-        (0.50,0.55,"Door Panel","side"),
-    ]]
-    return {"panel_lines":lines[:30],"region_markers":markers}
-
-
-def _florence_regions(img_rgb,bbox):
-    try:
-        import torch
-        from transformers import AutoProcessor,AutoModelForCausalLM
-        t0=time.time(); device='cuda' if torch.cuda.is_available() else 'cpu'
-        mdl=AutoModelForCausalLM.from_pretrained("microsoft/Florence-2-base",
-            trust_remote_code=True,torch_dtype=torch.float32).eval().to(device)
-        proc=AutoProcessor.from_pretrained("microsoft/Florence-2-base",trust_remote_code=True)
-        bx,by,bw,bh=bbox; H,W=img_rgb.shape[:2]
-        crop=img_rgb[max(0,by):min(H,by+bh),max(0,bx):min(W,bx+bw)]
-        pil=Image.fromarray(crop)
-        parts="car door . hood . trunk . windshield . headlight . taillight . bumper . wheel arch . roof . pillar . grille"
-        inp=proc(text=f"<OPEN_VOCABULARY_DETECTION>{parts}",images=pil,return_tensors="pt").to(device)
-        with torch.no_grad():
-            gen=mdl.generate(input_ids=inp["input_ids"],pixel_values=inp["pixel_values"],
-                max_new_tokens=512,num_beams=1,do_sample=False)
-        txt=proc.batch_decode(gen,skip_special_tokens=False)[0]
-        parsed=proc.post_process_generation(txt,task="<OPEN_VOCABULARY_DETECTION>",
-            image_size=(pil.width,pil.height))
-        det=parsed.get("<OPEN_VOCABULARY_DETECTION>",{})
-        out=[]
-        for bd,lb in zip(det.get("bboxes",[]),det.get("bboxes_labels",[])):
-            x1d,y1d,x2d,y2d=bd; cx=(x1d+x2d)/2; cy=(y1d+y2d)/2
-            out.append({"label":lb.title(),"nx":round(_n(bx+cx*bw/pil.width,bx,bw),3),
-                "ny":round(_n(by+cy*bh/pil.height,by,bh),3),"confidence":0.85,"source":"florence2"})
-        print(f"[florence] {len(out)} regions {time.time()-t0:.1f}s")
-        del mdl,proc; return out
-    except Exception as e:
-        print(f"[florence] {e}"); return []
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MODE C — MOONDREAM2 AERO (unchanged)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _moondream_aero(img_rgb,geo):
-    try:
-        import torch,re
-        from transformers import AutoModelForCausalLM,AutoTokenizer
-        t0=time.time()
-        pil=Image.fromarray(img_rgb)
-        if max(pil.size)>768: pil.thumbnail((768,768),Image.LANCZOS)
-        tok=AutoTokenizer.from_pretrained("vikhyatk/moondream2",revision="2025-06-21",trust_remote_code=True)
-        mdl=AutoModelForCausalLM.from_pretrained("vikhyatk/moondream2",revision="2025-06-21",
-            trust_remote_code=True,torch_dtype=torch.float32).eval()
-        def ask(q): return mdl.query(pil,q).get("answer","").strip()
-        car_id=ask("Make and model of this car? 1-5 words.")
-        cd_raw=ask("Drag coefficient Cd? Just a number like 0.27.")
-        bt=ask("Body type? One word: fastback notchback hatchback suv supercar estate coupe.")
-        feats={"spoiler":ask("Rear spoiler? none/lip/duck/wing/integrated."),
-               "diffuser":ask("Rear diffuser? none/basic/race."),
-               "grille":ask("Front grille? open/closed/semi-closed/active."),
-               "mirror":ask("Mirror type? conventional/aeroblade/camera/flush."),
-               "wheels":ask("Wheel type? open-spoke/closed/aero-cover/fully-enclosed.")}
-        suggest=ask("Two aerodynamic improvements, separated by |")
-        try: cd_meas=float(re.findall(r"0\.\d+",cd_raw)[0])
-        except: cd_meas=geo.get("Cd",0.29)
-        fracs={"fastback":{"Front Face":0.30,"Underbody":0.20,"Wheels":0.14,"Rear Wake":0.22,"Greenhouse":0.14},
-               "notchback":{"Front Face":0.32,"Underbody":0.18,"Wheels":0.14,"Rear Wake":0.26,"Greenhouse":0.10},
-               "suv":{"Front Face":0.35,"Underbody":0.15,"Wheels":0.15,"Rear Wake":0.28,"Greenhouse":0.07}
-               }.get(bt.lower().strip(),{"Front Face":0.32,"Underbody":0.18,"Wheels":0.14,"Rear Wake":0.26,"Greenhouse":0.10})
-        print(f"[moondream] {time.time()-t0:.1f}s"); del mdl,tok
-        return {"car_id":car_id,"estimated_cd":round(cd_meas,3),"body_type":bt.lower().strip(),
-                "features":feats,
-                "region_cd":{k:round(cd_meas*v,4) for k,v in fracs.items()},
-                "improvements":[s.strip() for s in suggest.split("|") if s.strip()][:2],
-                "ahmed_regime":geo.get("ahmedRegime","intermediate"),
-                "rear_slant":geo.get("rearSlantAngleDeg",20.0),
-                "cda":round(cd_meas*geo.get("frontalAreaNorm",0.45),4)}
-    except Exception as e:
-        print(f"[moondream] {e}"); return {}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MAIN STREAMING ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def analyse_contour_stream(image_bytes: bytes, mode: str="A") -> Generator[dict,None,None]:
-    mode=mode.upper()
-    yield {"stage":"prep","pct":2,"msg":"Stage 0: EXIF, resize, background removal…"}
-
-    _raw=image_bytes; view_type="unknown"
-    try:
-        image_bytes, view_type = _preprocess(image_bytes, _raw)
-        yield {"stage":"prep","pct":7,"msg":f"Preprocessed — view={view_type}"}
-    except Exception as e:
-        print(f"[pre] {e}")
-        yield {"stage":"prep","pct":7,"msg":"Preprocessed (basic)"}
-
-    yield {"stage":"yolo","pct":8,"msg":"Stage 1: YOLO vehicle localisation…"}
-    method="yolov8"; _yolo_conf=0.0; _sam2_score=0.0
-    try:
-        rgb,coarse,_yolo_conf=_yolo_mask(image_bytes)
-        yield {"stage":"yolo","pct":30,"msg":f"YOLO ✓ conf={_yolo_conf:.2f}"}
-    except Exception as e:
-        print(f"[yolo] {e}")
-        yield {"stage":"yolo","pct":15,"msg":"YOLO failed → BiRefNet…"}
-        try:
-            rgb,coarse,_yolo_conf=_birefnet_mask(image_bytes); method="birefnet"
-            yield {"stage":"yolo","pct":30,"msg":"BiRefNet ✓"}
-        except Exception:
-            try:
-                rgb,coarse,_yolo_conf=_rembg_mask(image_bytes); method="rembg"
-                yield {"stage":"yolo","pct":30,"msg":"rembg ✓"}
-            except Exception as e3:
-                yield {"stage":"error","msg":str(e3)}; return
-
-    yield {"stage":"sam2","pct":33,"msg":"Stage 2: SAM2 boundary refinement…"}
-    sam2,_sam2_score=_sam2_refine(rgb,coarse)
-    if sam2 is not None:
-        # Union: YOLO fills interior, SAM2 refines edges
-        final = cv2.bitwise_or((coarse>128).astype(np.uint8)*255,
-                                (sam2>128).astype(np.uint8)*255)
-        method += "+sam2"
-        yield {"stage":"sam2","pct":52,"msg":f"SAM2 ✓ score={_sam2_score:.3f}"}
-    else:
-        final = coarse
-        yield {"stage":"sam2","pct":52,"msg":"SAM2 unavailable — coarse mask only"}
-
-    # ── Underbody reconstruction ──────────────────────────────────────────────
-    # Problem: YOLO mask is a low-res upscaled blob with smooth bottom edge.
-    #          SAM2 clips the lower boundary 4-8px above real vehicle bottom.
-    #          Result: sill/rocker/diffuser geometry lost before contour extraction.
-    #
-    # Fix: use Canny edges from original image to find real lower boundary,
-    # then extend the mask downward to snap to those edges.
-    yield {"stage":"sam2","pct":54,"msg":"Underbody edge reconstruction…"}
-    try:
-        H_img, W_img = rgb.shape[:2]
-        gray_img = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-
-        # 1. Find current mask bottom row per column
-        final_bin = (final > 127).astype(np.uint8)
-        rows_f    = np.where(final_bin.any(axis=1))[0]
-        if len(rows_f) == 0:
-            raise ValueError("empty mask")
-        body_top = int(rows_f.min())
-        body_bot = int(rows_f.max())
-        car_h    = body_bot - body_top
-
-        # 2. Compute Canny on lower 40% of car (where sill/underbody lives)
-        search_top = body_top + int(car_h * 0.60)
-        search_bot = min(body_bot + int(car_h * 0.12), H_img)
-        search_roi = gray_img[search_top:search_bot, :]
-
-        # Bilateral filter preserves edges while reducing noise
-        roi_filt  = cv2.bilateralFilter(search_roi, 7, 40, 40)
-        med_val   = float(np.median(roi_filt))
-        lo, hi    = max(10, int(med_val * 0.35)), min(255, int(med_val * 1.1))
-        edges_roi = cv2.Canny(roi_filt, lo, hi)
-
-        # 3. For each column, find the lowest Canny edge within the search zone
-        #    that is below the current mask bottom for that column
-        #    → this is the real vehicle boundary (sill bottom / wheel arch bottom)
-        recovery_mask = np.zeros((H_img, W_img), dtype=np.uint8)
-
-        for col in range(W_img):
-            # Current mask bottom at this column
-            col_mask = final_bin[:, col]
-            fg_rows  = np.where(col_mask > 0)[0]
-            if len(fg_rows) == 0:
-                continue
-            cur_bot = int(fg_rows.max())
-
-            # Look for strong edges below current bottom, within search zone
-            col_edges = edges_roi[:, col]  # search_top to search_bot
-            edge_rows = np.where(col_edges > 0)[0]
-            if len(edge_rows) == 0:
-                continue
-
-            # Convert back to image coordinates
-            edge_rows_abs = edge_rows + search_top
-
-            # Only care about edges BELOW current bottom (underbody detail)
-            below = edge_rows_abs[edge_rows_abs > cur_bot]
-            if len(below) == 0:
-                continue
-
-            # Take the FIRST edge below current bottom (= top of sill/skirt boundary)
-            snap_row = int(below[0])
-
-            # Only snap if within 8% of car height (prevent pulling in ground)
-            if snap_row - cur_bot > car_h * 0.08:
-                continue
-
-            # Fill from current bottom to snap row (recovers the sill strip)
-            recovery_mask[cur_bot:snap_row+1, col] = 255
-
-        # 4. Merge recovery into final mask
-        recovered = int((recovery_mask > 0).sum())
-        if recovered > 0:
-            final = cv2.bitwise_or(final, recovery_mask)
-            print(f"[underbody] Edge recovery: {recovered} px restored")
-        else:
-            print("[underbody] No edge recovery needed or no edges found")
-
-        # 5. Remove only clearly disconnected shadow blobs above the ground plane
-        #    (never row-delete — only component-filter disconnected islands)
-        if (final > 127).any():
-            _,lf,sf,_ = cv2.connectedComponentsWithStats(
-                (final>127).astype(np.uint8), 8)
-            if sf.shape[0] > 1:
-                mb         = 1 + int(np.argmax(sf[1:, cv2.CC_STAT_AREA]))
-                main_area  = int(sf[mb, cv2.CC_STAT_AREA])
-                keep_final = np.zeros_like(final)
-                for ci in range(1, sf.shape[0]):
-                    ratio = int(sf[ci, cv2.CC_STAT_AREA]) / max(main_area, 1)
-                    if ci == mb or ratio > 0.005:  # keep anything > 0.5% of main
-                        keep_final[lf == ci] = 255
-                final = keep_final
-
-    except Exception as e:
-        print(f"[underbody] Edge reconstruction failed: {e}")
-
-    yield {"stage":"sam2","pct":57,"msg":"Mask assembly complete"}
-
-    yield {"stage":"contour","pct":57,"msg":"Stage 3-4: mask cleanup + underbody…"}
-    refined=_clean_mask(final)
-    h,w=rgb.shape[:2]
-    refined, underbody_diag = _clean_underbody(refined, underbody_preserve=True)
-    if underbody_diag.get("warning_underbody"):
-        yield {"stage":"contour","pct":60,
-               "msg":f"⚠ {underbody_diag['warning_underbody'][:80]}"}
-
-    yield {"stage":"contour","pct":62,"msg":"Stage 5: CHAIN_APPROX_NONE contour…"}
-    contour=extract_technical_outline(refined)
-    if contour is None:
-        yield {"stage":"error","msg":"No vehicle contour found."}; return
-    bx,by,bw,bh=cv2.boundingRect(contour)
-    if bw<80 or bh<40:
-        yield {"stage":"error","msg":"Detected region too small."}; return
-
-    raw_pts=contour.reshape(-1,2).astype(float)
-    yield {"stage":"contour","pct":66,"msg":f"Stage 5: raw contour {len(raw_pts)} pts"}
-
-    yield {"stage":"contour","pct":68,"msg":"Stage 6: spike removal…"}
-    clean_pts=_remove_spikes(raw_pts)
-    n_spikes=len(raw_pts)-len(clean_pts)
-    yield {"stage":"contour","pct":70,"msg":f"Spikes removed: {n_spikes} pts"}
-
-    yield {"stage":"contour","pct":72,"msg":"Stage 7: Canny edge snapping…"}
-    snapped_pts=_edge_snap(clean_pts, rgb, EDGE_SNAP_RADIUS)
-    n_snapped=int(np.sum(np.any(snapped_pts!=clean_pts,axis=1)))
-    yield {"stage":"contour","pct":75,"msg":f"Edge snap: {n_snapped} pts refined"}
-
-    yield {"stage":"contour","pct":77,"msg":"Stage 8-9: resample + smooth…"}
-    # Technical outline: 2000pt + window=3
-    technical  = _smooth(_resample_arclen(snapped_pts, N_TECHNICAL), SMOOTH_WINDOW_TECHNICAL)
-    # Display outline: 2000pt + window=5
-    display    = _smooth(_resample_arclen(snapped_pts, N_TECHNICAL), SMOOTH_WINDOW_DISPLAY)
-    # Simplified: 200pt + window=3 (debug only)
-    simplified = _smooth(_resample_arclen(snapped_pts, N_SIMPLIFIED), SMOOTH_WINDOW_TECHNICAL)
-
-    yield {"stage":"keypoints","pct":80,"msg":"Stage 10: keypoints…"}
-    kp=_keypoints(contour,refined,rgb,(bx,by,bw,bh))
-
-    yield {"stage":"keypoints","pct":84,"msg":"Stage 11: CFD geometry…"}
-    geo=_cfd_geometry(technical,(bx,by,bw,bh),kp["wheels"],kp["windscreen"],rgb.shape)
-    yield {"stage":"keypoints","pct":87,"msg":f"CFD: Cd≈{geo['Cd']} regime={geo['ahmedRegime']} slant={geo['rearSlantAngleDeg']}°"}
-
-    # Quality scoring
-    H_img,W_img=rgb.shape[:2]
-    ctpts=contour.reshape(-1,2)
-    touches_border=bool(
-        ctpts[:,0].min()<=2 or ctpts[:,0].max()>=W_img-3 or
-        ctpts[:,1].min()<=2 or ctpts[:,1].max()>=H_img-3)
-    quality=_quality_score(
-        method=method, yolo_conf=_yolo_conf, sam2_score=_sam2_score,
-        mask_area_ratio=float((refined>127).sum())/float(h*w),
-        bbox_aspect=float(bw)/max(float(bh),1),
-        contour_len=len(contour), touches_border=touches_border,
-        n_wheels=len(kp["wheels"]),
-        spike_pts_removed=n_spikes, total_pts=len(raw_pts),
-        n_snap_pts=n_snapped, view_type=view_type)
-    yield {"stage":"keypoints","pct":90,"msg":f"Quality: {quality['score']}/100 ({quality['status']})"}
-
-    # Normalise all to [0,1] relative to bbox
-    def nkl(lst): return [{"nx":_n(p["x"],bx,bw),"ny":_n(p["y"],by,bh)} for p in lst]
-    nt  = _npts(technical.tolist(),  bx,by,bw,bh)
-    nd  = _npts(display.tolist(),    bx,by,bw,bh)
-    ns  = _npts(simplified.tolist(), bx,by,bw,bh)
-    nri = _npts(raw_pts.tolist(),    bx,by,bw,bh)
-
-    outline_svg=outline_to_svg(nt, w=800, h=300)
-
-    # ── Geometry engine: normalization, descriptors, curvature, heuristics ────
-    engineering = {}
-    if _GEO_ENGINE:
-        try:
-            wheels_norm = [_nw(wh,bx,by,bw,bh) for wh in kp["wheels"]]
-            engineering = run_geometry_engine(
-                pts_norm   = np.array(nt),
-                geo        = geo,
-                wheels_norm= wheels_norm,
-                bbox       = {"x":bx,"y":by,"w":bw,"h":bh},
-                result_meta= {"method":method,"view_type":view_type,"quality":quality},
-            )
-            yield {"stage":"keypoints","pct":89,
-                   "msg":f"Geometry engine ✓ — shape descriptors, curvature, DXF ready"}
-        except Exception as e:
-            print(f"[geo_engine] {e}")
-
-    result={
-        # ── PRIMARY TECHNICAL OUTPUT ──────────────────────────────────────────
-        "technical_outline_pts": nt,   # 2000pt, window=3, edge-snapped (USE FOR CFD)
-        "raw_contour_pts":       nri,  # every boundary pixel, zero processing
-        # ── DISPLAY OUTPUT ────────────────────────────────────────────────────
-        "display_outline_pts":   nd,   # 2000pt, window=5 (USE FOR UI)
-        "simplified_outline_pts":ns,   # 200pt, window=3 (debug/overview only)
-        # ── COMPAT ALIASES (frontend) ─────────────────────────────────────────
-        "outline_pts":           nt,
-        "smooth_pts":            nd,
-        "catmull_rom_pts":       nd,   # no Catmull-Rom — alias to display
-        "catmull_rom_cps":       None,
-        "simplified_pts":        ns,
-        # ── EXPORTS ───────────────────────────────────────────────────────────
-        "outline_svg":           outline_svg,
-        # ── METADATA ─────────────────────────────────────────────────────────
-        "keypoints":{
-            "wheels":  [_nw(wh,bx,by,bw,bh) for wh in kp["wheels"]],
-            "roofline":nkl(kp["roofline"]),"sill":nkl(kp["sill"]),
-            "bumpers":{"front":_nkp(kp["bumpers"]["front"],bx,by,bw,bh),
-                       "rear": _nkp(kp["bumpers"]["rear"], bx,by,bw,bh)},
-            "windscreen":{k:(_nkp(v,bx,by,bw,bh) if k in("base","top") else v)
-                for k,v in kp["windscreen"].items()} if kp["windscreen"] else {},
-        },
-        "bbox":       {"x":bx,"y":by,"w":bw,"h":bh},
-        "image_size": {"w":w,"h":h},
-        "view_type":  view_type,
-        "geometry":   geo,
-        "method":     method,
-        "mode":       mode,
-        "processing": {
-            "raw_pts":            len(raw_pts),
-            "spike_pts_removed":  n_spikes,
-            "edge_snap_pts":      n_snapped,
-            "technical_pts":      len(technical),
-            "underbody":          underbody_diag,
-        },
-        "quality":      quality,
-        "engineering":  engineering,   # shape descriptors, curvature, heuristics, exports
-        "panels":       None,
-        "aero":         None,
+      if (poll.status==='error') { setError(poll.error??'Analysis failed'); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
+      if (poll.status==='running'||poll.status==='pending') {
+        const pct = Math.min(88, 10+elapsed*1.2)
+        const stageMsg = elapsed < 10 ? 'Preprocessing & YOLO detection…'
+          : elapsed < 25 ? 'SAM2 boundary refinement…'
+          : elapsed < 40 ? 'Contour extraction & smoothing…'
+          : elapsed < 60 ? (analysisMode!=='A' ? 'Panel detection running…' : 'Finalising outline…')
+          : analysisMode==='C' ? 'Moondream2 aero analysis…'
+          : 'Almost done…'
+        setTraceProgress({ pct:Math.round(pct), msg:`${stageMsg} ${elapsed}s`, pts:[] })
+        continue
+      }
+      if (poll.status==='done') {
+        const result = poll.result
+        if (!result?.geometry) { setError('No vehicle outline found. Use a clear side-on photo.'); setTraceAnimating(false); setStage('idle'); setTraceProgress(null); return }
+        const allPts = result.smooth_pts ?? []
+        if (allPts.length > 0) {
+          const steps=30, delay=1500/steps; setTraceAnimating(true)
+          for (let step=0;step<=steps;step++) {
+            setTimeout(()=>{
+              const visible = Math.round((step/steps)*allPts.length)
+              setTraceProgress({pct:100,msg:step<steps?`Tracing outline… ${Math.round(step/steps*100)}%`:'Done ✓',pts:allPts.slice(0,visible),done:step===steps})
+              if (step===steps){setTraceAnimating(false);setTraceProgress(null)}
+            }, step*delay)
+          }
+        } else { setTraceAnimating(false); setTraceProgress(null) }
+        const cg=result.geometry
+        setGeo({
+          aspectRatio:cg.aspectRatio??2.0,hoodRatio:cg.hoodRatio??0.28,
+          cabinRatio:cg.cabinRatio??0.44,bootRatio:cg.bootRatio??0.28,
+          wsAngleDeg:cg.wsAngleDeg??58,rearDrop:cg.rearDrop??0.15,
+          cabinH:cg.cabinH??0.58,rideH:cg.rideH??0.08,
+          w1:cg.w1??0.22,w2:cg.w2??0.76,confidence:cg.confidence??0.97,
+          _contourPts: result.technical_outline_pts ?? result.outline_pts,
+          _smoothPts:  result.display_outline_pts ?? result.smooth_pts,
+          _catmullCps: null,
+          _catmullPts: result.display_outline_pts ?? result.smooth_pts,
+          _bboxAspect: result.bbox?result.bbox.w/Math.max(1,result.bbox.h):undefined,
+          _keypoints:  result.keypoints,_method:result.method,
+          _panels:     result.panels??null,_aero:result.aero??null,
+          _quality:     result.quality??null,
+          _engineering: result.engineering??null,
+          ahmedRegime:        result.geometry?.ahmedRegime,
+          rearSlantAngleDeg:  result.geometry?.rearSlantAngleDeg,
+          CdA:                result.geometry?.CdA,
+          rearSlantAngleDeg:cg.rearSlantAngleDeg??20,
+          ahmedRegime:cg.ahmedRegime??'intermediate',
+          Cd:cg.Cd??0, CdA:cg.CdA??0,
+          wheelbaseNorm:cg.wheelbaseNorm??0,
+          separationPointX:cg.separationPointX??0.75,
+        })
+        setStage('done'); return
+      }
     }
+  }
 
-    # Mode B
-    if mode in("B","C"):
-        yield {"stage":"panels","pct":92,"msg":"Mode B: panel detection…"}
-        pd=_detect_panels(rgb,refined,(bx,by,bw,bh))
-        fm=_florence_regions(rgb,(bx,by,bw,bh))
-        result["panels"]={"lines":pd["panel_lines"],
-                          "markers":fm if len(fm)>=4 else pd["region_markers"]}
-        yield {"stage":"panels","pct":95,"msg":f"Panels: {len(pd['panel_lines'])} lines ✓"}
+  const exportSVG = () => {
+    const svg=svgRef.current?.querySelector('svg'); if(!svg) return
+    const a=document.createElement('a')
+    a.href=URL.createObjectURL(new Blob([svg.outerHTML],{type:'image/svg+xml'}))
+    a.download=`statcfd_${activeView}.svg`; a.click()
+  }
 
-    # Mode C
-    if mode=="C":
-        yield {"stage":"aero","pct":96,"msg":"Mode C: Moondream2 aero analysis…"}
-        aero=_moondream_aero(rgb,geo); result["aero"]=aero
-        yield {"stage":"aero","pct":98,"msg":f"Aero: {aero.get('car_id','?')} Cd≈{aero.get('estimated_cd','?')} ✓"}
+  const isRunning = stage==='analyzing'
 
-    yield {"stage":"done","pct":100,"msg":f"Complete ✓ quality={quality['score']}/100","result":result}
+  const card = {background:'var(--bg1)',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
+  const darkCard = {background:'var(--bg1)',borderRadius:10,border:'0.5px solid rgba(255,255,255,0.06)',overflow:'hidden'}
 
+  return (
+    <div style={{display:'flex',height:'100%',overflow:'hidden',background:'var(--bg0)'}}>
 
-def analyse_contour(image_bytes: bytes, mode: str="A") -> dict:
-    result=None
-    for evt in analyse_contour_stream(image_bytes,mode):
-        if evt.get("stage")=="error": raise ValueError(evt["msg"])
-        if evt.get("stage")=="done":  result=evt["result"]
-    if not result: raise RuntimeError("No result produced")
-    return result
+      {/* ── LEFT PANEL ── */}
+      <div style={{width:240,flexShrink:0,display:'flex',flexDirection:'column',
+        borderRight:'0.5px solid var(--sep)',overflow:'hidden',background:'var(--bg0)'}}>
+        <div style={{flex:1,overflowY:'auto',padding:'16px 14px'}}>
+
+          <SL n="01" t="Upload"/>
+
+          {/* Drop zone */}
+          <div
+            onDragOver={e=>{e.preventDefault();setDragOver(true)}}
+            onDragLeave={()=>setDragOver(false)}
+            onDrop={e=>{
+              e.preventDefault();setDragOver(false)
+              const f=e.dataTransfer.files?.[0]
+              if(f){acceptFile(f);return}
+              const url=e.dataTransfer.getData('text/uri-list')||e.dataTransfer.getData('text/plain')
+              if(url&&/^https?:\/\//i.test(url))acceptUrl(url)
+            }}
+            onClick={()=>fileRef.current?.click()}
+            style={{borderRadius:10,border:`0.5px dashed ${dragOver?'var(--blue)':'rgba(255,255,255,0.12)'}`,
+              background:dragOver?'rgba(10,132,255,0.06)':'var(--bg1)',cursor:'pointer',
+              overflow:'hidden',minHeight:120,transition:'all 0.15s',marginBottom:8,
+              display:'flex',flexDirection:'column'}}>
+            <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}}
+              onChange={e=>acceptFile(e.target.files[0])}/>
+            {preview ? (
+              <div style={{position:'relative'}}>
+                <img src={preview} alt="preview" style={{width:'100%',display:'block',borderRadius:10}}/>
+                <div style={{position:'absolute',bottom:6,left:0,right:0,textAlign:'center'}}>
+                  <span style={{fontSize:10,color:'#fff',background:'rgba(0,0,0,0.55)',
+                    padding:'2px 10px',borderRadius:20}}>click to change</span>
+                </div>
+              </div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',
+                justifyContent:'center',gap:8,padding:'24px 16px',flex:1}}>
+                <div style={{width:40,height:40,borderRadius:10,background:'var(--bg2)',
+                  border:'0.5px solid var(--sep)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5">
+                    <rect x="3" y="3" width="18" height="18" rx="3"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <path d="M21 15l-5-5L5 21"/>
+                  </svg>
+                </div>
+                <span style={{fontSize:12,color:'var(--text-tertiary)',textAlign:'center'}}>Drop image or file</span>
+                <span style={{fontSize:9,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'",
+                  textAlign:'center',lineHeight:1.7}}>
+                  JPG · PNG · WEBP<br/>
+                  <span style={{color:'rgba(255,255,255,0.18)'}}>Ctrl+V · drag URL</span>
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* URL input */}
+          <div style={{marginBottom:10}}>
+            {urlMode ? (
+              <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                <div style={{display:'flex',gap:4}}>
+                  <input autoFocus value={urlInput} onChange={e=>setUrlInput(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter')acceptUrl(urlInput);if(e.key==='Escape')setUrlMode(false)}}
+                    placeholder="https://example.com/car.jpg"
+                    style={{flex:1,background:'var(--bg2)',border:`0.5px solid ${urlError&&urlError!=='Fetching image…'?'var(--red)':'rgba(255,255,255,0.12)'}`,
+                      borderRadius:7,padding:'6px 9px',color:'var(--text-primary)',fontSize:11,outline:'none',
+                      fontFamily:"'IBM Plex Mono',monospace"}}/>
+                  <button onClick={()=>acceptUrl(urlInput)}
+                    style={{padding:'0 10px',borderRadius:7,border:'none',cursor:'pointer',
+                      background:'#0A84FF',color:'#fff',fontSize:11,fontWeight:600}}>Go</button>
+                  <button onClick={()=>{setUrlMode(false);setUrlError('')}}
+                    style={{padding:'0 8px',borderRadius:7,border:'1px solid rgba(0,0,0,0.12)',
+                      cursor:'pointer',background:'#fff',color:'var(--text-quaternary)',fontSize:11}}>✕</button>
+                </div>
+                {urlError && (
+                  <span style={{fontSize:10,color:urlError==='Fetching image…'?'#0A84FF':'#ff3b30'}}>
+                    {urlError}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <button onClick={()=>setUrlMode(true)}
+                style={{width:'100%',height:30,borderRadius:7,border:'1px solid rgba(0,0,0,0.1)',
+                  background:'#fafafa',cursor:'pointer',color:'var(--text-quaternary)',fontSize:11,
+                  display:'flex',alignItems:'center',justifyContent:'center',gap:5,transition:'all 0.12s'}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor='#0A84FF'}
+                onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(0,0,0,0.1)'}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+                Load from URL
+              </button>
+            )}
+          </div>
+
+          {file && (
+            <div style={{...card,padding:'7px 11px',display:'flex',justifyContent:'space-between',
+              alignItems:'center',marginBottom:10}}>
+              <span style={{fontSize:11,color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',
+                whiteSpace:'nowrap',flex:1}}>{file.name}</span>
+              <span style={{fontSize:9,fontFamily:"'IBM Plex Mono'",color:'var(--text-quaternary)',marginLeft:6,flexShrink:0}}>
+                {(file.size/1024).toFixed(0)} KB
+              </span>
+            </div>
+          )}
+
+          {/* Analysis Mode selector */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:9,color:'var(--text-quaternary)',marginBottom:6,textTransform:'uppercase',
+              letterSpacing:'0.08em',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>Analysis Mode</div>
+            <div style={{display:'flex',flexDirection:'column',gap:3}}>
+              {[
+                {id:'A',label:'Silhouette',  desc:'~30s · outline only',         icon:'◎'},
+                {id:'B',label:'Panels',      desc:'~90s · lines + markers',       icon:'⊞'},
+                {id:'C',label:'Full Aero',   desc:'~150s · panels + ΔCd + ID',   icon:'⬡'},
+              ].map(m=>(
+                <button key={m.id} onClick={()=>setAnalysisMode(m.id)}
+                  style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,
+                    border:`0.5px solid ${analysisMode===m.id?'rgba(10,132,255,0.6)':'rgba(255,255,255,0.08)'}`,
+                    background:analysisMode===m.id?'rgba(10,132,255,0.12)':'transparent',
+                    cursor:'pointer',textAlign:'left',transition:'all 0.12s'}}>
+                  <span style={{fontSize:13,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.3)'}}>{m.icon}</span>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:analysisMode===m.id?'var(--blue)':'rgba(255,255,255,0.6)'}}>{m.label}</div>
+                    <div style={{fontSize:9,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{m.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Run button */}
+          <button onClick={run} disabled={!file||isRunning}
+            style={{width:'100%',height:40,borderRadius:10,border:'none',marginBottom:12,
+              background:!file||isRunning?'rgba(255,255,255,0.05)':'var(--blue)',
+              color:!file||isRunning?'rgba(255,255,255,0.3)':'#fff',
+              fontSize:13,fontWeight:600,cursor:!file||isRunning?'not-allowed':'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+              transition:'all 0.15s',boxShadow:!file||isRunning?'none':'0 2px 8px rgba(10,132,255,0.3)'}}>
+            {isRunning
+              ? <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                  style={{animation:'spin 1s linear infinite'}}><path d="M12 3a9 9 0 019 9"/></svg>Analysing…</>
+              : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <polygon points="5 3 19 12 5 21 5 3"/></svg>Analyse Vehicle</>
+            }
+          </button>
+
+          <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+
+          {error && (
+            <div style={{borderRadius:8,padding:'8px 11px',background:'rgba(255,69,58,0.08)',
+              border:'0.5px solid rgba(255,69,58,0.3)',color:'var(--red)',fontSize:11,marginBottom:10,lineHeight:1.5}}>
+              {error}
+            </div>
+          )}
+
+          {geo && (
+            <>
+              <SL n="02" t="Result"/>
+              <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                {[
+                  ['Method',   geo._method??'—'],
+                  ['Points',   (geo._contourPts?.length??0)+' pt'],
+                  ['Wheels',   (geo._keypoints?.wheels?.length??0)+' found'],
+                  ['Aspect',   (geo.aspectRatio??0).toFixed(2)],
+                  ['WS rake',  (geo.wsAngleDeg??0).toFixed(0)+'°'],
+                  ['Rear slant',(geo.rearSlantAngleDeg??0).toFixed(0)+'°'],
+                  ['Ahmed',    geo.ahmedRegime??'—'],
+                  ['Cd est.',  (geo.Cd??0).toFixed(3)],
+                  ['CdA',      (geo.CdA??0).toFixed(4)],
+                ].map(([k,v])=>(
+                  <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
+                    padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                    <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                    <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── CENTRE: canvas ── */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+
+        {/* Toolbar */}
+        <div style={{display:'flex',alignItems:'center',gap:6,padding:'7px 12px',
+          borderBottom:'0.5px solid rgba(0,0,0,0.1)',flexShrink:0,
+          background:'rgba(0,0,0,0.4)',flexWrap:'wrap'}}>
+          <div style={{display:'flex',gap:2}}>
+            {VIEWS.map(v=>(
+              <button key={v.id} onClick={()=>setActiveView(v.id)}
+                style={{padding:'4px 12px',borderRadius:7,border:'none',cursor:'pointer',
+                  background:activeView===v.id?'rgba(10,132,255,0.18)':'transparent',
+                  color:activeView===v.id?'var(--blue)':'rgba(255,255,255,0.38)',
+                  fontSize:12,fontWeight:activeView===v.id?600:400,transition:'all 0.12s'}}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <div style={{width:0.5,height:14,background:'rgba(0,0,0,0.1)'}}/>
+          <button onClick={()=>setShowSep(p=>!p)}
+            style={{padding:'3px 10px',borderRadius:6,fontSize:11,fontWeight:500,cursor:'pointer',
+              border:`1px solid ${showSep?'#0A84FF':'rgba(0,0,0,0.1)'}`,
+              background:showSep?'rgba(10,132,255,0.08)':'transparent',
+              color:showSep?'#0A84FF':'rgba(0,0,0,0.4)'}}>Sep</button>
+          <button onClick={exportSVG}
+            style={{marginLeft:'auto',padding:'4px 12px',borderRadius:7,
+              border:'1px solid rgba(0,0,0,0.1)',background:'transparent',
+              color:'var(--text-quaternary)',fontSize:11,cursor:'pointer',transition:'all 0.12s'}}
+            onMouseEnter={e=>e.currentTarget.style.color='var(--blue)'}
+            onMouseLeave={e=>e.currentTarget.style.color='var(--text-quaternary)'}>
+            Export SVG
+          </button>
+        </div>
+
+        {/* Dark canvas */}
+        <div ref={svgRef} style={{flex:1,display:'flex',flexDirection:'column',
+          padding:'14px',gap:10,overflow:'hidden',background:'#030608'}}>
+          {!geo && !isRunning && !traceProgress ? (
+            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',
+              justifyContent:'center',gap:16}}>
+              <div style={{width:60,height:60,borderRadius:16,background:'rgba(255,255,255,0.04)',
+                border:'0.5px solid rgba(255,255,255,0.08)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5">
+                  <path d="M2 12c0-5.5 4.5-10 10-10s10 4.5 10 10-4.5 10-10 10S2 17.5 2 12z"/>
+                  <path d="M12 8v4l3 3"/>
+                </svg>
+              </div>
+              <div style={{textAlign:'center',maxWidth:360}}>
+                <div style={{fontSize:14,fontWeight:600,color:'rgba(255,255,255,0.6)',marginBottom:6}}>
+                  YOLO Vehicle Outline
+                </div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',lineHeight:1.7}}>
+                  Upload a side-on photo or paste a URL.<br/>
+                  Choose analysis mode then click Analyse.
+                </div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap',justifyContent:'center'}}>
+                {['Preprocessor','YOLOv8x-seg','SAM2','2000pt contour','Catmull-Rom','Florence-2','Moondream2'].map((s,i,a)=>(
+                  <span key={i} style={{display:'flex',alignItems:'center',gap:4}}>
+                    <span style={{padding:'2px 8px',borderRadius:5,border:'0.5px solid rgba(255,255,255,0.1)',
+                      fontSize:9,fontFamily:"'IBM Plex Mono'",color:'rgba(255,255,255,0.3)',
+                      background:'rgba(255,255,255,0.03)'}}>{s}</span>
+                    {i<a.length-1&&<span style={{fontSize:9,color:'rgba(255,255,255,0.15)'}}>→</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : isRunning && traceProgress ? (
+            <div style={{flex:1}}>
+              <PipelineLoader pct={traceProgress.pct} msg={traceProgress.msg} mode={analysisMode}/>
+            </div>
+          ) : (
+            <>
+              {/* ── FIX: maxHeight increased from 295 → 340 to match taller SVG (CH=310) */}
+              <div style={{flex:1,background:'#070d14',borderRadius:12,
+                border:'0.5px solid rgba(255,255,255,0.06)',display:'flex',
+                alignItems:'center',justifyContent:'center',padding:'12px',overflow:'hidden'}}>
+                <div style={{width:'100%',height:'100%',maxHeight:345}}>
+                  {activeView==='side'  && <SideView g={geo} showSep={showSep} mode={analysisMode}
+                    traceProgress={traceProgress} traceAnimating={traceAnimating}/>}
+                  {activeView==='front' && <FrontView g={geo}/>}
+                  {activeView==='top'   && <TopView   g={geo} yawAngle={yawAngle}/>}
+                  {activeView==='under' && <UnderView g={geo}/>}
+                </div>
+              </div>
+              {/* Thumbnails */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,flexShrink:0}}>
+                {VIEWS.map(v=>(
+                  <button key={v.id} onClick={()=>setActiveView(v.id)}
+                    style={{borderRadius:10,
+                      border:`1px solid ${activeView===v.id?'rgba(10,132,255,0.5)':'rgba(255,255,255,0.06)'}`,
+                      background:activeView===v.id?'rgba(10,132,255,0.08)':'rgba(255,255,255,0.02)',
+                      overflow:'hidden',cursor:'pointer',padding:4,transition:'all 0.15s'}}>
+                    <div style={{width:'100%',aspectRatio:'5/3',pointerEvents:'none'}}>
+                      {v.id==='side'  && <SideView  g={geo} showSep={false} showPanels={false}/>}
+                      {v.id==='front' && <FrontView g={geo}/>}
+                      {v.id==='top'   && <TopView   g={geo} yawAngle={0}/>}
+                      {v.id==='under' && <UnderView g={geo}/>}
+                    </div>
+                    <div style={{fontSize:10,color:activeView===v.id?'#0A84FF':'rgba(255,255,255,0.25)',
+                      textAlign:'center',padding:'3px 0',fontWeight:activeView===v.id?600:400}}>
+                      {v.label}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── RIGHT PANEL ── */}
+      <div style={{width:210,flexShrink:0,borderLeft:'0.5px solid var(--sep)',
+        overflowY:'auto',padding:'16px 14px',background:'#fff'}}>
+        {geo ? (
+          <>
+            <SL n="03" t="Wheels"/>
+            <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+              {(geo._keypoints?.wheels??[]).length===0 ? (
+                <div style={{fontSize:11,color:'var(--text-quaternary)',textAlign:'center',padding:'6px 0'}}>
+                  No wheels detected
+                </div>
+              ) : (geo._keypoints?.wheels??[]).map((w,i)=>(
+                <div key={i} style={{marginBottom:7,paddingBottom:7,borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                  <div style={{fontSize:10,fontWeight:700,color:'#0A84FF',marginBottom:3,fontFamily:"'IBM Plex Mono'"}}>
+                    Wheel {i+1}
+                  </div>
+                  {[['cx',(w.nx*100).toFixed(1)+'%'],['cy',(w.ny*100).toFixed(1)+'%'],['r',(w.nr*100).toFixed(1)+'%']].map(([k,v])=>(
+                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'1px 0'}}>
+                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'"}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            <SL n="04" t="Geometry"/>
+            <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+              {[
+                ['Hood',      ((geo.hoodRatio??0)*100).toFixed(0)+'%'],
+                ['Cabin',     ((geo.cabinRatio??0)*100).toFixed(0)+'%'],
+                ['Boot',      ((geo.bootRatio??0)*100).toFixed(0)+'%'],
+                ['Aspect',    (geo.aspectRatio??0).toFixed(2)],
+                ['WS rake',   (geo.wsAngleDeg??0).toFixed(0)+'°'],
+                ['Rear drop', ((geo.rearDrop??0)*100).toFixed(0)+'%'],
+              ].map(([k,v])=>(
+                <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,
+                  padding:'3px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                  <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                  <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            <SL n="05" t="Quality"/>
+            <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+              {geo._quality ? (
+                <>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                    <span style={{fontSize:11,fontWeight:700,
+                      color: geo._quality.score>=90?'#30d158': geo._quality.score>=75?'#0A84FF': geo._quality.score>=55?'#ff9f0a':'#ff453a',
+                      fontFamily:"'IBM Plex Mono'"}}>
+                      {geo._quality.score}/100
+                    </span>
+                    <span style={{fontSize:9,color:'var(--text-quaternary)',textTransform:'uppercase',
+                      letterSpacing:'0.06em',fontFamily:"'IBM Plex Mono'"}}>{geo._quality.status}</span>
+                  </div>
+                  <div style={{height:4,borderRadius:2,background:'var(--bg3)',marginBottom:8}}>
+                    <div style={{height:'100%',borderRadius:2,
+                      width:`${geo._quality.score}%`,
+                      background: geo._quality.score>=90?'#30d158': geo._quality.score>=75?'#0A84FF': geo._quality.score>=55?'#ff9f0a':'#ff453a',
+                      transition:'width 0.6s'}}/>
+                  </div>
+                  {geo._quality.warnings?.map((w,i)=>(
+                    <div key={i} style={{fontSize:9,color:'#ff9f0a',fontFamily:"'IBM Plex Mono'",
+                      padding:'2px 0',lineHeight:1.5,borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                      ⚠ {w}
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div style={{fontSize:11,color:'var(--text-quaternary)',textAlign:'center'}}>—</div>
+              )}
+            </div>
+
+            {/* Mode C: Aero ID */}
+            {geo._aero && (
+              <>
+                <SL n="06" t="Aero ID"/>
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#0A84FF',marginBottom:6,fontFamily:"'IBM Plex Mono'"}}>{geo._aero.car_id}</div>
+                  {[
+                    ['Cd est.',  geo._aero.estimated_cd?.toFixed(3)?? '—'],
+                    ['Body',     geo._aero.body_type??'—'],
+                    ['Spoiler',  geo._aero.features?.spoiler??'—'],
+                    ['Diffuser', geo._aero.features?.diffuser??'—'],
+                    ['Grille',   geo._aero.features?.grille??'—'],
+                  ].map(([k,v])=>(
+                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,
+                      padding:'2px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'",textTransform:'capitalize'}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <SL n="07" t="Drag Regions"/>
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  {Object.entries(geo._aero.region_cd??{}).map(([region,val])=>(
+                    <div key={region} style={{marginBottom:6}}>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
+                        <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{region}</span>
+                        <span style={{color:'#0A84FF',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>
+                          {(val*100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div style={{height:3,borderRadius:2,background:'var(--bg3)'}}>
+                        <div style={{height:'100%',borderRadius:2,background:'rgba(10,132,255,0.5)',
+                          width:`${Math.min(100,(val/(geo._aero.estimated_cd??0.3))*100)}%`}}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {geo._aero.improvements?.length>0 && (
+                  <>
+                    <SL n="08" t="Improvements"/>
+                    <div style={{...card,padding:'9px 11px'}}>
+                      {geo._aero.improvements.map((imp,i)=>(
+                        <div key={i} style={{fontSize:10,color:'var(--text-secondary)',padding:'3px 0',
+                          borderBottom:'0.5px solid rgba(255,255,255,0.04)',lineHeight:1.5}}>
+                          {i+1}. {imp}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
+            {/* Engineering data */}
+            {geo._engineering?.shape_descriptors && (
+              <>
+                <SL n={geo._aero ? "09" : "06"} t="Shape"/>
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  {[
+                    ['Hood slope',   (geo._engineering.shape_descriptors.hood_slope_deg??0).toFixed(1)+'°'],
+                    ['Rear taper',   (geo._engineering.shape_descriptors.rear_taper_deg??0).toFixed(1)+'°'],
+                    ['WS rake',      (geo._engineering.shape_descriptors.ws_rake_deg??0).toFixed(1)+'°'],
+                    ['Roof curve',   (geo._engineering.shape_descriptors.roof_curvature_range??0).toFixed(3)],
+                    ['Taper onset',  ((geo._engineering.shape_descriptors.taper_onset_x??0)*100).toFixed(0)+'%'],
+                    ['GH ratio',     (geo._engineering.shape_descriptors.greenhouse_ratio??0).toFixed(3)],
+                    ['CdA',          (geo.CdA??geo._engineering?.exports?.json_descriptor?.geometry?.cda_estimate??0).toFixed(4)],
+                  ].map(([k,v])=>(
+                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,
+                      padding:'2px 0',borderBottom:'0.5px solid rgba(255,255,255,0.04)'}}>
+                      <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
+                      <span style={{color:'var(--blue)',fontFamily:"'IBM Plex Mono'",fontWeight:600}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* CFD Heuristics */}
+            {geo._engineering?.cfd_heuristics && (
+              <>
+                <SL n={geo._aero ? "10" : "07"} t="CFD Hints"/>
+                <div style={{...card,padding:'9px 11px',marginBottom:10}}>
+                  {Object.entries(geo._engineering.cfd_heuristics)
+                    .filter(([k]) => k !== 'ahmed_regime' && k !== 'note')
+                    .map(([k,v])=>{
+                      const label = k.replace(/_/g,' ').replace(/tendency|likelihood|fraction|factor/,'').trim()
+                      const pct = Math.round(Number(v)*100)
+                      return (
+                        <div key={k} style={{marginBottom:5}}>
+                          <div style={{display:'flex',justifyContent:'space-between',fontSize:9,marginBottom:2}}>
+                            <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'",
+                              textTransform:'capitalize'}}>{label}</span>
+                            <span style={{color: pct>65?'#ff453a':pct>35?'#ff9f0a':'#30d158',
+                              fontFamily:"'IBM Plex Mono'",fontWeight:600,fontSize:10}}>{pct}%</span>
+                          </div>
+                          <div style={{height:3,borderRadius:2,background:'rgba(255,255,255,0.06)'}}>
+                            <div style={{height:'100%',borderRadius:2,
+                              background: pct>65?'#ff453a':pct>35?'#ff9f0a':'#30d158',
+                              width:`${pct}%`,transition:'width 0.4s'}}/>
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </>
+            )}
+
+            {/* Ahmed regime badge */}
+            {geo.ahmedRegime && (
+              <div style={{...card,padding:'8px 11px',marginBottom:10,
+                display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:10,color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>Ahmed</span>
+                <span style={{fontSize:10,fontWeight:700,fontFamily:"'IBM Plex Mono'",
+                  color: geo.ahmedRegime==='critical'?'#ff453a':
+                         geo.ahmedRegime==='separated'?'#ff9f0a':
+                         geo.ahmedRegime==='attached'?'#30d158':'var(--blue)',
+                  padding:'2px 8px',borderRadius:4,
+                  background: geo.ahmedRegime==='critical'?'rgba(255,69,58,0.12)':
+                              geo.ahmedRegime==='separated'?'rgba(255,159,10,0.12)':
+                              geo.ahmedRegime==='attached'?'rgba(48,209,88,0.12)':'rgba(10,132,255,0.12)'}}>
+                  {geo.ahmedRegime?.toUpperCase()} {geo.rearSlantAngleDeg?.toFixed(1)}°
+                </span>
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',
+            padding:'40px 0',textAlign:'center'}}>
+            <span style={{fontSize:12,color:'var(--text-quaternary)'}}>Results appear here after analysis</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
