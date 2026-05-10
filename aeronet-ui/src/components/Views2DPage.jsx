@@ -240,41 +240,40 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   // Ground line: sit just below the lowest contour point (ny=1.0 in draw coords)
   const contourBottom = draw_oy + draw_h
   const gY = Math.min(contourBottom + 10, CH - 10)
-  const wheels = (keypoints?.wheels??[]).map(w=>({
-    cx: kpX(w.nx), cy: kpY(w.ny),
-    // nr = wheel_r / bbox_w. Use draw_w (not draw_h) since nr is relative to bbox width.
-    // Clamp to 9–20% of draw_h — prevents both over/undersized circles.
-    r: Math.max(draw_h*0.09, Math.min(draw_h*0.20, w.nr*draw_w*0.48)),
-  }))
+  // ── Wheel geometry — read from backend, pinned to ground line ──────────────
+  // r and rimR are computed from nr/nrr (normalised to bbox width).
+  // cy is pinned so the tyre bottom = gY minus a 4px ground-clearance gap,
+  // so wheels always sit correctly regardless of where the Hough centre landed.
+  const wheels = (keypoints?.wheels??[]).map(w=>{
+    const cx   = kpX(w.nx)
+    const r    = Math.max(draw_h*0.11, Math.min(draw_h*0.22, w.nr  * draw_w * 0.52))
+    // nrr = normalised rim radius exported from Python _nw(); fallback 0.68×r
+    const rimR = w.nrr
+      ? Math.max(draw_h*0.07, Math.min(r * 0.90, w.nrr * draw_w * 0.52))
+      : r * 0.68
+    // Pin bottom of tyre to ground line with 4px clearance gap
+    const cy   = gY - r - 4
+    return { cx, cy, r, rimR, spokes: w.spokes ?? 5 }
+  })
   const method = g?._method ?? ''
 
   return (
     <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
       <defs>
-        <filter id="glow">
-          <feGaussianBlur stdDeviation="1.5" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-        <filter id="glow-strong">
-          <feGaussianBlur stdDeviation="3" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
+        {/* No glow filters — clean engineering line-drawing style */}
       </defs>
 
-      {/* Ground shadow — centred on computed gY */}
-      <ellipse cx={CW/2} cy={gY+4} rx={scale_x*0.46} ry={5} fill="rgba(0,0,0,0.45)"/>
-      <line x1={12} y1={gY} x2={CW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+      {/* Subtle ground contact line — no shadow ellipse in line-drawing style */}
+      <line x1={draw_ox} y1={gY} x2={draw_ox+draw_w} y2={gY}
+        stroke="rgba(255,255,255,0.08)" strokeWidth="0.5"/>
 
       {/*
-        ── FIX: car body fill changed from "none" to a near-opaque dark colour.
-        With fill="none" the SVG background bleeds through wheel-arch cutouts and
-        any concavity at the bottom, creating the illusion that the outline is
-        missing. The dark fill matches the canvas background so it's invisible
-        while blocking the background from showing through.
+        Clean engineering line-drawing style — fill="none", single crisp stroke.
+        evenodd fill rule makes wheel arch cutouts render as real holes (matching
+        the reference drawing) rather than being filled with the body colour.
       */}
-      <path d={pathD} fill="rgba(4,10,18,0.96)" stroke="rgba(255,255,255,0.12)" strokeWidth="4" fillRule="nonzero"/>
-      <path d={pathD} fill="rgba(4,10,18,0.96)" stroke="rgba(255,255,255,1.0)" strokeWidth="1.2"
-        fillRule="nonzero" filter="url(#glow)"/>
+      <path d={pathD} fill="none" stroke="rgba(255,255,255,0.95)" strokeWidth="1.4"
+        strokeLinejoin="round" strokeLinecap="round" fillRule="evenodd"/>
 
       {/* Panel lines (Mode B/C) */}
       {showPanels && g?._panels?.lines
@@ -334,15 +333,39 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
           stroke="rgba(255,100,80,0.35)" strokeWidth="1" strokeDasharray="3 2"/>
       )}
 
-      {/* Wheels */}
-      {wheels.map((w,i)=>(
-        <g key={i}>
-          <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r} fill="none"
-            stroke="rgba(255,255,255,0.8)" strokeWidth="1.5"/>
-          <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r*0.5} fill="none"
-            stroke="rgba(255,255,255,0.25)" strokeWidth="0.7"/>
-        </g>
-      ))}
+      {/* Wheels — rim radius and spoke count read from image by Python _analyse_rim */}
+      {wheels.map((w,i)=>{
+        const hubR   = w.r * 0.15
+        // Generate spoke endpoints from image-derived spoke count
+        const spokeAngles = Array.from({length: w.spokes}, (_, k) =>
+          (k / w.spokes) * Math.PI * 2
+        )
+        return (
+          <g key={i}>
+            {/* Outer tyre ring */}
+            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r}
+              fill="none" stroke="rgba(255,255,255,0.90)" strokeWidth="1.8"/>
+            {/* Inner rim ring — radius read from image */}
+            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.rimR}
+              fill="none" stroke="rgba(255,255,255,0.60)" strokeWidth="0.9"/>
+            {/* Spokes — count read from image */}
+            {spokeAngles.map((a,k)=>{
+              const x1 = (w.cx + Math.cos(a) * hubR * 1.4).toFixed(1)
+              const y1 = (w.cy + Math.sin(a) * hubR * 1.4).toFixed(1)
+              const x2 = (w.cx + Math.cos(a) * w.rimR * 0.92).toFixed(1)
+              const y2 = (w.cy + Math.sin(a) * w.rimR * 0.92).toFixed(1)
+              return <line key={k} x1={x1} y1={y1} x2={x2} y2={y2}
+                stroke="rgba(255,255,255,0.55)" strokeWidth="0.9" strokeLinecap="round"/>
+            })}
+            {/* Centre hub ring */}
+            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={hubR}
+              fill="none" stroke="rgba(255,255,255,0.70)" strokeWidth="0.9"/>
+            {/* Hub centre dot */}
+            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r * 0.05}
+              fill="rgba(255,255,255,0.80)"/>
+          </g>
+        )
+      })}
 
       <text x={CW/2} y={CH-3} textAnchor="middle" fill="rgba(255,255,255,0.10)"
         fontSize="8" fontFamily="'IBM Plex Mono',monospace" letterSpacing="0.12em">
@@ -944,7 +967,13 @@ export default function Views2DPage() {
                   <div style={{fontSize:10,fontWeight:700,color:'#0A84FF',marginBottom:3,fontFamily:"'IBM Plex Mono'"}}>
                     Wheel {i+1}
                   </div>
-                  {[['cx',(w.nx*100).toFixed(1)+'%'],['cy',(w.ny*100).toFixed(1)+'%'],['r',(w.nr*100).toFixed(1)+'%']].map(([k,v])=>(
+                  {[
+                    ['cx',     (w.nx*100).toFixed(1)+'%'],
+                    ['cy',     (w.ny*100).toFixed(1)+'%'],
+                    ['r',      (w.nr*100).toFixed(1)+'%'],
+                    ['rim r',  w.nrr != null ? (w.nrr*100).toFixed(1)+'%' : '—'],
+                    ['spokes', w.spokes != null ? String(w.spokes) : '—'],
+                  ].map(([k,v])=>(
                     <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,padding:'1px 0'}}>
                       <span style={{color:'var(--text-quaternary)',fontFamily:"'IBM Plex Mono'"}}>{k}</span>
                       <span style={{color:'var(--text-secondary)',fontFamily:"'IBM Plex Mono'"}}>{v}</span>
