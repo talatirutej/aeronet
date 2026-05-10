@@ -619,9 +619,14 @@ export default function AeroNetV2() {
   const svgRef = useRef(null)
 
   const isRunning = stage === 'analyzing'
-  const hasMainFile = !!viewFiles.side
+  const hasMainFile = !!(viewFiles.side && viewFiles.side.size > 0)
 
   const setViewFile = useCallback((viewId, file) => {
+    // Reject empty/corrupt files before they enter state
+    if (file && file.size === 0) {
+      setError(`The dropped file for ${viewId} view appears to be empty. Please use a real image.`)
+      return
+    }
     setViewFiles(p => ({ ...p, [viewId]: file }))
     if (viewId === 'side') {
       setGeo(null); setError(null); setDrawDone(false); setIsDrawing(false)
@@ -648,15 +653,25 @@ export default function AeroNetV2() {
     return entry ? { msg: entry[1], sub: entry[2] } : { msg: 'Processing…', sub: '' }
   }
 
-  const simulateAll = () => {
-    const dummy = new File([''], 'simulated.jpg', { type: 'image/jpeg' })
-    setViewFiles({ side: dummy, front: dummy, top: dummy, under: dummy })
-    setTimeout(() => run(dummy), 100)
+  // Simulate Side View: marks the side slot as "pending simulation" in UI only.
+  // Does NOT create a dummy file or send anything to the backend.
+  // Runs the real analysis only if the user has already dropped a real side photo.
+  const simulateSide = () => {
+    if (!viewFiles.side) {
+      setError('Drop a real side-view photo first, then click Simulate Side View.')
+      return
+    }
+    run()
   }
 
-  const run = async (fileOverride) => {
-    const file = fileOverride || viewFiles.side
+  const run = async () => {
+    const file = viewFiles.side
     if (!file) return
+    // Guard: reject empty/dummy files (0 bytes) — backend will fail on them
+    if (file.size === 0) {
+      setError('The side view file appears to be empty. Please drop a real image file.')
+      return
+    }
     setError(null); setGeo(null); setDrawDone(false); setIsDrawing(false)
     setStage('analyzing')
     setTraceProgress({ pct: 2, msg: 'Preparing image…', sub: 'Input normalisation' })
@@ -821,9 +836,22 @@ export default function AeroNetV2() {
                 <DropZone viewId="under" label="Underside" icon="⊠" file={viewFiles.under} onFile={setViewFile}/>
               </div>
 
-              <button className="sim-btn" onClick={simulateAll}>
-                ⬡ Simulate All Views
+              <button
+                className="sim-btn"
+                onClick={simulateSide}
+                disabled={isRunning}
+                style={{ opacity: isRunning ? 0.5 : 1, cursor: isRunning ? 'not-allowed' : 'pointer' }}
+              >
+                ▶ Simulate Side View
               </button>
+
+              <div style={{
+                fontSize: 9, color: 'rgba(255,255,255,0.2)', lineHeight: 1.6,
+                padding: '4px 2px 6px', letterSpacing: '.03em'
+              }}>
+                Front / Top / Underside views are generated from the side analysis.
+                Drop real photos in those slots to enable per-view analysis.
+              </div>
 
               {error && <div className="err-box">{error}</div>}
 
@@ -941,7 +969,7 @@ export default function AeroNetV2() {
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
                         justifyContent: 'center', gap: 3, width: '100%', height: '100%' }}>
                         <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.1)' }}>+</span>
-                        {viewFiles[v.id] && <span style={{ fontSize: 7, color: 'rgba(48,209,88,0.6)' }}>loaded</span>}
+                        {viewFiles[v.id] && viewFiles[v.id].size > 0 && <span style={{ fontSize: 7, color: 'rgba(48,209,88,0.6)' }}>loaded</span>}
                       </div>
                     )}
                   </div>
