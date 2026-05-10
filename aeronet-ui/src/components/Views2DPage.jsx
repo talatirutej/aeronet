@@ -648,6 +648,16 @@ export default function AeroNetV2() {
     return () => window.removeEventListener('paste', handle)
   }, [setViewFile])
 
+  // Close export menu when clicking outside
+  useEffect(() => {
+    if (!exportMenuOpen) return
+    const close = (e) => {
+      if (!e.target.closest('[data-export-menu]')) setExportMenuOpen(false)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [exportMenuOpen])
+
   const getMsgForPct = (pct) => {
     const entry = [...BACKEND_MSGS].reverse().find(m => pct >= m[0])
     return entry ? { msg: entry[1], sub: entry[2] } : { msg: 'Processing…', sub: '' }
@@ -766,12 +776,123 @@ export default function AeroNetV2() {
     }
   }
 
-  const exportSVG = () => {
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [exportMsg,      setExportMsg]      = useState('')
+
+  // Build a clean standalone SVG string with embedded fonts + black background
+  const buildSVGString = () => {
     const svg = svgRef.current?.querySelector('svg')
-    if (!svg) return
+    if (!svg) return null
+    // Clone so we can mutate without touching the live DOM
+    const clone = svg.cloneNode(true)
+    // Ensure black background rect is present
+    if (!clone.querySelector('rect[data-bg]')) {
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      bg.setAttribute('width',  clone.getAttribute('viewBox')?.split(' ')[2] ?? '620')
+      bg.setAttribute('height', clone.getAttribute('viewBox')?.split(' ')[3] ?? '300')
+      bg.setAttribute('fill',   '#030608')
+      bg.setAttribute('data-bg', '1')
+      clone.insertBefore(bg, clone.firstChild)
+    }
+    // Embed Google Font declaration so exported SVG renders correctly when opened standalone
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+    style.textContent = `@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap');`
+    clone.insertBefore(style, clone.firstChild)
+    // Set explicit pixel dimensions for better compatibility
+    const vb = clone.getAttribute('viewBox')?.split(' ') ?? ['0','0','620','300']
+    clone.setAttribute('width',  vb[2])
+    clone.setAttribute('height', vb[3])
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    return new XMLSerializer().serializeToString(clone)
+  }
+
+  const exportSVG = () => {
+    const svgStr = buildSVGString()
+    if (!svgStr) return
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([svg.outerHTML], { type: 'image/svg+xml' }))
-    a.download = `aeronet_${activeView}.svg`; a.click()
+    a.href = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }))
+    a.download = `aeronet_${activeView}_${Date.now()}.svg`
+    a.click()
+    setExportMsg('SVG downloaded'); setTimeout(() => setExportMsg(''), 2000)
+    setExportMenuOpen(false)
+  }
+
+  const exportPNG = (scale = 3) => {
+    const svgStr = buildSVGString()
+    if (!svgStr) return
+    const svg    = svgRef.current?.querySelector('svg')
+    const vb     = svg?.getAttribute('viewBox')?.split(' ') ?? ['0','0','620','300']
+    const W = parseFloat(vb[2]) * scale
+    const H = parseFloat(vb[3]) * scale
+    const img = new Image()
+    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
+    const url  = URL.createObjectURL(blob)
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = W; canvas.height = H
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#030608'
+      ctx.fillRect(0, 0, W, H)
+      ctx.drawImage(img, 0, 0, W, H)
+      URL.revokeObjectURL(url)
+      canvas.toBlob(pngBlob => {
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(pngBlob)
+        a.download = `aeronet_${activeView}_${scale}x_${Date.now()}.png`
+        a.click()
+        setExportMsg(`PNG ${scale}× downloaded`); setTimeout(() => setExportMsg(''), 2000)
+      }, 'image/png')
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      setExportMsg('PNG export failed — try SVG instead')
+      setTimeout(() => setExportMsg(''), 3000)
+    }
+    img.src = url
+    setExportMenuOpen(false)
+  }
+
+  const copyToClipboard = async () => {
+    // Try modern Clipboard API with PNG blob first (works in Chrome/Edge)
+    const svgStr = buildSVGString()
+    if (!svgStr) return
+    const svg    = svgRef.current?.querySelector('svg')
+    const vb     = svg?.getAttribute('viewBox')?.split(' ') ?? ['0','0','620','300']
+    const W = parseFloat(vb[2]) * 2
+    const H = parseFloat(vb[3]) * 2
+    const img = new Image()
+    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
+    const url  = URL.createObjectURL(blob)
+    img.onload = async () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = W; canvas.height = H
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#030608'; ctx.fillRect(0, 0, W, H)
+      ctx.drawImage(img, 0, 0, W, H)
+      URL.revokeObjectURL(url)
+      try {
+        canvas.toBlob(async pngBlob => {
+          try {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+            setExportMsg('Copied as PNG ✓'); setTimeout(() => setExportMsg(''), 2500)
+          } catch {
+            // Clipboard API blocked — fall back to copying SVG text
+            try {
+              await navigator.clipboard.writeText(svgStr)
+              setExportMsg('SVG code copied ✓'); setTimeout(() => setExportMsg(''), 2500)
+            } catch {
+              setExportMsg('Copy blocked by browser — use Download instead')
+              setTimeout(() => setExportMsg(''), 3000)
+            }
+          }
+        }, 'image/png')
+      } catch {
+        setExportMsg('Copy failed — use Download instead')
+        setTimeout(() => setExportMsg(''), 3000)
+      }
+    }
+    img.src = url
+    setExportMenuOpen(false)
   }
 
   const getViewSVG = (viewId) => {
@@ -818,7 +939,89 @@ export default function AeroNetV2() {
               ? <><span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/> Analysing…</>
               : <>▶ Analyse</>}
           </button>
-          <button className="tb-btn tb-exp" onClick={exportSVG} disabled={!geo}>↓ SVG</button>
+          <div style={{ position: 'relative', marginLeft: 8 }} data-export-menu="1">
+            <button
+              className="tb-btn tb-exp"
+              onClick={() => setExportMenuOpen(p => !p)}
+              disabled={!geo}
+              style={{ gap: 5 }}>
+              ↓ Export
+              <span style={{ fontSize: 9, opacity: 0.6 }}>▾</span>
+            </button>
+            {exportMenuOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                background: '#0a1018', border: '.5px solid rgba(255,255,255,0.12)',
+                borderRadius: 10, overflow: 'hidden', zIndex: 100,
+                minWidth: 200, boxShadow: '0 8px 24px rgba(0,0,0,0.6)'
+              }}>
+                {/* PNG options */}
+                <div style={{ padding: '8px 12px 4px', fontSize: 8, color: 'rgba(255,255,255,0.3)',
+                  letterSpacing: '.1em', textTransform: 'uppercase' }}>Download PNG</div>
+                {[
+                  { label: '1× standard', scale: 1, sub: `${620}×${300}px` },
+                  { label: '3× high-res',  scale: 3, sub: `${620*3}×${300*3}px` },
+                  { label: '6× print',     scale: 6, sub: `${620*6}×${300*6}px` },
+                ].map(({ label, scale, sub }) => (
+                  <button key={scale} onClick={() => exportPNG(scale)}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: 'rgba(255,255,255,0.75)', fontSize: 11, fontFamily: 'inherit',
+                      borderBottom: '.5px solid rgba(255,255,255,0.05)', textAlign: 'left' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(10,132,255,0.1)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <span>↓ {label}</span>
+                    <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{sub}</span>
+                  </button>
+                ))}
+                {/* SVG */}
+                <div style={{ padding: '8px 12px 4px', fontSize: 8, color: 'rgba(255,255,255,0.3)',
+                  letterSpacing: '.1em', textTransform: 'uppercase', borderTop: '.5px solid rgba(255,255,255,0.06)' }}>Download SVG</div>
+                <button onClick={exportSVG}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'rgba(255,255,255,0.75)', fontSize: 11, fontFamily: 'inherit',
+                    borderBottom: '.5px solid rgba(255,255,255,0.05)', textAlign: 'left' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(10,132,255,0.1)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <span>↓ Vector SVG</span>
+                  <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>scalable</span>
+                </button>
+                {/* Copy */}
+                <div style={{ padding: '8px 12px 4px', fontSize: 8, color: 'rgba(255,255,255,0.3)',
+                  letterSpacing: '.1em', textTransform: 'uppercase', borderTop: '.5px solid rgba(255,255,255,0.06)' }}>Copy</div>
+                <button onClick={copyToClipboard}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'rgba(255,255,255,0.75)', fontSize: 11, fontFamily: 'inherit', textAlign: 'left' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(10,132,255,0.1)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <span>⎘ Copy as PNG</span>
+                  <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>clipboard</span>
+                </button>
+                {/* Dismiss */}
+                <button onClick={() => setExportMenuOpen(false)}
+                  style={{ width: '100%', padding: '6px 14px', background: 'transparent',
+                    border: 'none', borderTop: '.5px solid rgba(255,255,255,0.06)',
+                    cursor: 'pointer', color: 'rgba(255,255,255,0.25)', fontSize: 10,
+                    fontFamily: 'inherit', textAlign: 'center' }}>
+                  cancel
+                </button>
+              </div>
+            )}
+            {/* Toast feedback */}
+            {exportMsg && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                background: 'rgba(48,209,88,0.15)', border: '.5px solid rgba(48,209,88,0.4)',
+                borderRadius: 7, padding: '5px 12px', fontSize: 10,
+                color: '#30d158', whiteSpace: 'nowrap', zIndex: 101,
+                fontFamily: 'inherit', letterSpacing: '.04em'
+              }}>
+                {exportMsg}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="app-body">
