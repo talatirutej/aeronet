@@ -240,33 +240,55 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   // Ground line: sit just below the lowest contour point (ny=1.0 in draw coords)
   const contourBottom = draw_oy + draw_h
   const gY = Math.min(contourBottom + 10, CH - 10)
-  // ── Wheel geometry — read from backend, correctly sized and positioned ──────
-  // nr = wheel_r / bbox_w (normalised). Scale: nr * draw_w * 0.50 gives the right
-  // pixel radius for side-view cars (bbox_w typically 2-2.5× tyre diameter).
-  // Clamp: 11–20% of draw_h prevents invisible or oversized wheels.
-  //
-  // cy: scan the contour band around the wheel x-position, but only the UPPER
-  // 60% of the band height to avoid shadow/noise inflating the arch bottom.
-  // Then pin wheel centre = arch bottom - r.
-  const wheels = (keypoints?.wheels??[]).map(w=>{
-    const cx   = kpX(w.nx)
-    const r    = Math.max(draw_h*0.11, Math.min(draw_h*0.20, w.nr * draw_w * 0.50))
-    const rimR = w.nrr
-      ? Math.max(draw_h*0.07, Math.min(r * 0.88, w.nrr * draw_w * 0.50))
-      : r * 0.68
-    // Find arch bottom: lowest contour point in wheel x-band, but cap at
-    // 85% of draw_h (below that is shadow/noise, not real arch geometry).
-    const archCap = draw_oy + draw_h * 0.85
+  // ── Wheel geometry ───────────────────────────────────────────────────────────
+  // Both wheels on a car are always the same physical diameter.
+  // We average the two detected nr values so they render identically.
+  // nr = wheel_r / bbox_w. The draw scale factor that maps bbox_w → draw_w is
+  // draw_w / bbox_w_in_px. Since nr = r_px / bbox_w_px, pixel radius on screen =
+  // nr * draw_w. But bbox_w is the full car length, and a tyre diameter is ~25-28%
+  // of car height. Car height in draw coords = draw_h. So the correct formula is:
+  //   r = nr * draw_w   (exact mapping from normalised to screen pixels)
+  // Then clamp to a physically plausible range relative to draw_h:
+  //   real tyre = 22-30% of car height → clamp 0.22×draw_h to 0.30×draw_h
+
+  const rawWheels = keypoints?.wheels ?? []
+
+  // Compute radius for each wheel then unify to a single value (both same size)
+  const rawR = rawWheels.map(w => w.nr * draw_w)
+  const unifiedR = rawR.length > 0
+    ? Math.max(draw_h * 0.20, Math.min(draw_h * 0.32, rawR.reduce((a,b)=>a+b,0) / rawR.length))
+    : draw_h * 0.24
+
+  // Rim radius: average nrr values then scale same way, clamped to 60-85% of tyre r
+  const rawRimR = rawWheels.map(w => w.nrr ? w.nrr * draw_w : unifiedR * 0.68)
+  const unifiedRimR = rawRimR.length > 0
+    ? Math.max(unifiedR * 0.60, Math.min(unifiedR * 0.85,
+        rawRimR.reduce((a,b)=>a+b,0) / rawRimR.length))
+    : unifiedR * 0.68
+
+  // Spokes: use front wheel reading (most visible)
+  const unifiedSpokes = rawWheels[0]?.spokes ?? 5
+
+  const wheels = rawWheels.map(w => {
+    const cx = kpX(w.nx)
+    const r  = unifiedR
+    const rimR = unifiedRimR
+
+    // Arch bottom: lowest contour point in wheel x-band.
+    // Cap at 92% of draw_h (not 85%) — low-profile cars have arches lower in frame.
+    // Also require points to be in the lower half of the car (ny > 0.45).
+    const archCap = draw_oy + draw_h * 0.92
     const archBandPts = rawPts.filter(p => {
-      const sx = draw_ox + p[0]*draw_w
-      const sy = draw_oy + p[1]*draw_h
-      return Math.abs(sx - cx) < r * 1.6 && sy < archCap
+      const sx = draw_ox + p[0] * draw_w
+      const sy = draw_oy + p[1] * draw_h
+      return Math.abs(sx - cx) < r * 1.8 && sy < archCap && p[1] > 0.45
     })
     const archBottomY = archBandPts.length > 0
-      ? Math.max(...archBandPts.map(p => draw_oy + p[1]*draw_h))
+      ? Math.max(...archBandPts.map(p => draw_oy + p[1] * draw_h))
       : (gY - r - 2)
     const cy = archBottomY - r
-    return { cx, cy, r, rimR, spokes: w.spokes ?? 5 }
+
+    return { cx, cy, r, rimR, spokes: unifiedSpokes }
   })
   const method = g?._method ?? ''
 
