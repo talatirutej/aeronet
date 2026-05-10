@@ -241,32 +241,26 @@ function SideView({ g, showSep, traceProgress, traceAnimating, showPanels=true, 
   const contourBottom = draw_oy + draw_h
   const gY = Math.min(contourBottom + 10, CH - 10)
   // ── Wheel geometry ───────────────────────────────────────────────────────────
-  // Both wheels on a car are always the same physical diameter.
-  // We average the two detected nr values so they render identically.
-  // nr = wheel_r / bbox_w. The draw scale factor that maps bbox_w → draw_w is
-  // draw_w / bbox_w_in_px. Since nr = r_px / bbox_w_px, pixel radius on screen =
-  // nr * draw_w. But bbox_w is the full car length, and a tyre diameter is ~25-28%
-  // of car height. Car height in draw coords = draw_h. So the correct formula is:
-  //   r = nr * draw_w   (exact mapping from normalised to screen pixels)
-  // Then clamp to a physically plausible range relative to draw_h:
-  //   real tyre = 22-30% of car height → clamp 0.22×draw_h to 0.30×draw_h
+  // nr = wheel_r / bbox_w (normalised to bbox width from Python).
+  // nr * draw_w maps directly to screen radius.
+  // Physical constraint: a real tyre is 20-28% of car height on any vehicle.
+  // Floor 0.16×draw_h prevents invisible wheels on very wide-aspect images.
+  // Ceiling 0.28×draw_h hard-caps against shadow blobs that slipped through.
+  // Both wheels unified to same radius (average of detections).
 
   const rawWheels = keypoints?.wheels ?? []
 
-  // Compute radius for each wheel then unify to a single value (both same size)
   const rawR = rawWheels.map(w => w.nr * draw_w)
   const unifiedR = rawR.length > 0
-    ? Math.max(draw_h * 0.20, Math.min(draw_h * 0.32, rawR.reduce((a,b)=>a+b,0) / rawR.length))
-    : draw_h * 0.24
+    ? Math.max(draw_h * 0.16, Math.min(draw_h * 0.28, rawR.reduce((a,b)=>a+b,0) / rawR.length))
+    : draw_h * 0.22
 
-  // Rim radius: average nrr values then scale same way, clamped to 60-85% of tyre r
   const rawRimR = rawWheels.map(w => w.nrr ? w.nrr * draw_w : unifiedR * 0.68)
   const unifiedRimR = rawRimR.length > 0
     ? Math.max(unifiedR * 0.60, Math.min(unifiedR * 0.85,
         rawRimR.reduce((a,b)=>a+b,0) / rawRimR.length))
     : unifiedR * 0.68
 
-  // Spokes: use front wheel reading (most visible)
   const unifiedSpokes = rawWheels[0]?.spokes ?? 5
 
   const wheels = rawWheels.map(w => {
