@@ -427,7 +427,7 @@ export default function Views2DPage() {
       try {
         const fd = new FormData()
         fd.append('file', uploadFile)
-        const res = await fetch(proxyUrl('analyze-contour/start'), {
+        const res = await fetch(proxyUrl('contour/start'), {
           method: 'POST',
           body: fd,
           signal: AbortSignal.timeout(25000),
@@ -469,7 +469,7 @@ export default function Views2DPage() {
 
       let poll
       try {
-        const res = await fetch(proxyUrl(`analyze-contour/result/${jobId}`), {
+        const res = await fetch(proxyUrl(`contour/result/${jobId}`), {
           signal: AbortSignal.timeout(10000),
         })
         if (!res.ok) {
