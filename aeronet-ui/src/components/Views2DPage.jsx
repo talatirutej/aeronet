@@ -370,7 +370,7 @@ export default function Views2DPage({ backend = '' }) {
         const fd = new FormData()
         fd.append('file', uploadFile)
         fd.append('mode', analysisMode)
-        fd.append('view', viewId)   // tells backend which slot: side/front/top/rear
+        fd.append('view', viewId)
         const ctrl  = new AbortController()
         const timer = setTimeout(() => ctrl.abort(), 25000)
         let res
@@ -683,41 +683,39 @@ export default function Views2DPage({ backend = '' }) {
             <>
               <SL n="03" t="Geometry"/>
               <div style={{ background:'var(--bg1)', borderRadius:7, border:'0.5px solid var(--sep)', padding:'7px 9px', marginBottom:7 }}>
-                {geo._viewType === 'front' || geo._viewType === 'rear' || geo._viewType === 'front_or_rear' ? (
-                  // ── Front / rear view measurements ──────────────────────────
-                  [
-                    ['Frontal Area', geo.frontalAreaNorm!=null ? geo.frontalAreaNorm.toFixed(4) : '—'],
-                    ['Track width',  geo.trackWidthNorm!=null  ? (geo.trackWidthNorm*100).toFixed(1)+'%' : '—'],
-                    ['Shoulder w.',  geo.shoulderWidthNorm!=null ? (geo.shoulderWidthNorm*100).toFixed(1)+'%' : '—'],
-                    ['Roof width',   geo.roofWidthNorm!=null  ? (geo.roofWidthNorm*100).toFixed(1)+'%' : '—'],
-                    ['Ground clr.',  geo.rideH!=null           ? (geo.rideH*100).toFixed(1)+'%' : '—'],
-                    ['Symmetry',     geo.symmetryScore!=null   ? geo.symmetryScore.toFixed(3) : '—'],
-                    ['Aspect',       (geo.frontalAspect??geo.aspectRatio??0).toFixed(3)],
-                    ['Points',       (geo._contourPts?.length??0)+' pt'],
-                    ['Method',       geo._method??'—'],
+                {(() => {
+                  const isFront = geo._viewType === 'front' || geo._viewType === 'rear' || geo._viewType === 'front_or_rear'
+                  const rows = isFront ? [
+                    ['Frontal Area', geo.frontalAreaNorm != null ? geo.frontalAreaNorm.toFixed(4) : '—'],
+                    ['Track width',  geo.trackWidthNorm != null  ? (geo.trackWidthNorm*100).toFixed(1)+'%' : '—'],
+                    ['Shoulder w.',  geo.shoulderWidthNorm != null ? (geo.shoulderWidthNorm*100).toFixed(1)+'%' : '—'],
+                    ['Roof width',   geo.roofWidthNorm != null  ? (geo.roofWidthNorm*100).toFixed(1)+'%' : '—'],
+                    ['Ground clr.',  geo.rideH != null ? (geo.rideH*100).toFixed(1)+'%' : '—'],
+                    ['Symmetry',     geo.symmetryScore != null ? geo.symmetryScore.toFixed(3) : '—'],
+                    ['Aspect',       (geo.frontalAspect ?? geo.aspectRatio ?? 0).toFixed(3)],
+                    ['Points',       (geo._contourPts?.length ?? 0)+' pt'],
+                    ['Method',       geo._method ?? '—'],
+                  ] : [
+                    ['Points',    (geo._contourPts?.length ?? 0)+' pt'],
+                    ['Method',    geo._method ?? '—'],
+                    ['Aspect',    (geo.aspectRatio ?? 0).toFixed(2)],
+                    ['WS rake',   (geo.wsAngleDeg ?? 0).toFixed(0)+'°'],
+                    ['Rear slant',(geo.rearSlantAngleDeg ?? 0).toFixed(0)+'°'],
+                    ['Cd est.',   geo.Cd != null ? geo.Cd.toFixed(3) : '—'],
+                    ['CdA',       geo.CdA != null ? geo.CdA.toFixed(4) : '—'],
+                    ['Hood',      geo.hoodRatio != null ? (geo.hoodRatio*100).toFixed(0)+'%' : '—'],
+                    ['Cabin',     geo.cabinRatio != null ? (geo.cabinRatio*100).toFixed(0)+'%' : '—'],
+                    ['Boot',      geo.bootRatio != null ? (geo.bootRatio*100).toFixed(0)+'%' : '—'],
+                    ['Ride h.',   geo.rideH != null ? (geo.rideH*100).toFixed(1)+'%' : '—'],
+                    ['Arch d.',   geo.archDepth != null ? (geo.archDepth*100).toFixed(1)+'%' : '—'],
                   ]
-                ) : (
-                  // ── Side view measurements ────────────────────────────────
-                  [
-                    ['Points',    (geo._contourPts?.length??0)+' pt'],
-                    ['Method',    geo._method??'—'],
-                    ['Aspect',    (geo.aspectRatio??0).toFixed(2)],
-                    ['WS rake',   (geo.wsAngleDeg??0).toFixed(0)+'°'],
-                    ['Rear slant',(geo.rearSlantAngleDeg??0).toFixed(0)+'°'],
-                    ['Cd est.',   geo.Cd!=null?(geo.Cd).toFixed(3):'—'],
-                    ['CdA',       geo.CdA!=null?(geo.CdA).toFixed(4):'—'],
-                    ['Hood',      geo.hoodRatio!=null?((geo.hoodRatio)*100).toFixed(0)+'%':'—'],
-                    ['Cabin',     geo.cabinRatio!=null?((geo.cabinRatio)*100).toFixed(0)+'%':'—'],
-                    ['Boot',      geo.bootRatio!=null?((geo.bootRatio)*100).toFixed(0)+'%':'—'],
-                    ['Ride h.',   geo.rideH!=null?(geo.rideH*100).toFixed(1)+'%':'—'],
-                    ['Arch d.',   geo.archDepth!=null?(geo.archDepth*100).toFixed(1)+'%':'—'],
-                  ]
-                )}.map(([k,v]) => (
-                  <div key={k} style={{ display:'flex', justifyContent:'space-between', fontSize:9, padding:'1.5px 0', borderBottom:'0.5px solid rgba(255,255,255,0.04)' }}>
-                    <span style={{ fontFamily:'var(--font-mono)', color:'var(--text-quaternary)' }}>{k}</span>
-                    <span style={{ fontFamily:'var(--font-mono)', color:'var(--blue)', fontWeight:600 }}>{v}</span>
-                  </div>
-                ))}
+                  return rows.map(([k, v]) => (
+                    <div key={k} style={{ display:'flex', justifyContent:'space-between', fontSize:9, padding:'1.5px 0', borderBottom:'0.5px solid rgba(255,255,255,0.04)' }}>
+                      <span style={{ fontFamily:'var(--font-mono)', color:'var(--text-quaternary)' }}>{k}</span>
+                      <span style={{ fontFamily:'var(--font-mono)', color:'var(--blue)', fontWeight:600 }}>{v}</span>
+                    </div>
+                  ))
+                })()}
               </div>
 
               {/* Quality */}
