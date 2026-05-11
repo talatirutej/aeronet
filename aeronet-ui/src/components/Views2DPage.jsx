@@ -475,7 +475,7 @@ export default function Views2DPage() {
       let poll
       try {
         const res = await fetch(proxyUrl(`contour/result/${jobId}`), {
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(30000),  // 30s — HF cold start can take 30-60s
         })
         if (!res.ok) {
           setError(`Poll error ${res.status}`)
