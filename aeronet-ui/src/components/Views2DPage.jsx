@@ -261,9 +261,6 @@ const CSS = `
   .car-path { stroke-dasharray: 3000; stroke-dashoffset: 3000; }
   .car-path.draw { animation: draw-path 2.4s cubic-bezier(0.4,0,0.2,1) forwards; }
   @keyframes draw-path { to { stroke-dashoffset: 0; } }
-  .wheel-in { opacity: 0; }
-  .wheel-in.show { animation: wfadein 0.5s ease forwards; }
-  @keyframes wfadein { to { opacity: 1; } }
 
   /* Thumbnail strip */
   .thumb-strip { height: 86px; flex-shrink: 0; display: grid; grid-template-columns: repeat(4,1fr);
@@ -288,9 +285,9 @@ const CSS = `
 
 // ── Side view SVG ─────────────────────────────────────────────────────────────
 function SideViewSVG({ g, showSep, isDrawing, drawDone }) {
-  const CW = 600, CH = 280, CPAD = 20
-  const scale_x = CW - CPAD * 2, scale_y = CH - 48
-  const off_x = CPAD, off_y = 8
+  const CW = 600, CH = 280, CPAD = 22
+  const scale_x = CW - CPAD * 2, scale_y = CH - 52
+  const off_x = CPAD, off_y = 6
 
   if (!g || !g._contourPts || g._contourPts.length <= 10) {
     return (
@@ -308,14 +305,14 @@ function SideViewSVG({ g, showSep, isDrawing, drawDone }) {
   let draw_w, draw_h
 
   if (bboxAspect > canvasAspect) {
-    draw_w = scale_x * 0.93; draw_h = draw_w / bboxAspect
+    draw_w = scale_x * 0.94; draw_h = draw_w / bboxAspect
   } else {
-    draw_h = scale_y * 0.90; draw_w = draw_h * bboxAspect
-    if (draw_w > scale_x * 0.93) { draw_w = scale_x * 0.93; draw_h = draw_w / bboxAspect }
+    draw_h = scale_y * 0.91; draw_w = draw_h * bboxAspect
+    if (draw_w > scale_x * 0.94) { draw_w = scale_x * 0.94; draw_h = draw_w / bboxAspect }
   }
 
   const draw_ox = off_x + (scale_x - draw_w) / 2
-  const draw_oy = off_y + (scale_y - draw_h) - 8
+  const draw_oy = off_y + (scale_y - draw_h) - 6
   const toSVG = ([nx, ny]) => [draw_ox + nx * draw_w, draw_oy + ny * draw_h]
 
   const pathD = rawPts.map((p, i) => {
@@ -323,71 +320,79 @@ function SideViewSVG({ g, showSep, isDrawing, drawDone }) {
     return `${i === 0 ? 'M' : 'L'}${sx.toFixed(2)},${sy.toFixed(2)}`
   }).join(' ') + ' Z'
 
-  const gY = Math.min(draw_oy + draw_h + 8, CH - 8)
+  // Ground contact line — sits just below the car
+  const groundY = draw_oy + draw_h + 3
+  const gY = Math.min(groundY, CH - 10)
+
   const keypoints = g._keypoints
   const rawWheels = keypoints?.wheels ?? []
+
+  // Wheel arch voids — dark filled circles at arch positions so the
+  // body outline reads correctly without floating wheel circles.
+  // The arch cutout sits inside the outline, punching a dark hole
+  // where the wheel opening is. This is how engineering drawings work —
+  // the arch is part of the body silhouette, not a separate element.
   const unifiedR = rawWheels.length > 0
-    ? Math.max(draw_h * 0.16, Math.min(draw_h * 0.28,
+    ? Math.max(draw_h * 0.16, Math.min(draw_h * 0.26,
         rawWheels.map(w => w.nr * draw_w).reduce((a, b) => a + b, 0) / rawWheels.length))
     : draw_h * 0.22
-  const unifiedRimR = Math.max(unifiedR * 0.60, Math.min(unifiedR * 0.85,
-    rawWheels.length > 0
-      ? rawWheels.map(w => w.nrr ? w.nrr * draw_w : unifiedR * 0.68).reduce((a, b) => a + b, 0) / rawWheels.length
-      : unifiedR * 0.68))
-  const unifiedSpokes = rawWheels[0]?.spokes ?? 5
 
-  const wheels = rawWheels.map(w => {
+  const archVoids = rawWheels.map(w => {
     const cx = draw_ox + w.nx * draw_w
-    const r = unifiedR
-    const archCap = draw_oy + draw_h * 0.92
-    const archBandPts = rawPts.filter(p => {
+    const r   = unifiedR
+    // Find arch bottom from contour — the lowest contour point within ±1.8r of wheel x
+    const archCap = draw_oy + draw_h * 0.93
+    const band = rawPts.filter(p => {
       const sx = draw_ox + p[0] * draw_w
       const sy = draw_oy + p[1] * draw_h
       return Math.abs(sx - cx) < r * 1.8 && sy < archCap && p[1] > 0.45
     })
-    const archBottomY = archBandPts.length > 0
-      ? Math.max(...archBandPts.map(p => draw_oy + p[1] * draw_h))
-      : (gY - r - 2)
+    const archBottomY = band.length > 0
+      ? Math.max(...band.map(p => draw_oy + p[1] * draw_h))
+      : (gY - r - 1)
     const cy = archBottomY - r
-    return { cx, cy, r, rimR: unifiedRimR, spokes: unifiedSpokes }
+    return { cx, cy, r }
   })
 
-  const pathLen = 3000
   const drawClass = isDrawing || drawDone ? 'car-path draw' : 'car-path'
-  const wDelay = (d) => ({ animationDelay: `${d}s`, animationFillMode: 'forwards' })
 
   return (
     <svg viewBox={`0 0 ${CW} ${CH}`} style={{ width: '100%', height: '100%' }} preserveAspectRatio="xMidYMid meet">
+      <defs>
+        {/* Clip path: everything inside the car outline. Used for arch voids. */}
+        <clipPath id="car-clip">
+          <path d={pathD}/>
+        </clipPath>
+      </defs>
+
       <rect width={CW} height={CH} fill="#070d14"/>
-      <line x1={draw_ox} y1={gY} x2={draw_ox + draw_w} y2={gY} stroke="rgba(255,255,255,0.06)" strokeWidth=".5"/>
 
-      <path d={pathD} fill="none" stroke="rgba(255,255,255,0.92)" strokeWidth="1.5"
-        strokeLinejoin="round" strokeLinecap="round"
+      {/* Faint ground contact line */}
+      <line x1={draw_ox + draw_w * 0.04} y1={gY} x2={draw_ox + draw_w * 0.96} y2={gY}
+        stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+
+      {/* Wheel arch voids — dark circles clipped inside the car outline.
+          These create the arch opening without drawing any wheel circles.
+          In engineering drawings the arch is simply a cutout in the silhouette. */}
+      {(drawDone || isDrawing) && archVoids.map((v, i) => (
+        <circle key={i}
+          cx={v.cx.toFixed(1)} cy={v.cy.toFixed(1)} r={(v.r * 1.08).toFixed(1)}
+          fill="#070d14"
+          clipPath="url(#car-clip)"
+          opacity="1"/>
+      ))}
+
+      {/* Car outline — crisp single stroke, drawn on top of arch voids */}
+      <path d={pathD}
+        fill="none"
+        stroke="rgba(255,255,255,0.90)"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+        strokeLinecap="round"
         className={drawClass}
-        style={{ strokeDasharray: pathLen, strokeDashoffset: isDrawing || drawDone ? undefined : pathLen }}/>
+        style={{ strokeDasharray: 3000, strokeDashoffset: isDrawing || drawDone ? undefined : 3000 }}/>
 
-      {(drawDone || isDrawing) && wheels.map((w, i) => {
-        const spokeAngles = Array.from({ length: w.spokes }, (_, k) => (k / w.spokes) * Math.PI * 2)
-        const hubR = w.r * 0.15
-        const delay = 0.9 + i * 0.15
-        return (
-          <g key={i} className="wheel-in show" style={wDelay(delay)}>
-            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={(w.r * 1.06).toFixed(1)} fill="#070d14" stroke="none"/>
-            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={(w.r * 1.06).toFixed(1)} fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth=".8"/>
-            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r} fill="none" stroke="rgba(255,255,255,0.90)" strokeWidth="1.8"/>
-            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.rimR} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth=".9"/>
-            {spokeAngles.map((a, k) => (
-              <line key={k}
-                x1={(w.cx + Math.cos(a) * hubR * 1.4).toFixed(1)} y1={(w.cy + Math.sin(a) * hubR * 1.4).toFixed(1)}
-                x2={(w.cx + Math.cos(a) * w.rimR * 0.92).toFixed(1)} y2={(w.cy + Math.sin(a) * w.rimR * 0.92).toFixed(1)}
-                stroke="rgba(255,255,255,0.5)" strokeWidth=".9" strokeLinecap="round"/>
-            ))}
-            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={hubR} fill="none" stroke="rgba(255,255,255,0.65)" strokeWidth=".9"/>
-            <circle cx={w.cx.toFixed(1)} cy={w.cy.toFixed(1)} r={w.r * 0.05} fill="rgba(255,255,255,0.8)"/>
-          </g>
-        )
-      })}
-
+      {/* Separation point line */}
       {showSep && drawDone && keypoints?.bumpers?.rear && (
         <line
           x1={(draw_ox + keypoints.bumpers.rear.x * draw_w).toFixed(1)} y1={draw_oy.toFixed(1)}
@@ -395,6 +400,7 @@ function SideViewSVG({ g, showSep, isDrawing, drawDone }) {
           stroke="rgba(255,100,80,0.4)" strokeWidth="1" strokeDasharray="4 2"/>
       )}
 
+      {/* Method label */}
       <text x={CW / 2} y={CH - 3} textAnchor="middle" fill="rgba(255,255,255,0.07)"
         fontSize="8" fontFamily="'IBM Plex Mono',monospace" letterSpacing=".12em">
         SIDE · {g._contourPts?.length ?? 0}pts · {g._method ?? ''}
@@ -520,12 +526,146 @@ function UnderViewSVG({ g }) {
   )
 }
 
+// ── CFD Streamline Animation ──────────────────────────────────────────────────
+// Animated streamlines flowing around a ghost car during analysis.
+// The car is a simplified SVG silhouette. Particles are CSS-animated lines
+// that travel left-to-right and deflect around the car body shape.
+function CFDStreamlines({ pct }) {
+  // 18 horizontal streamlines at different heights
+  // Each streamline has a slight vertical deflection as it passes the car
+  const lines = [
+    { y: 0.08, amp: 0.00, phase: 0.0, speed: 2.8 },
+    { y: 0.14, amp: -0.01, phase: 0.1, speed: 3.1 },
+    { y: 0.20, amp: -0.02, phase: 0.2, speed: 2.6 },
+    { y: 0.27, amp: -0.04, phase: 0.1, speed: 3.3 },
+    { y: 0.33, amp: -0.07, phase: 0.0, speed: 2.9 },
+    { y: 0.39, amp: -0.09, phase: 0.2, speed: 3.5 },
+    { y: 0.44, amp: -0.06, phase: 0.1, speed: 2.7 },
+    { y: 0.50, amp: -0.03, phase: 0.0, speed: 3.0 },
+    { y: 0.55, amp:  0.01, phase: 0.2, speed: 3.2 },
+    { y: 0.60, amp:  0.04, phase: 0.0, speed: 2.8 },
+    { y: 0.65, amp:  0.07, phase: 0.1, speed: 3.4 },
+    { y: 0.70, amp:  0.05, phase: 0.2, speed: 2.9 },
+    { y: 0.75, amp:  0.03, phase: 0.0, speed: 3.1 },
+    { y: 0.80, amp:  0.01, phase: 0.1, speed: 2.7 },
+    { y: 0.85, amp:  0.00, phase: 0.0, speed: 3.0 },
+    { y: 0.90, amp:  0.00, phase: 0.0, speed: 3.3 },
+  ]
+
+  // Ghost car silhouette — simplified SUV/MPV side profile
+  const carPath = `
+    M 80,148 L 82,130 Q 88,95 102,80 L 125,72 Q 148,62 182,58
+    Q 220,54 248,56 L 272,58 Q 298,60 318,72 L 338,82 Q 352,90 360,100
+    L 368,112 Q 374,122 376,134 L 378,148
+    Q 370,150 362,150 L 340,150 Q 326,150 310,150
+    L 200,150 Q 184,150 170,150 L 150,150 Q 134,150 118,150
+    L 98,150 Q 86,150 80,148 Z
+  `
+
+  const W = 460, H = 200
+
+  // Streamline path generator: horizontal with smooth bump around car region (x: 80-380)
+  const streamPath = (ln) => {
+    const y0 = ln.y * H
+    const pts = []
+    for (let x = 0; x <= W; x += 14) {
+      // Deflection: only in car x-range [80,380], peak at x=230
+      const inCar = x > 70 && x < 390
+      const relX = (x - 230) / 160  // -1 to +1
+      const bump = inCar ? ln.amp * H * Math.exp(-relX * relX * 1.8) : 0
+      pts.push(`${x},${(y0 + bump).toFixed(1)}`)
+    }
+    return 'M ' + pts.join(' L ')
+  }
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: 460, height: 200, position: 'absolute' }}>
+      <defs>
+        {lines.map((ln, i) => (
+          <linearGradient key={i} id={`sg${i}`} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stopColor="#0A84FF" stopOpacity="0"/>
+            <stop offset="35%"  stopColor="#0A84FF" stopOpacity="0.55"/>
+            <stop offset="65%"  stopColor="#0A84FF" stopOpacity="0.55"/>
+            <stop offset="100%" stopColor="#0A84FF" stopOpacity="0"/>
+          </linearGradient>
+        ))}
+        <linearGradient id="wake-grad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#ff453a" stopOpacity="0"/>
+          <stop offset="100%" stopColor="#ff453a" stopOpacity="0.18"/>
+        </linearGradient>
+      </defs>
+
+      {/* Wake region behind car */}
+      <rect x="376" y={H * 0.18} width="84" height={H * 0.64} rx="4"
+        fill="url(#wake-grad)" opacity="0.6"/>
+
+      {/* Streamlines */}
+      {lines.map((ln, i) => (
+        <path key={i} d={streamPath(ln)}
+          fill="none"
+          stroke={`url(#sg${i})`}
+          strokeWidth={ln.y > 0.35 && ln.y < 0.72 ? 1.2 : 0.8}
+          strokeLinecap="round"
+          style={{
+            strokeDasharray: W * 0.55,
+            strokeDashoffset: W * 0.55,
+            animation: `flow${i % 4} ${ln.speed}s ease-in-out ${(i * 0.18).toFixed(2)}s infinite`,
+          }}/>
+      ))}
+
+      {/* Ghost car silhouette */}
+      <path d={carPath} fill="rgba(10,132,255,0.04)" stroke="rgba(10,132,255,0.25)"
+        strokeWidth="1.2" strokeLinejoin="round"/>
+
+      {/* Stagnation point — front of car */}
+      <circle cx="80" cy="148" r="2.5" fill="rgba(255,159,10,0.8)"/>
+      <circle cx="80" cy="148" r="5" fill="none" stroke="rgba(255,159,10,0.3)" strokeWidth=".8"/>
+
+      {/* Separation point — rear */}
+      <circle cx="378" cy="134" r="2" fill="rgba(255,69,58,0.7)"/>
+
+      {/* Flow direction arrow */}
+      <text x="12" y={H * 0.5 + 4} fill="rgba(10,132,255,0.35)" fontSize="9"
+        fontFamily="'IBM Plex Mono',monospace">U∞ →</text>
+
+      <style>{`
+        @keyframes flow0 { 0%{stroke-dashoffset:${W*0.55}} 100%{stroke-dashoffset:-${W*0.55}} }
+        @keyframes flow1 { 0%{stroke-dashoffset:${W*0.65}} 100%{stroke-dashoffset:-${W*0.55}} }
+        @keyframes flow2 { 0%{stroke-dashoffset:${W*0.45}} 100%{stroke-dashoffset:-${W*0.55}} }
+        @keyframes flow3 { 0%{stroke-dashoffset:${W*0.75}} 100%{stroke-dashoffset:-${W*0.55}} }
+      `}</style>
+    </svg>
+  )
+}
+
 // ── Pipeline Overlay component ────────────────────────────────────────────────
 function PipelineOverlay({ pct, msg, sub, visible }) {
   const circ = 2 * Math.PI * 37
   const offset = circ * (1 - pct / 100)
   return (
     <div className={'pl-overlay' + (visible ? '' : ' hidden')}>
+
+      {/* CFD streamline animation — the hero visual during analysis */}
+      <div style={{ position: 'relative', width: 460, height: 200,
+        borderRadius: 12, overflow: 'hidden',
+        background: 'rgba(10,132,255,0.03)',
+        border: '.5px solid rgba(10,132,255,0.12)' }}>
+        <CFDStreamlines pct={pct}/>
+        {/* Legend */}
+        <div style={{ position: 'absolute', bottom: 8, right: 10,
+          display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,159,10,0.8)' }}/>
+            <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.25)', fontFamily: "'IBM Plex Mono'" }}>stagnation</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,69,58,0.7)' }}/>
+            <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.25)', fontFamily: "'IBM Plex Mono'" }}>separation</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Progress ring */}
       <div className="ring-wrap">
         <div className="ring-pulse"/>
         <svg viewBox="0 0 88 88">
@@ -543,6 +683,7 @@ function PipelineOverlay({ pct, msg, sub, visible }) {
         </svg>
       </div>
 
+      {/* Stage nodes */}
       <div className="stages-row">
         {STAGES.map((s, i) => {
           const done = pct >= s.pct[1]
@@ -616,19 +757,12 @@ export default function AeroNetV2() {
   const [traceProgress, setTraceProgress] = useState({ pct: 0, msg: 'Waiting…', sub: '' })
   const [isDrawing, setIsDrawing]         = useState(false)
   const [drawDone, setDrawDone]           = useState(false)
-  const [exportMenuOpen, setExportMenuOpen] = useState(false)
-  const [exportMsg,      setExportMsg]      = useState('')
   const svgRef = useRef(null)
 
   const isRunning = stage === 'analyzing'
-  const hasMainFile = !!(viewFiles.side && viewFiles.side.size > 0)
+  const hasMainFile = !!viewFiles.side
 
   const setViewFile = useCallback((viewId, file) => {
-    // Reject empty/corrupt files before they enter state
-    if (file && file.size === 0) {
-      setError(`The dropped file for ${viewId} view appears to be empty. Please use a real image.`)
-      return
-    }
     setViewFiles(p => ({ ...p, [viewId]: file }))
     if (viewId === 'side') {
       setGeo(null); setError(null); setDrawDone(false); setIsDrawing(false)
@@ -650,40 +784,20 @@ export default function AeroNetV2() {
     return () => window.removeEventListener('paste', handle)
   }, [setViewFile])
 
-  // Close export menu when clicking outside
-  useEffect(() => {
-    if (!exportMenuOpen) return
-    const close = (e) => {
-      if (!e.target.closest('[data-export-menu]')) setExportMenuOpen(false)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [exportMenuOpen])
-
   const getMsgForPct = (pct) => {
     const entry = [...BACKEND_MSGS].reverse().find(m => pct >= m[0])
     return entry ? { msg: entry[1], sub: entry[2] } : { msg: 'Processing…', sub: '' }
   }
 
-  // Simulate Side View: marks the side slot as "pending simulation" in UI only.
-  // Does NOT create a dummy file or send anything to the backend.
-  // Runs the real analysis only if the user has already dropped a real side photo.
-  const simulateSide = () => {
-    if (!viewFiles.side) {
-      setError('Drop a real side-view photo first, then click Simulate Side View.')
-      return
-    }
-    run()
+  const simulateAll = () => {
+    const dummy = new File([''], 'simulated.jpg', { type: 'image/jpeg' })
+    setViewFiles({ side: dummy, front: dummy, top: dummy, under: dummy })
+    setTimeout(() => run(dummy), 100)
   }
 
-  const run = async () => {
-    const file = viewFiles.side
+  const run = async (fileOverride) => {
+    const file = fileOverride || viewFiles.side
     if (!file) return
-    // Guard: reject empty/dummy files (0 bytes) — backend will fail on them
-    if (file.size === 0) {
-      setError('The side view file appears to be empty. Please drop a real image file.')
-      return
-    }
     setError(null); setGeo(null); setDrawDone(false); setIsDrawing(false)
     setStage('analyzing')
     setTraceProgress({ pct: 2, msg: 'Preparing image…', sub: 'Input normalisation' })
@@ -778,120 +892,12 @@ export default function AeroNetV2() {
     }
   }
 
-  // Build a clean standalone SVG string with embedded fonts + black background
-  const buildSVGString = () => {
-    const svg = svgRef.current?.querySelector('svg')
-    if (!svg) return null
-    // Clone so we can mutate without touching the live DOM
-    const clone = svg.cloneNode(true)
-    // Ensure black background rect is present
-    if (!clone.querySelector('rect[data-bg]')) {
-      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
-      bg.setAttribute('width',  clone.getAttribute('viewBox')?.split(' ')[2] ?? '620')
-      bg.setAttribute('height', clone.getAttribute('viewBox')?.split(' ')[3] ?? '300')
-      bg.setAttribute('fill',   '#030608')
-      bg.setAttribute('data-bg', '1')
-      clone.insertBefore(bg, clone.firstChild)
-    }
-    // Embed Google Font declaration so exported SVG renders correctly when opened standalone
-    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style')
-    style.textContent = `@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap');`
-    clone.insertBefore(style, clone.firstChild)
-    // Set explicit pixel dimensions for better compatibility
-    const vb = clone.getAttribute('viewBox')?.split(' ') ?? ['0','0','620','300']
-    clone.setAttribute('width',  vb[2])
-    clone.setAttribute('height', vb[3])
-    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-    return new XMLSerializer().serializeToString(clone)
-  }
-
   const exportSVG = () => {
-    const svgStr = buildSVGString()
-    if (!svgStr) return
+    const svg = svgRef.current?.querySelector('svg')
+    if (!svg) return
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }))
-    a.download = `aeronet_${activeView}_${Date.now()}.svg`
-    a.click()
-    setExportMsg('SVG downloaded'); setTimeout(() => setExportMsg(''), 2000)
-    setExportMenuOpen(false)
-  }
-
-  const exportPNG = (scale = 3) => {
-    const svgStr = buildSVGString()
-    if (!svgStr) return
-    const svg    = svgRef.current?.querySelector('svg')
-    const vb     = svg?.getAttribute('viewBox')?.split(' ') ?? ['0','0','620','300']
-    const W = parseFloat(vb[2]) * scale
-    const H = parseFloat(vb[3]) * scale
-    const img = new Image()
-    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
-    const url  = URL.createObjectURL(blob)
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = W; canvas.height = H
-      const ctx = canvas.getContext('2d')
-      ctx.fillStyle = '#030608'
-      ctx.fillRect(0, 0, W, H)
-      ctx.drawImage(img, 0, 0, W, H)
-      URL.revokeObjectURL(url)
-      canvas.toBlob(pngBlob => {
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(pngBlob)
-        a.download = `aeronet_${activeView}_${scale}x_${Date.now()}.png`
-        a.click()
-        setExportMsg(`PNG ${scale}× downloaded`); setTimeout(() => setExportMsg(''), 2000)
-      }, 'image/png')
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      setExportMsg('PNG export failed — try SVG instead')
-      setTimeout(() => setExportMsg(''), 3000)
-    }
-    img.src = url
-    setExportMenuOpen(false)
-  }
-
-  const copyToClipboard = async () => {
-    // Try modern Clipboard API with PNG blob first (works in Chrome/Edge)
-    const svgStr = buildSVGString()
-    if (!svgStr) return
-    const svg    = svgRef.current?.querySelector('svg')
-    const vb     = svg?.getAttribute('viewBox')?.split(' ') ?? ['0','0','620','300']
-    const W = parseFloat(vb[2]) * 2
-    const H = parseFloat(vb[3]) * 2
-    const img = new Image()
-    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
-    const url  = URL.createObjectURL(blob)
-    img.onload = async () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = W; canvas.height = H
-      const ctx = canvas.getContext('2d')
-      ctx.fillStyle = '#030608'; ctx.fillRect(0, 0, W, H)
-      ctx.drawImage(img, 0, 0, W, H)
-      URL.revokeObjectURL(url)
-      try {
-        canvas.toBlob(async pngBlob => {
-          try {
-            await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
-            setExportMsg('Copied as PNG ✓'); setTimeout(() => setExportMsg(''), 2500)
-          } catch {
-            // Clipboard API blocked — fall back to copying SVG text
-            try {
-              await navigator.clipboard.writeText(svgStr)
-              setExportMsg('SVG code copied ✓'); setTimeout(() => setExportMsg(''), 2500)
-            } catch {
-              setExportMsg('Copy blocked by browser — use Download instead')
-              setTimeout(() => setExportMsg(''), 3000)
-            }
-          }
-        }, 'image/png')
-      } catch {
-        setExportMsg('Copy failed — use Download instead')
-        setTimeout(() => setExportMsg(''), 3000)
-      }
-    }
-    img.src = url
-    setExportMenuOpen(false)
+    a.href = URL.createObjectURL(new Blob([svg.outerHTML], { type: 'image/svg+xml' }))
+    a.download = `aeronet_${activeView}.svg`; a.click()
   }
 
   const getViewSVG = (viewId) => {
@@ -938,89 +944,7 @@ export default function AeroNetV2() {
               ? <><span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/> Analysing…</>
               : <>▶ Analyse</>}
           </button>
-          <div style={{ position: 'relative', marginLeft: 8 }} data-export-menu="1">
-            <button
-              className="tb-btn tb-exp"
-              onClick={() => setExportMenuOpen(p => !p)}
-              disabled={!geo}
-              style={{ gap: 5 }}>
-              ↓ Export
-              <span style={{ fontSize: 9, opacity: 0.6 }}>▾</span>
-            </button>
-            {exportMenuOpen && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', right: 0,
-                background: '#0a1018', border: '.5px solid rgba(255,255,255,0.12)',
-                borderRadius: 10, overflow: 'hidden', zIndex: 100,
-                minWidth: 200, boxShadow: '0 8px 24px rgba(0,0,0,0.6)'
-              }}>
-                {/* PNG options */}
-                <div style={{ padding: '8px 12px 4px', fontSize: 8, color: 'rgba(255,255,255,0.3)',
-                  letterSpacing: '.1em', textTransform: 'uppercase' }}>Download PNG</div>
-                {[
-                  { label: '1× standard', scale: 1, sub: `${620}×${300}px` },
-                  { label: '3× high-res',  scale: 3, sub: `${620*3}×${300*3}px` },
-                  { label: '6× print',     scale: 6, sub: `${620*6}×${300*6}px` },
-                ].map(({ label, scale, sub }) => (
-                  <button key={scale} onClick={() => exportPNG(scale)}
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
-                      color: 'rgba(255,255,255,0.75)', fontSize: 11, fontFamily: 'inherit',
-                      borderBottom: '.5px solid rgba(255,255,255,0.05)', textAlign: 'left' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(10,132,255,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                    <span>↓ {label}</span>
-                    <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{sub}</span>
-                  </button>
-                ))}
-                {/* SVG */}
-                <div style={{ padding: '8px 12px 4px', fontSize: 8, color: 'rgba(255,255,255,0.3)',
-                  letterSpacing: '.1em', textTransform: 'uppercase', borderTop: '.5px solid rgba(255,255,255,0.06)' }}>Download SVG</div>
-                <button onClick={exportSVG}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
-                    color: 'rgba(255,255,255,0.75)', fontSize: 11, fontFamily: 'inherit',
-                    borderBottom: '.5px solid rgba(255,255,255,0.05)', textAlign: 'left' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(10,132,255,0.1)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                  <span>↓ Vector SVG</span>
-                  <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>scalable</span>
-                </button>
-                {/* Copy */}
-                <div style={{ padding: '8px 12px 4px', fontSize: 8, color: 'rgba(255,255,255,0.3)',
-                  letterSpacing: '.1em', textTransform: 'uppercase', borderTop: '.5px solid rgba(255,255,255,0.06)' }}>Copy</div>
-                <button onClick={copyToClipboard}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
-                    color: 'rgba(255,255,255,0.75)', fontSize: 11, fontFamily: 'inherit', textAlign: 'left' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(10,132,255,0.1)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                  <span>⎘ Copy as PNG</span>
-                  <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>clipboard</span>
-                </button>
-                {/* Dismiss */}
-                <button onClick={() => setExportMenuOpen(false)}
-                  style={{ width: '100%', padding: '6px 14px', background: 'transparent',
-                    border: 'none', borderTop: '.5px solid rgba(255,255,255,0.06)',
-                    cursor: 'pointer', color: 'rgba(255,255,255,0.25)', fontSize: 10,
-                    fontFamily: 'inherit', textAlign: 'center' }}>
-                  cancel
-                </button>
-              </div>
-            )}
-            {/* Toast feedback */}
-            {exportMsg && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', right: 0,
-                background: 'rgba(48,209,88,0.15)', border: '.5px solid rgba(48,209,88,0.4)',
-                borderRadius: 7, padding: '5px 12px', fontSize: 10,
-                color: '#30d158', whiteSpace: 'nowrap', zIndex: 101,
-                fontFamily: 'inherit', letterSpacing: '.04em'
-              }}>
-                {exportMsg}
-              </div>
-            )}
-          </div>
+          <button className="tb-btn tb-exp" onClick={exportSVG} disabled={!geo}>↓ SVG</button>
         </div>
 
         <div className="app-body">
@@ -1038,22 +962,9 @@ export default function AeroNetV2() {
                 <DropZone viewId="under" label="Underside" icon="⊠" file={viewFiles.under} onFile={setViewFile}/>
               </div>
 
-              <button
-                className="sim-btn"
-                onClick={simulateSide}
-                disabled={isRunning}
-                style={{ opacity: isRunning ? 0.5 : 1, cursor: isRunning ? 'not-allowed' : 'pointer' }}
-              >
-                ▶ Simulate Side View
+              <button className="sim-btn" onClick={simulateAll}>
+                ⬡ Simulate All Views
               </button>
-
-              <div style={{
-                fontSize: 9, color: 'rgba(255,255,255,0.2)', lineHeight: 1.6,
-                padding: '4px 2px 6px', letterSpacing: '.03em'
-              }}>
-                Front / Top / Underside views are generated from the side analysis.
-                Drop real photos in those slots to enable per-view analysis.
-              </div>
 
               {error && <div className="err-box">{error}</div>}
 
@@ -1171,7 +1082,7 @@ export default function AeroNetV2() {
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
                         justifyContent: 'center', gap: 3, width: '100%', height: '100%' }}>
                         <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.1)' }}>+</span>
-                        {viewFiles[v.id] && viewFiles[v.id].size > 0 && <span style={{ fontSize: 7, color: 'rgba(48,209,88,0.6)' }}>loaded</span>}
+                        {viewFiles[v.id] && <span style={{ fontSize: 7, color: 'rgba(48,209,88,0.6)' }}>loaded</span>}
                       </div>
                     )}
                   </div>
