@@ -6,7 +6,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 // All HuggingFace requests are routed through /api/relay?path=...
 // This makes every request same-origin from the browser's perspective,
 // bypassing corporate firewalls and CORS blocks on hf.space domains.
-const proxyUrl = (path) => `/api/relay?path=${encodeURIComponent(path)}`
+const RELAY =
+  (typeof __RELAY_URL__ !== 'undefined' ? __RELAY_URL__ : null) ||
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_RELAY_URL) ||
+  '/api/relay'
+
+const proxyUrl = (path) => `${RELAY}?path=${encodeURIComponent(path)}`
 
 // ── Image compression ─────────────────────────────────────────────────────────
 // HuggingFace free-tier nginx drops multipart uploads > ~1MB (ERR_CONNECTION_RESET).
