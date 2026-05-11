@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 // ── Proxy helper ──────────────────────────────────────────────────────────────
-// All HuggingFace requests are routed through /api/proxy?path=...
+// All HuggingFace requests are routed through /api/relay?path=...
 // This makes every request same-origin from the browser's perspective,
 // bypassing corporate firewalls and CORS blocks on hf.space domains.
-const proxyUrl = (path) => `/api/proxy?path=${encodeURIComponent(path)}`
+const proxyUrl = (path) => `/api/relay?path=${encodeURIComponent(path)}`
 
 // ── Image compression ─────────────────────────────────────────────────────────
 // HuggingFace free-tier nginx drops multipart uploads > ~1MB (ERR_CONNECTION_RESET).
@@ -411,7 +411,7 @@ export default function Views2DPage() {
     }
 
     // ── Start job — POST through Vercel proxy ─────────────────────────────
-    // proxyUrl() routes to /api/proxy?path=... which forwards server-side
+    // proxyUrl() routes to /api/relay?path=... which forwards server-side
     // to HuggingFace, bypassing corporate firewall blocks on hf.space.
     let jobId = null
     const MAX_ATTEMPTS = 18   // 18 × 5s = 90s — covers HF cold start
