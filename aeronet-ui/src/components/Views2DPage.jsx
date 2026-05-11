@@ -44,6 +44,104 @@ async function fetchImageFromUrl(url) {
   throw new Error('Could not fetch image — download and upload directly')
 }
 
+// ── Generate demo SUV contour points ─────────────────────────────────────────
+// Parametric side-view SUV silhouette in normalised [0,1] coordinates.
+// These are the same normalised format the backend returns: [nx, ny] where
+// 0,0 = top-left of bbox, 1,1 = bottom-right of bbox.
+// Generated from a cubic-spline SUV profile with wheel arches cut out.
+function makeDemoContour(n = 400) {
+  const pts = []
+  // Key shape points for a generic SUV side profile (normalised bbox coords)
+  // Going clockwise from front-bottom
+  const keyPts = [
+    // Front bumper base
+    [0.02, 0.94],
+    // Front bumper face
+    [0.00, 0.80],
+    // Front bumper top
+    [0.02, 0.68],
+    // Front hood start
+    [0.07, 0.52],
+    // Hood mid
+    [0.18, 0.25],
+    // A-pillar base / windscreen base
+    [0.24, 0.22],
+    // Windscreen top / roof start
+    [0.32, 0.05],
+    // Roof mid
+    [0.55, 0.02],
+    // Roof rear / C-pillar top
+    [0.72, 0.05],
+    // Rear window
+    [0.80, 0.18],
+    // Rear pillar base
+    [0.86, 0.32],
+    // Boot lid
+    [0.92, 0.40],
+    // Rear bumper top
+    [0.98, 0.52],
+    // Rear bumper face
+    [1.00, 0.70],
+    // Rear bumper base
+    [0.98, 0.94],
+    // Sill rear end
+    [0.86, 0.96],
+    // Rear arch right
+    [0.83, 0.98],
+    [0.80, 0.99],
+    [0.76, 0.99],
+    // Between arches (sill) - dip for rear arch
+    [0.75, 0.92],
+    [0.72, 0.90],
+    // Rear arch left (bottom of arch opening)
+    [0.68, 0.88],
+    [0.64, 0.90],
+    [0.60, 0.92],
+    // Sill between wheels
+    [0.58, 0.94],
+    [0.52, 0.95],
+    [0.46, 0.95],
+    [0.42, 0.94],
+    // Front arch right
+    [0.40, 0.92],
+    [0.36, 0.90],
+    // Front arch bottom
+    [0.32, 0.88],
+    [0.28, 0.90],
+    [0.24, 0.92],
+    // Front sill
+    [0.22, 0.96],
+    [0.18, 0.98],
+    [0.14, 0.99],
+    [0.10, 0.98],
+    [0.06, 0.96],
+    // Back to front bumper base
+    [0.02, 0.94],
+  ]
+  // Catmull-Rom spline through key points for smooth outline
+  function catmullRom(p0, p1, p2, p3, t) {
+    return [
+      0.5 * ((2*p1[0]) + (-p0[0]+p2[0])*t + (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t*t + (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t*t*t),
+      0.5 * ((2*p1[1]) + (-p0[1]+p2[1])*t + (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t*t + (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t*t*t),
+    ]
+  }
+  const m = keyPts.length
+  const segs = m - 1
+  const ptsPerSeg = Math.ceil(n / segs)
+  for (let i = 0; i < segs; i++) {
+    const p0 = keyPts[Math.max(0, i-1)]
+    const p1 = keyPts[i]
+    const p2 = keyPts[Math.min(m-1, i+1)]
+    const p3 = keyPts[Math.min(m-1, i+2)]
+    for (let j = 0; j < ptsPerSeg; j++) {
+      const t = j / ptsPerSeg
+      pts.push(catmullRom(p0, p1, p2, p3, t))
+    }
+  }
+  return pts.slice(0, n)
+}
+const DEMO_CONTOUR_PTS = makeDemoContour(400)
+
 // ── Demo result (simulate button — no backend call) ───────────────────────────
 const DEMO_RESULT = {
   geometry: {
@@ -54,9 +152,15 @@ const DEMO_RESULT = {
   },
   method: 'rmbg2+yolo11+sam2 [DEMO]',
   quality: { score:88, status:'accepted', warnings:[], signals:{} },
-  technical_outline_pts: null,
-  display_outline_pts: null,
-  keypoints: { wheels:[{nx:0.22,ny:0.79,nr:0.068,nrr:0.05,spokes:6},{nx:0.80,ny:0.79,nr:0.065,nrr:0.048,spokes:6}], roofline:[], sill:[], bumpers:{front:null,rear:null}, windscreen:{} },
+  technical_outline_pts: DEMO_CONTOUR_PTS,
+  display_outline_pts:   DEMO_CONTOUR_PTS,
+  keypoints: {
+    wheels: [
+      {nx:0.32, ny:0.90, nr:0.068, nrr:0.050, spokes:6},
+      {nx:0.76, ny:0.90, nr:0.065, nrr:0.048, spokes:6},
+    ],
+    roofline:[], sill:[], bumpers:{front:null,rear:null}, windscreen:{},
+  },
   processing: { raw_pts:3820, spike_pts_removed:42, edge_snap_pts:1240, technical_pts:2000 },
   bbox: { w:1280, h:480 },
 }
@@ -481,7 +585,7 @@ function SideViewSVG({ g, showSep, isDrawing, drawDone, svgRef }) {
   const scale_x=CW-CPAD*2, scale_y=CH-52
   const off_x=CPAD, off_y=6
 
-  if (!g||!g._contourPts||g._contourPts.length<=10) {
+  if (!g||!g._contourPts||!Array.isArray(g._contourPts)||g._contourPts.length<=10) {
     return (
       <svg viewBox={`0 0 ${CW} ${CH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
         <rect width={CW} height={CH} fill="#070d14"/>
@@ -613,10 +717,10 @@ export default function AeroNetV2() {
   const simulate = () => {
     setError(null); setGeo(null); setDrawDone(false); setIsDrawing(false)
     setStage('analyzing')
-    setTraceProgress({pct:5,msg:'Simulating pipeline…',sub:'Demo mode'})
+    setTraceProgress({pct:5,msg:'Simulating pipeline…',sub:'Demo mode — watch the sketch animation'})
     let p = 5
     const tick = setInterval(() => {
-      p = Math.min(97, p + 3 + Math.random()*4)
+      p = Math.min(97, p + 2.5 + Math.random()*3)
       const {msg,sub} = getMsgForPct(p)
       setTraceProgress({pct:Math.round(p),msg,sub})
       if (p >= 97) {
@@ -625,7 +729,6 @@ export default function AeroNetV2() {
         const r = DEMO_RESULT
         const cg = r.geometry
         setGeo({
-          // All geometry values come directly from the result — no fallbacks for display
           bodyType:         cg.bodyType,
           aspectRatio:      cg.aspectRatio,
           hoodRatio:        cg.hoodRatio,
@@ -649,14 +752,19 @@ export default function AeroNetV2() {
           _quality:         r.quality,
           _processing:      r.processing,
         })
-        setStage('done')
+        // Wait 800ms so the overlay has time to show "Complete ✓" before fading
         setTimeout(() => {
-          setTraceProgress({pct:0,msg:'',sub:''})
-          setIsDrawing(true)
-          setTimeout(() => { setIsDrawing(false); setDrawDone(true) }, 2600)
-        }, 500)
+          setStage('done')
+          // Clear progress after overlay fades (400ms transition)
+          setTimeout(() => {
+            setTraceProgress({pct:0,msg:'',sub:''})
+            // Start draw animation after overlay is gone
+            setIsDrawing(true)
+            setTimeout(() => { setIsDrawing(false); setDrawDone(true) }, 2600)
+          }, 500)
+        }, 800)
       }
-    }, 180)
+    }, 220)
   }
 
   const run = async () => {
