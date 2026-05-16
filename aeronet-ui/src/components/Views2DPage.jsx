@@ -446,34 +446,109 @@ export default function Views2DPage({ backend = '' }) {
     a.download = `aeronet_${activeView}.svg`; a.click()
   }
 
+  /**
+   * _buildOutlineSVG — creates a clean SVG string of the outline only.
+   * - Transparent background (no rect fill)
+   * - fill="none" on the path — hollow outline
+   * - Stroke colour: black for Word/print use
+   * - Aspect ratio preserved from bbox
+   */
+  const _buildOutlineSVG = (geo, strokeColor = '#000000', strokeWidth = 3) => {
+    const pts = geo._smoothPts ?? geo._contourPts
+    if (!pts?.length) return null
+
+    const bboxAspect = geo._bboxAspect ?? 2.4
+    // Canvas: 1600×700 for high-res Word insertion
+    const CW = 1600, CH = 700, PAD = 40
+    const dw = (CW - PAD*2) * 0.95
+    const dh = Math.min(dw / bboxAspect, CH - PAD*2)
+    const ox  = PAD + ((CW - PAD*2) - dw) / 2
+    const oy  = PAD + ((CH - PAD*2) - dh) / 2
+
+    const d = pts.map(([nx,ny],i) =>
+      `${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`
+    ).join(' ') + ' Z'
+
+    // transparent background — no <rect> — so Word shows outline on white page
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
+      `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" ` +
+      `stroke-linejoin="round" stroke-linecap="round"/>` +
+      `</svg>`
+  }
+
+  /**
+   * Export a black outline PNG at 2× resolution with transparent background.
+   * This is the Word-ready version — paste directly into Word/Slides/Docs.
+   * Falls back to file download if clipboard API unavailable.
+   */
   const copyOutline = async () => {
     const geo = getSlot(activeView).geo
-    if (!geo?._contourPts) return
-    const CW=800, CH=380, CP=24
-    const rawPts = geo._smoothPts ?? geo._contourPts
-    const bboxAspect = geo._bboxAspect ?? (CW/CH)
-    const cAspect = (CW-CP*2)/(CH-CP*2)
-    let dw, dh
-    if (bboxAspect > cAspect) { dw=(CW-CP*2)*0.95; dh=dw/bboxAspect }
-    else { dh=(CH-CP*2)*0.90; dw=dh*bboxAspect; if(dw>(CW-CP*2)*0.95){dw=(CW-CP*2)*0.95;dh=dw/bboxAspect} }
-    const ox=CP+((CW-CP*2)-dw)/2, oy=CP+((CH-CP*2)-dh)/2
-    const d = rawPts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`).join(' ')+' Z'
-    const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}"><path d="${d}" fill="none" stroke="white" stroke-width="2.2" stroke-linejoin="round"/></svg>`
-    const blob = new Blob([svgStr],{type:'image/svg+xml'})
-    const url = URL.createObjectURL(blob)
-    const img = new window.Image()
+    if (!geo?._contourPts && !geo?._smoothPts) return
+
+    const svgStr = _buildOutlineSVG(geo, '#000000', 3)
+    if (!svgStr) return
+
+    // Render SVG → Canvas at 2× for crisp paste into Word
+    const CW = 1600, CH = 700
+    const blob   = new Blob([svgStr], { type:'image/svg+xml' })
+    const url    = URL.createObjectURL(blob)
+    const img    = new window.Image()
+
     img.onload = async () => {
       URL.revokeObjectURL(url)
+      // 2× pixel density for retina / high-DPI Word
+      const SCALE  = 2
       const canvas = document.createElement('canvas')
-      canvas.width=CW; canvas.height=CH
-      canvas.getContext('2d').drawImage(img,0,0)
+      canvas.width  = CW * SCALE
+      canvas.height = CH * SCALE
+      const ctx = canvas.getContext('2d')
+      // DO NOT fill background — leave transparent
+      ctx.scale(SCALE, SCALE)
+      ctx.drawImage(img, 0, 0, CW, CH)
+
       canvas.toBlob(async png => {
-        try { await navigator.clipboard.write([new ClipboardItem({'image/png':png})]) }
-        catch { const a=document.createElement('a'); a.href=URL.createObjectURL(png); a.download='outline.png'; a.click() }
-        setCopyDone(true); setTimeout(()=>setCopyDone(false),2200)
-      },'image/png')
+        // Try clipboard first
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': png })
+          ])
+          setCopyDone(true)
+          setTimeout(() => setCopyDone(false), 3000)
+        } catch {
+          // Clipboard blocked (HTTP or browser restriction) — download instead
+          const a = document.createElement('a')
+          a.href     = URL.createObjectURL(png)
+          a.download = `aeronet_outline_${activeView}.png`
+          a.click()
+          setCopyDone(true)
+          setTimeout(() => setCopyDone(false), 3000)
+        }
+      }, 'image/png')
     }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      // Final fallback: download the SVG itself (works in all Word versions)
+      exportOutlineSVG()
+    }
+
     img.src = url
+  }
+
+  /**
+   * Download a clean black outline SVG file.
+   * Insert into Word via Insert → Pictures → This Device.
+   * SVG scales perfectly to any size without pixelation.
+   */
+  const exportOutlineSVG = () => {
+    const geo = getSlot(activeView).geo
+    if (!geo?._contourPts && !geo?._smoothPts) return
+    const svgStr = _buildOutlineSVG(geo, '#000000', 2.5)
+    if (!svgStr) return
+    const a = document.createElement('a')
+    a.href     = URL.createObjectURL(new Blob([svgStr], { type:'image/svg+xml' }))
+    a.download = `aeronet_outline_${activeView}.svg`
+    a.click()
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
@@ -812,13 +887,24 @@ export default function Views2DPage({ backend = '' }) {
 
           {/* Action buttons */}
           <button className="md-btn-outlined" style={{ height:36, fontSize:12, padding:'0 14px' }}
-            onClick={exportSVG} disabled={!geo}>
+            onClick={exportSVG} disabled={!geo}
+            title="Download full view SVG with background">
             ↓ SVG
           </button>
           <button className="md-btn-outlined"
-            style={{ height:36, fontSize:12, padding:'0 14px', borderColor:copyDone?'var(--md-success)':'var(--md-outline)', color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)' }}
-            onClick={copyOutline} disabled={!drawDone}>
-            {copyDone?'✓ Copied':'⎘ Outline'}
+            style={{ height:36, fontSize:12, padding:'0 14px',
+              opacity: geo ? 1 : 0.35 }}
+            onClick={exportOutlineSVG} disabled={!geo}
+            title="Download black outline SVG — insert into Word via Insert → Pictures">
+            ↓ Outline
+          </button>
+          <button className="md-btn-outlined"
+            style={{ height:36, fontSize:12, padding:'0 14px',
+              borderColor:copyDone?'var(--md-success)':'var(--md-outline)',
+              color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)' }}
+            onClick={copyOutline} disabled={!drawDone}
+            title="Copy transparent black outline PNG — paste directly into Word, Slides or Docs">
+            {copyDone?'✓ Copied':'⎘ Copy PNG'}
           </button>
         </div>
 
