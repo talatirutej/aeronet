@@ -1,11 +1,14 @@
-// Views2DPage.jsx — Material 3 Black/White Theme
+// Views2DPage.jsx — AeroNet Vehicle Outline Analysis + Benchmarking
 // Copyright (c) 2026 Rutej Talati / statinsite.com
 //
-// M3 Layout:
-//   Navigation Rail (80px) — view tabs as rail items
-//   Side Sheet (272px)     — upload, controls, geometry data
-//   Canvas (flex)          — SVG outline + pipeline overlay
-//   Thumbnail Strip        — M3 filter chips at bottom
+// Updated:
+//   - Compare mode: overlay two car outlines with alignment controls
+//   - New geo fields: normWidth, normHeight, trueAspect, bodyType,
+//     wasFlipped, roofFlatness, aPillarAngle, underbodyFlatness,
+//     greenhouseRatio, wheelbaseNorm, convexityScore
+//   - Fixed copy/export: downloads PNG with white background + black stroke
+//   - Benchmarking sidebar: proportion metrics with visual bars
+//   - M3 black/white theme throughout
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import SideViewSVG     from './SideViewSVG.jsx'
@@ -13,7 +16,8 @@ import FrontViewSVG    from './FrontViewSVG.jsx'
 import TopViewSVG      from './TopViewSVG.jsx'
 import PipelineOverlay from './PipelineOverlay.jsx'
 import SimulationModal from './SimulationModal.jsx'
-import CompareOverlay from './CompareOverlay.jsx'
+import CompareOverlay  from './CompareOverlay.jsx'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,23 +37,23 @@ const STAGES = [
   { id:'contour',label:'Contour',    icon:'✦',  pct:[46, 60] },
   { id:'enh',    label:'Enhance',    icon:'◈',  pct:[60, 74] },
   { id:'keys',   label:'Keypoints',  icon:'⊞',  pct:[74, 84] },
-  { id:'cfd',    label:'CFD Geom',   icon:'◈',  pct:[84, 92] },
+  { id:'cfd',    label:'Geometry',   icon:'◈',  pct:[84, 92] },
   { id:'done',   label:'Complete',   icon:'✓',  pct:[92,100] },
 ]
 
 const BACKEND_MSGS = [
-  [0,  'Stage 0a: EXIF fix, canvas margin, resize to 1536px…',       'Input normalisation'],
-  [8,  'Stage 0b: RMBG 2.0 — foreground extraction…',               'Separating car from background'],
-  [18, 'Stage 1: YOLO11x-seg — vehicle detection…',                  '10% bbox padding applied'],
-  [32, 'Stage 2: SAM3 point-prompted mask refinement…',              '5 fg + 4 bg prompt points'],
-  [46, 'Stage 3-5: morph close → contour → Canny snap…',            'Constrained to ±8px boundary band'],
-  [60, 'Stage 7a: Wheel arch punch — Hough on distance transform…',  'Open arch cutouts'],
-  [65, 'Stage 7b: Fine feature merge — antenna, mirror, spoiler…',   '2× res Canny on pre-RMBG image'],
-  [70, 'Stage 7c: Catmull-Rom spline — curvature-adaptive…',         'Sharp corners preserved'],
-  [74, 'Stage 8: Hough circles — wheel centre, rim radius…',         'Wheel geometry'],
-  [84, 'Stage 9: Ahmed body params — Cd, CdA, rear slant…',          'Ahmed 1984 correlation'],
-  [92, 'Quality scoring — 10-signal confidence assessment…',         'Checking segmentation'],
-  [97, 'Finalising SVG, engineering exports…',                       'Complete — rendering'],
+  [0,  'Stage 0a: EXIF fix, canvas margin, resize to 1536px…',         'Input normalisation'],
+  [8,  'Stage 0b: RMBG 2.0 — foreground extraction…',                  'Separating car from background'],
+  [18, 'Stage 1: YOLO11x-seg — vehicle detection…',                    '10% bbox padding applied'],
+  [32, 'Stage 2: SAM3 point-prompted mask refinement…',                '5 fg + 4 bg prompt points'],
+  [46, 'Stage 3-5: morph close → contour → Canny snap…',              'Constrained to ±5px boundary band'],
+  [60, 'Stage 7: Wheel arch detection + smoothing…',                   'Hough on distance transform'],
+  [68, 'Stage 7c: Catmull-Rom spline (120sps, 2× Chaikin)…',          'Maximum smoothing'],
+  [74, 'Stage 8: Hough wheel geometry…',                               'Wheel centre + radius'],
+  [84, 'Stage 9: Aspect-ratio-preserving normalisation…',              'True proportions preserved'],
+  [88, 'Stage 9: Orientation detection + benchmarking geometry…',      '15 proportion metrics'],
+  [92, 'Quality scoring — convexity + 9 other signals…',              'Checking outline quality'],
+  [97, 'Finalising SVG, engineering exports…',                         'Complete — rendering'],
 ]
 
 const FEAT_COLOR = {
@@ -58,6 +62,11 @@ const FEAT_COLOR = {
   spoiler: '#E0E0E0',
   wiper:   '#CE93D8',
   detail:  'rgba(255,255,255,0.45)',
+}
+
+const BODY_TYPE_ICONS = {
+  sports:'🏎', saloon:'🚗', hatchback:'🚙', estate:'🚙',
+  suv:'🛻', mpv:'🚐', coupe:'🚗', pickup:'🛻',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,16 +80,16 @@ async function prepareImage(file, maxWidth = 1440) {
     img.onload = () => {
       URL.revokeObjectURL(url)
       const scale = Math.min(1.0, maxWidth / Math.max(img.width, 900))
-      const w = Math.round(img.width  * Math.max(scale, 900 / img.width))
-      const h = Math.round(img.height * Math.max(scale, 900 / img.width))
+      const w = Math.round(img.width  * Math.max(scale, 900/img.width))
+      const h = Math.round(img.height * Math.max(scale, 900/img.width))
       const canvas = document.createElement('canvas')
       canvas.width = w; canvas.height = h
       const ctx = canvas.getContext('2d')
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,w,h)
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
-      ctx.drawImage(img, 0, 0, w, h)
+      ctx.drawImage(img,0,0,w,h)
       canvas.toBlob(
-        blob => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.png'), { type:'image/png' })),
+        blob => resolve(new File([blob], file.name.replace(/\.[^.]+$/,'.png'), {type:'image/png'})),
         'image/png'
       )
     }
@@ -109,7 +118,7 @@ async function fetchImageFromUrl(url) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M3 SECTION HEADER
+// SUBCOMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SL({ n, t }) {
@@ -122,10 +131,6 @@ function SL({ n, t }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// M3 DROP ZONE
-// ─────────────────────────────────────────────────────────────────────────────
-
 function DropZone({ viewId, label, icon, file, onFile }) {
   const [drag, setDrag] = useState(false)
   const inputRef = useRef(null)
@@ -135,100 +140,68 @@ function DropZone({ viewId, label, icon, file, onFile }) {
     if (f?.type.startsWith('image/')) onFile(viewId, f)
   }
   return (
-    <div
-      className="md-dropzone"
-      data-drag={drag}
-      data-has-file={!!file}
+    <div className="md-dropzone" data-drag={drag} data-has-file={!!file}
       onClick={() => inputRef.current?.click()}
-      onDragOver={e => { e.preventDefault(); setDrag(true) }}
-      onDragLeave={() => setDrag(false)}
-      onDrop={handleDrop}
-    >
-      <input ref={inputRef} type="file" accept="image/*" style={{ display:'none' }}
-        onChange={e => { const f = e.target.files?.[0]; if (f) onFile(viewId, f) }}/>
-      {file && (
-        <div style={{ position:'absolute', top:8, right:8, width:8, height:8, borderRadius:'50%', background:'var(--md-success)' }}/>
-      )}
-      <div style={{ fontSize:28, color: file ? 'var(--md-success)' : 'var(--md-on-surface-disabled)' }}>
-        {file ? '✓' : icon}
-      </div>
-      <div style={{ fontSize:12, fontWeight:500, color:'var(--md-on-surface-variant)', fontFamily:'var(--font-sans)', letterSpacing:'0.5px' }}>
-        {label}
-      </div>
-      <div style={{ fontSize:11, color:'var(--md-on-surface-disabled)', fontFamily:'var(--font-sans)' }}>
+      onDragOver={e=>{e.preventDefault();setDrag(true)}}
+      onDragLeave={()=>setDrag(false)}
+      onDrop={handleDrop}>
+      <input ref={inputRef} type="file" accept="image/*" style={{display:'none'}}
+        onChange={e=>{const f=e.target.files?.[0];if(f)onFile(viewId,f)}}/>
+      {file && <div style={{position:'absolute',top:8,right:8,width:8,height:8,borderRadius:'50%',background:'var(--md-success)'}}/>}
+      <div style={{fontSize:28,color:file?'var(--md-success)':'var(--md-on-surface-disabled)'}}>{file?'✓':icon}</div>
+      <div style={{fontSize:12,fontWeight:500,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px'}}>{label}</div>
+      <div style={{fontSize:11,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-sans)'}}>
         {file ? file.name.slice(0,18)+(file.name.length>18?'…':'') : 'drop or click'}
       </div>
     </div>
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// M3 OUTLINE THUMBNAIL
-// ─────────────────────────────────────────────────────────────────────────────
-
 function OutlineThumbnail({ geo, label, icon, isActive, onClick }) {
-  const TW = 96, TH = 48, TP = 5
+  const TW=96,TH=48,TP=5
   const pts = geo?._smoothPts ?? geo?._contourPts ?? []
-  let pathD = ''
-  if (pts.length > 10) {
-    const aspect = geo._bboxAspect ?? 2.2
-    const dw = (TW - TP*2) * 0.93
-    const dh = Math.min(dw / aspect, TH - TP*2)
-    const ox = TP + ((TW - TP*2) - dw) / 2
-    const oy = TP + ((TH - TP*2) - dh) / 2
-    pathD = pts.map(([nx,ny],i) =>
-      `${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`
-    ).join(' ') + ' Z'
+  let pathD=''
+  if (pts.length>10) {
+    const aspect = geo._bboxAspect ?? geo.trueAspect ?? 2.2
+    const dw=(TW-TP*2)*0.93, dh=Math.min(dw/aspect,TH-TP*2)
+    const ox=TP+((TW-TP*2)-dw)/2, oy=TP+((TH-TP*2)-dh)/2
+    pathD=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`).join(' ')+' Z'
   }
-  const quality = geo?._quality?.score ?? 0
   return (
     <button onClick={onClick} style={{
-      display:'flex', alignItems:'center', gap:10, width:'100%',
-      padding:'8px 10px', borderRadius:12, cursor:'pointer',
-      border:`1px solid ${isActive ? 'var(--md-primary)' : 'var(--md-outline-variant)'}`,
-      background: isActive ? 'var(--md-primary-container)' : 'var(--md-surface-container-low)',
-      transition:'all 0.2s', marginBottom:4,
+      display:'flex',alignItems:'center',gap:10,width:'100%',
+      padding:'8px 10px',borderRadius:12,cursor:'pointer',
+      border:`1px solid ${isActive?'var(--md-primary)':'var(--md-outline-variant)'}`,
+      background:isActive?'var(--md-primary-container)':'var(--md-surface-container-low)',
+      transition:'all 0.2s',marginBottom:4,
     }}>
-      {/* Thumbnail SVG */}
-      <div className="md-card-filled" style={{ width:TW, height:TH, flexShrink:0, overflow:'hidden' }}>
+      <div className="md-card-filled" style={{width:TW,height:TH,flexShrink:0,overflow:'hidden'}}>
         <svg viewBox={`0 0 ${TW} ${TH}`} width={TW} height={TH}>
           <rect width={TW} height={TH} fill="var(--md-surface-container-highest)"/>
-          {pathD ? (
-            <path d={pathD} fill="none"
-              stroke={isActive ? 'var(--md-primary)' : 'rgba(255,255,255,0.55)'}
-              strokeWidth="1" strokeLinejoin="round" strokeLinecap="round"/>
-          ) : (
-            <text x={TW/2} y={TH/2+4} textAnchor="middle"
-              fill="var(--md-on-surface-disabled)" fontSize="9"
-              fontFamily="var(--font-sans)">{icon}</text>
-          )}
+          {pathD
+            ? <path d={pathD} fill="none" stroke={isActive?'var(--md-primary)':'rgba(255,255,255,0.55)'} strokeWidth="1" strokeLinejoin="round" strokeLinecap="round"/>
+            : <text x={TW/2} y={TH/2+4} textAnchor="middle" fill="var(--md-on-surface-disabled)" fontSize="9" fontFamily="var(--font-sans)">{icon}</text>
+          }
         </svg>
       </div>
-
-      {/* Info */}
-      <div style={{ flex:1, textAlign:'left', minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:500, color: isActive ? 'var(--md-on-primary-container)' : 'var(--md-on-surface)', fontFamily:'var(--font-sans)', marginBottom:2 }}>
+      <div style={{flex:1,textAlign:'left',minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:500,color:isActive?'var(--md-on-primary-container)':'var(--md-on-surface)',fontFamily:'var(--font-sans)',marginBottom:2}}>
           {label}
         </div>
-        <div style={{ fontSize:11, color:'var(--md-on-surface-variant)', fontFamily:'var(--font-mono)' }}>
-          {geo ? `${geo._contourPts?.length ?? 0}pt · ${geo._method ?? '—'}` : 'not analysed'}
+        <div style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-mono)'}}>
+          {geo
+            ? `${geo._contourPts?.length??0}pt · ${geo.bodyType??geo._method??'—'}`
+            : 'not analysed'
+          }
         </div>
       </div>
-
-      {/* Quality dot */}
       {geo && (
-        <div style={{
-          width:8, height:8, borderRadius:'50%', flexShrink:0,
-          background: quality >= 75 ? 'var(--md-success)' : 'var(--md-warning)',
-        }}/>
+        <div style={{width:8,height:8,borderRadius:'50%',flexShrink:0,
+          background:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)'}}/>
       )}
     </button>
   )
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// REAR VIEW SVG (synthetic)
-// ─────────────────────────────────────────────────────────────────────────────
 
 function RearViewSVG({ g }) {
   const W=300,H=220,cx=W/2,gY=H-14
@@ -268,11 +241,38 @@ function RearViewSVG({ g }) {
   )
 }
 
+// Proportion bar for benchmarking sidebar
+function PropBar({ label, valA, valB, colorA='#E0E0E0', colorB='#FFB74D', unit='', decimals=2 }) {
+  if (valA==null) return null
+  const max = Math.max(Math.abs(valA), valB!=null?Math.abs(valB):0, 0.001)
+  const wA  = (Math.abs(valA)/max)*100
+  const wB  = valB!=null ? (Math.abs(valB)/max)*100 : null
+  return (
+    <div style={{marginBottom:8}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:2}}>
+        <span style={{fontSize:10,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-mono)'}}>{label}</span>
+        <div style={{display:'flex',gap:8}}>
+          <span style={{fontSize:10,color:colorA,fontFamily:'var(--font-mono)',fontWeight:600}}>{valA.toFixed(decimals)}{unit}</span>
+          {valB!=null && <span style={{fontSize:10,color:colorB,fontFamily:'var(--font-mono)',fontWeight:600}}>{valB.toFixed(decimals)}{unit}</span>}
+        </div>
+      </div>
+      <div style={{height:4,background:'var(--md-surface-container-highest)',borderRadius:2,overflow:'hidden',marginBottom:valB!=null?2:0}}>
+        <div style={{height:'100%',width:`${wA}%`,background:colorA,borderRadius:2,opacity:0.8}}/>
+      </div>
+      {valB!=null && (
+        <div style={{height:4,background:'var(--md-surface-container-highest)',borderRadius:2,overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${wB}%`,background:colorB,borderRadius:2,opacity:0.8}}/>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN COMPONENT
+// MAIN
 // ─────────────────────────────────────────────────────────────────────────────
 
-const EMPTY_SLOT = { file:null, geo:null, running:false, progress:{pct:0,msg:'',sub:''}, drawDone:false, isDrawing:false, error:null }
+const EMPTY_SLOT = {file:null,geo:null,running:false,progress:{pct:0,msg:'',sub:''},drawDone:false,isDrawing:false,error:null}
 
 export default function Views2DPage({ backend = '' }) {
   const [slots, setSlots] = useState({
@@ -286,6 +286,8 @@ export default function Views2DPage({ backend = '' }) {
   const [analysisMode, setAnalysisMode] = useState('A')
   const [showSep,      setShowSep]      = useState(true)
   const [showArches,   setShowArches]   = useState(false)
+  const [compareMode,  setCompareMode]  = useState(false)
+  const [compareB,     setCompareB]     = useState('front')  // which slot is Car B
   const [copyDone,     setCopyDone]     = useState(false)
   const [showSimModal, setShowSimModal] = useState(false)
   const [urlMode,      setUrlMode]      = useState(false)
@@ -294,21 +296,21 @@ export default function Views2DPage({ backend = '' }) {
   const svgRef = useRef(null)
 
   const getSlot = id => slots[id]
-  const setSlot = (id, patch) => setSlots(p => ({ ...p, [id]: { ...p[id], ...patch } }))
+  const setSlot = (id, patch) => setSlots(p => ({...p,[id]:{...p[id],...patch}}))
 
   const setViewFile = useCallback((viewId, file) => {
-    setSlot(viewId, { file, geo:null, error:null, drawDone:false, isDrawing:false, progress:{pct:0,msg:'',sub:''} })
+    setSlot(viewId, {file,geo:null,error:null,drawDone:false,isDrawing:false,progress:{pct:0,msg:'',sub:''}})
     setActiveView(viewId)
   }, []) // eslint-disable-line
 
   useEffect(() => {
     const handle = e => {
-      const items = Array.from(e.clipboardData?.items ?? [])
-      const imgItem = items.find(i => i.type.startsWith('image/'))
-      if (imgItem) { setViewFile(activeView, imgItem.getAsFile()); return }
-      const text = e.clipboardData?.getData('text') ?? ''
+      const items = Array.from(e.clipboardData?.items??[])
+      const imgItem = items.find(i=>i.type.startsWith('image/'))
+      if (imgItem) { setViewFile(activeView,imgItem.getAsFile()); return }
+      const text = e.clipboardData?.getData('text')??''
       if (/^https?:\/\//i.test(text)) {
-        fetchImageFromUrl(text).then(f => setViewFile(activeView, f)).catch(err => setSlot(activeView, { error: err.message }))
+        fetchImageFromUrl(text).then(f=>setViewFile(activeView,f)).catch(err=>setSlot(activeView,{error:err.message}))
       }
     }
     window.addEventListener('paste', handle)
@@ -317,8 +319,8 @@ export default function Views2DPage({ backend = '' }) {
 
   const apiUrl = path => backend ? `${backend}${path}` : `/api${path}`
   const getMsgForPct = pct => {
-    const e = [...BACKEND_MSGS].reverse().find(m => pct >= m[0])
-    return e ? { msg:e[1], sub:e[2] } : { msg:'Processing…', sub:'' }
+    const e = [...BACKEND_MSGS].reverse().find(m=>pct>=m[0])
+    return e ? {msg:e[1],sub:e[2]} : {msg:'Processing…',sub:''}
   }
 
   // ── Run analysis ────────────────────────────────────────────────────────────
@@ -326,238 +328,195 @@ export default function Views2DPage({ backend = '' }) {
   const runView = async (viewId) => {
     const slot = getSlot(viewId)
     if (!slot.file) return
-
-    setSlot(viewId, { running:true, error:null, geo:null, drawDone:false, isDrawing:false,
-                      progress:{pct:2,msg:'Preparing image…',sub:'Input normalisation'} })
-
+    setSlot(viewId,{running:true,error:null,geo:null,drawDone:false,isDrawing:false,progress:{pct:2,msg:'Preparing image…',sub:'Input normalisation'}})
     let uploadFile
     try { uploadFile = await prepareImage(slot.file) } catch { uploadFile = slot.file }
 
-    let jobId = null
-    const MAX_ATTEMPTS = 8
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      setSlot(viewId, { progress:{ pct:5, msg: attempt===0 ? 'Connecting to server…' : `Retrying… (${attempt*5}s)`, sub:'Establishing connection' }})
+    let jobId=null
+    const MAX=8
+    for (let attempt=0; attempt<MAX; attempt++) {
+      setSlot(viewId,{progress:{pct:5,msg:attempt===0?'Connecting to server…':`Retrying… (${attempt*5}s)`,sub:'Establishing connection'}})
       try {
-        const fd = new FormData()
-        fd.append('file', uploadFile)
-        fd.append('mode', analysisMode)
-        fd.append('view', viewId)
-        const ctrl  = new AbortController()
-        const timer = setTimeout(() => ctrl.abort(), 25000)
+        const fd=new FormData()
+        fd.append('file',uploadFile); fd.append('mode',analysisMode); fd.append('view',viewId)
+        const ctrl=new AbortController(), timer=setTimeout(()=>ctrl.abort(),25000)
         let res
-        try { res = await fetch(apiUrl('/analyze-contour/start'), { method:'POST', body:fd, signal:ctrl.signal }) }
+        try { res=await fetch(apiUrl('/analyze-contour/start'),{method:'POST',body:fd,signal:ctrl.signal}) }
         finally { clearTimeout(timer) }
-        if (res.ok) { jobId = (await res.json()).job_id; break }
-        const txt = await res.text().catch(()=>'')
-        setSlot(viewId, { running:false, error:`Server error ${res.status}${txt?': '+txt.slice(0,100):''}` })
-        return
+        if (res.ok) { jobId=(await res.json()).job_id; break }
+        const txt=await res.text().catch(()=>'')
+        setSlot(viewId,{running:false,error:`Server error ${res.status}${txt?': '+txt.slice(0,100):''}`}); return
       } catch {
-        if (attempt >= MAX_ATTEMPTS-1) {
-          setSlot(viewId, { running:false, error:`Could not reach server after ${MAX_ATTEMPTS*5}s.` })
-          return
-        }
-        await new Promise(r => setTimeout(r, 5000))
+        if (attempt>=MAX-1) { setSlot(viewId,{running:false,error:`Could not reach server after ${MAX*5}s.`}); return }
+        await new Promise(r=>setTimeout(r,5000))
       }
     }
-    if (!jobId) { setSlot(viewId, { running:false, error:'Failed to start job.' }); return }
+    if (!jobId) { setSlot(viewId,{running:false,error:'Failed to start job.'}); return }
+    setSlot(viewId,{progress:{pct:10,msg:'Job queued — preprocessing…',sub:'Input normalisation'}})
 
-    setSlot(viewId, { progress:{ pct:10, msg:'Job queued — preprocessing…', sub:'Input normalisation' } })
-
-    const startTime = Date.now()
+    const t0=Date.now()
     while (true) {
-      await new Promise(r => setTimeout(r, 3000))
-      const elapsed = Math.round((Date.now() - startTime) / 1000)
+      await new Promise(r=>setTimeout(r,3000))
+      const elapsed=Math.round((Date.now()-t0)/1000)
       let poll
       try {
-        const pc = new AbortController()
-        const timer = setTimeout(() => pc.abort(), 10000)
+        const pc=new AbortController(), timer=setTimeout(()=>pc.abort(),10000)
         let res
-        try { res = await fetch(apiUrl(`/analyze-contour/result/${jobId}`), { signal:pc.signal }) }
+        try { res=await fetch(apiUrl(`/analyze-contour/result/${jobId}`),{signal:pc.signal}) }
         finally { clearTimeout(timer) }
-        if (!res.ok) { setSlot(viewId, { running:false, error:`Poll error ${res.status}` }); return }
-        poll = await res.json()
-      } catch (e) { setSlot(viewId, { running:false, error:`Connection lost: ${e.message}` }); return }
+        if (!res.ok) { setSlot(viewId,{running:false,error:`Poll error ${res.status}`}); return }
+        poll=await res.json()
+      } catch(e) { setSlot(viewId,{running:false,error:`Connection lost: ${e.message}`}); return }
 
-      if (poll.status === 'error') { setSlot(viewId, { running:false, error:poll.error??'Analysis failed' }); return }
+      if (poll.status==='error') { setSlot(viewId,{running:false,error:poll.error??'Analysis failed'}); return }
 
-      if (poll.status === 'running' || poll.status === 'pending') {
-        const pct = Math.min(90, 10 + elapsed * 1.2)
-        const { msg, sub } = getMsgForPct(pct)
-        setSlot(viewId, { progress:{ pct:Math.round(pct), msg:`${msg} (${elapsed}s)`, sub } })
-        continue
+      if (poll.status==='running'||poll.status==='pending') {
+        const pct=Math.min(90,10+elapsed*1.2)
+        const {msg,sub}=getMsgForPct(pct)
+        setSlot(viewId,{progress:{pct:Math.round(pct),msg:`${msg} (${elapsed}s)`,sub}}); continue
       }
 
-      if (poll.status === 'done') {
-        const result = poll.result
-        if (!result?.geometry) { setSlot(viewId, { running:false, error:'No vehicle outline found. Use a clear photo.' }); return }
-        const cg = result.geometry
+      if (poll.status==='done') {
+        const result=poll.result
+        if (!result?.geometry) { setSlot(viewId,{running:false,error:'No vehicle outline found. Use a clear photo.'}); return }
+        const cg=result.geometry
+
         const geo = {
-          aspectRatio:       cg.aspectRatio       ?? 2.0,
-          wsAngleDeg:        cg.wsAngleDeg        ?? 58,
-          rearDrop:          cg.rearDrop          ?? 0.15,
-          rideH:             cg.rideH             ?? 0.08,
-          archDepth:         cg.archDepth         ?? null,
-          Cd:                cg.Cd                ?? null,
-          CdA:               cg.CdA               ?? null,
-          rearSlantAngleDeg: cg.rearSlantAngleDeg ?? null,
-          ahmedRegime:       cg.ahmedRegime       ?? null,
-          cabinH:            cg.cabinH            ?? 0.58,
-          w1:                cg.w1                ?? 0.22,
-          w2:                cg.w2                ?? 0.76,
-          hoodRatio:         cg.hoodRatio         ?? null,
-          cabinRatio:        cg.cabinRatio        ?? null,
-          bootRatio:         cg.bootRatio         ?? null,
-          frontalAreaNorm:   cg.frontalAreaNorm   ?? null,
-          trackWidthNorm:    cg.trackWidthNorm    ?? null,
-          shoulderWidthNorm: cg.shoulderWidthNorm ?? null,
-          roofWidthNorm:     cg.roofWidthNorm     ?? null,
-          sillWidthNorm:     cg.sillWidthNorm     ?? null,
-          symmetryScore:     cg.symmetryScore     ?? null,
-          frontalAspect:     cg.frontalAspect     ?? null,
-          _viewType:         cg._view             ?? viewId,
-          _smoothPts:        result.display_outline_pts   ?? result.smooth_pts   ?? null,
-          _contourPts:       result.technical_outline_pts ?? result.outline_pts  ?? null,
-          _bboxAspect:       result.bbox ? result.bbox.w / Math.max(1,result.bbox.h) : undefined,
+          // ── Core proportions (new — aspect-ratio-preserving) ──────────
+          trueAspect:        result.true_aspect       ?? cg.trueAspect      ?? cg.aspectRatio ?? 2.0,
+          normWidth:         result.norm_w            ?? cg.normWidth        ?? null,
+          normHeight:        result.norm_h            ?? cg.normHeight       ?? null,
+          wasFlipped:        result.was_flipped       ?? cg.wasFlipped       ?? false,
+          // ── Body classification ────────────────────────────────────────
+          bodyType:          cg.bodyType              ?? null,
+          ahmedRegime:       cg.ahmedRegime           ?? null,
+          // ── Roofline ──────────────────────────────────────────────────
+          hoodRatio:         cg.hoodRatio             ?? null,
+          cabinRatio:        cg.cabinRatio            ?? null,
+          bootRatio:         cg.bootRatio             ?? null,
+          roofFlatness:      cg.roofFlatness          ?? null,
+          roofPeakOffset:    cg.roofPeakOffset        ?? null,
+          // ── Glass + pillar angles ──────────────────────────────────────
+          aPillarAngle:      cg.aPillarAngle          ?? null,
+          wsAngleDeg:        cg.wsAngleDeg            ?? 58,
+          rearSlantAngleDeg: cg.rearSlantAngleDeg     ?? null,
+          // ── Stance ────────────────────────────────────────────────────
+          rideH:             cg.rideH                ?? cg.groundClearanceNorm ?? 0.08,
+          underbodyFlatness: cg.underbodyFlatness     ?? null,
+          archDepth:         cg.archDepth             ?? null,
+          // ── Greenhouse ────────────────────────────────────────────────
+          greenhouseRatio:   cg.greenhouseRatio       ?? null,
+          beltlineH:         cg.beltlineH             ?? null,
+          // ── Wheels + wheelbase ─────────────────────────────────────────
+          wheelbaseNorm:     cg.wheelbaseNorm         ?? null,
+          wheelDiamRatio:    cg.wheelDiamRatio        ?? null,
+          w1:                cg.w1                    ?? 0.22,
+          w2:                cg.w2                    ?? 0.76,
+          // ── Quality ───────────────────────────────────────────────────
+          convexityScore:    cg.convexityScore        ?? null,
+          // ── Front/rear view ───────────────────────────────────────────
+          frontalAreaNorm:   cg.frontalAreaNorm       ?? null,
+          trackWidthNorm:    cg.trackWidthNorm        ?? null,
+          shoulderWidthNorm: cg.shoulderWidthNorm     ?? null,
+          symmetryScore:     cg.symmetryScore         ?? null,
+          frontalAspect:     cg.frontalAspect         ?? null,
+          // ── Contour points ─────────────────────────────────────────────
+          _smoothPts:        result.display_outline_pts  ?? result.smooth_pts  ?? null,
+          _contourPts:       result.technical_outline_pts ?? result.outline_pts ?? null,
+          _bboxAspect:       result.bbox ? result.bbox.w/Math.max(1,result.bbox.h) : undefined,
           _keypoints:        result.keypoints,
           _method:           result.method,
           _quality:          result.quality ?? null,
-          arch_pts:          result.arch_pts         ?? null,
-          arch_bbox_aspect:  result.arch_bbox_aspect ?? null,
-          arch_wheels:       result.arch_wheels      ?? [],
-          features:          result.features         ?? [],
-          sharp_indices:     result.sharp_indices    ?? [],
-          _imageW:           result._imageW          ?? 1536,
-          _imageH:           result._imageH          ?? 768,
+          _viewType:         cg._view ?? viewId,
+          // ── Arch ──────────────────────────────────────────────────────
+          arch_pts:          result.arch_pts          ?? null,
+          arch_bbox_aspect:  result.arch_bbox_aspect  ?? null,
+          arch_wheels:       result.arch_wheels       ?? [],
+          // ── Features ──────────────────────────────────────────────────
+          features:          result.features          ?? [],
+          sharp_indices:     result.sharp_indices     ?? [],
+          // ── Image dims ────────────────────────────────────────────────
+          _imageW:           result._imageW           ?? 1536,
+          _imageH:           result._imageH           ?? 768,
+          // ── Legacy ────────────────────────────────────────────────────
+          aspectRatio:       result.true_aspect       ?? cg.aspectRatio ?? 2.0,
+          cabinH:            cg.cabinH               ?? 0.58,
+          Cd:                cg.Cd                   ?? null,
+          CdA:               cg.CdA                  ?? null,
         }
-        setSlot(viewId, { running:false, progress:{pct:0,msg:'',sub:''}, geo, isDrawing:true, drawDone:false })
-        setTimeout(() => setSlot(viewId, { isDrawing:false, drawDone:true }), 2600)
+
+        setSlot(viewId,{running:false,progress:{pct:0,msg:'',sub:''},geo,isDrawing:true,drawDone:false})
+        setTimeout(()=>setSlot(viewId,{isDrawing:false,drawDone:true}),2600)
         return
       }
     }
   }
 
-  // ── Export / Copy ───────────────────────────────────────────────────────────
+  // ── Export helpers ──────────────────────────────────────────────────────────
 
   const exportSVG = () => {
     const svg = svgRef.current?.querySelector('svg')
     if (!svg) return
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([svg.outerHTML], { type:'image/svg+xml' }))
-    a.download = `aeronet_${activeView}.svg`; a.click()
+    const a=document.createElement('a')
+    a.href=URL.createObjectURL(new Blob([svg.outerHTML],{type:'image/svg+xml'}))
+    a.download=`aeronet_${activeView}.svg`; a.click()
   }
 
-  /**
-   * Build a clean outline SVG path string.
-   * bg = true  → white background rectangle (for PNG export / Word paste)
-   * bg = false → no background (for SVG file download, transparent)
-   */
-  const _buildOutlineSVG = (geo, { strokeColor='#111111', strokeWidth=3, bg=true } = {}) => {
+  const _buildOutlineSVG = (geo, {strokeColor='#111111',strokeWidth=3,bg=true}={}) => {
     const pts = geo._smoothPts ?? geo._contourPts
     if (!pts?.length) return null
-
-    const bboxAspect = geo._bboxAspect ?? 2.4
-    const CW = 1600, CH = 700, PAD = 48
-    const dw = (CW - PAD*2) * 0.95
-    const dh = Math.min(dw / bboxAspect, CH - PAD*2)
-    const ox  = PAD + ((CW - PAD*2) - dw) / 2
-    const oy  = PAD + ((CH - PAD*2) - dh) / 2
-
-    const d = pts.map(([nx,ny],i) =>
-      `${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`
-    ).join(' ') + ' Z'
-
-    const bg_rect = bg
-      ? `<rect width="${CW}" height="${CH}" fill="white"/>`
-      : ''
-
+    const bboxAspect = geo._bboxAspect ?? geo.trueAspect ?? 2.4
+    const CW=1600,CH=700,PAD=48
+    const dw=(CW-PAD*2)*0.95, dh=Math.min(dw/bboxAspect,CH-PAD*2)
+    const ox=PAD+((CW-PAD*2)-dw)/2, oy=PAD+((CH-PAD*2)-dh)/2
+    const d=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`).join(' ')+' Z'
     return (
-      `<svg xmlns="http://www.w3.org/2000/svg" ` +
-      `width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
-      bg_rect +
-      `<path d="${d}" fill="none" stroke="${strokeColor}" ` +
-      `stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round"/>` +
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
+      (bg?`<rect width="${CW}" height="${CH}" fill="white"/>`:'') +
+      `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round"/>` +
       `</svg>`
     )
   }
 
-  /**
-   * copyOutline — always downloads a PNG file.
-   * Clipboard API is unreliable across browsers/HTTPS/permissions.
-   * Downloads aeronet_outline_side.png with white background,
-   * black stroke, hollow fill — paste into Word with Ctrl+V or Insert.
-   */
   const copyOutline = async () => {
     const geo = getSlot(activeView).geo
     if (!geo?._contourPts && !geo?._smoothPts) return
-
-    const svgStr = _buildOutlineSVG(geo, { strokeColor:'#111111', strokeWidth:3, bg:true })
+    const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true})
     if (!svgStr) return
-
-    const CW = 1600, CH = 700
-
-    // Use canvas to rasterise SVG → PNG at 2× for crisp Word insertion
-    const renderPNG = () => new Promise((resolve, reject) => {
-      const blob = new Blob([svgStr], { type:'image/svg+xml;charset=utf-8' })
-      const url  = URL.createObjectURL(blob)
-      const img  = new window.Image()
-      img.onload = () => {
-        URL.revokeObjectURL(url)
-        const canvas = document.createElement('canvas')
-        canvas.width  = CW * 2    // 2× for retina
-        canvas.height = CH * 2
-        const ctx = canvas.getContext('2d')
-        ctx.fillStyle = '#ffffff'  // white background
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-        canvas.toBlob(resolve, 'image/png')
+    const CW=1600,CH=700
+    const renderPNG = () => new Promise((resolve,reject) => {
+      const img=new window.Image()
+      img.onload=()=>{
+        const canvas=document.createElement('canvas')
+        canvas.width=CW*2; canvas.height=CH*2
+        const ctx=canvas.getContext('2d')
+        ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height)
+        ctx.drawImage(img,0,0,canvas.width,canvas.height)
+        canvas.toBlob(resolve,'image/png')
       }
-      img.onerror = reject
-      // Force CORS-safe load
-      img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)))
+      img.onerror=reject
+      img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svgStr)))
     })
-
     try {
-      const png = await renderPNG()
-
-      // Try clipboard first (works on HTTPS Chrome/Edge)
-      let clipboardOk = false
-      try {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
-        clipboardOk = true
-      } catch { /* fall through to download */ }
-
-      // Always also trigger download so user definitely gets the file
-      const a = document.createElement('a')
-      a.href     = URL.createObjectURL(png)
-      a.download = `aeronet_outline_${activeView}.png`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-
-      setCopyDone(true)
-      setTimeout(() => setCopyDone(false), 3000)
-    } catch (err) {
-      console.error('[copyOutline] PNG render failed, falling back to SVG download', err)
-      exportOutlineSVG()
-    }
+      const png=await renderPNG()
+      try { await navigator.clipboard.write([new ClipboardItem({'image/png':png})]) } catch {}
+      const a=document.createElement('a')
+      a.href=URL.createObjectURL(png)
+      a.download=`aeronet_outline_${activeView}.png`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      setCopyDone(true); setTimeout(()=>setCopyDone(false),3000)
+    } catch(err) { exportOutlineSVG() }
   }
 
-  /**
-   * exportOutlineSVG — downloads a clean black outline SVG.
-   * Insert into Word: Insert → Pictures → This Device → select the .svg file.
-   * Scales perfectly to any size, no pixelation.
-   */
   const exportOutlineSVG = () => {
-    const geo = getSlot(activeView).geo
-    if (!geo?._contourPts && !geo?._smoothPts) return
-    const svgStr = _buildOutlineSVG(geo, { strokeColor:'#111111', strokeWidth:2.5, bg:false })
+    const geo=getSlot(activeView).geo
+    if (!geo?._contourPts&&!geo?._smoothPts) return
+    const svgStr=_buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:2.5,bg:false})
     if (!svgStr) return
-    const a = document.createElement('a')
-    a.href     = URL.createObjectURL(new Blob([svgStr], { type:'image/svg+xml' }))
-    a.download = `aeronet_outline_${activeView}.svg`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    const a=document.createElement('a')
+    a.href=URL.createObjectURL(new Blob([svgStr],{type:'image/svg+xml'}))
+    a.download=`aeronet_outline_${activeView}.svg`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
@@ -570,12 +529,20 @@ export default function Views2DPage({ backend = '' }) {
   const traceProgress = activeSlot.progress
   const error         = activeSlot.error
   const hasFile       = !!activeSlot.file
-  const anyOutline    = VIEWS.some(v => !!getSlot(v.id).geo)
-  const canShowArches = activeView === 'side' && !!geo?.arch_pts
+  const anyOutline    = VIEWS.some(v=>!!getSlot(v.id).geo)
+  const canShowArches = activeView==='side' && !!geo?.arch_pts
+  const analysedViews = VIEWS.filter(v=>!!getSlot(v.id).geo)
+  const canCompare    = analysedViews.length >= 2
 
-  const ahmedColor = r => ({ attached:'var(--md-success)', intermediate:'var(--md-warning)', critical:'var(--md-error)', separated:'var(--md-error)' }[r] ?? 'var(--md-primary)')
+  // Compare: Car A = activeView slot, Car B = compareB slot
+  const geoA = getSlot(activeView).geo
+  const geoB = getSlot(compareB).geo
+  const labelA = getSlot(activeView).file?.name?.replace(/\.[^.]+$/,'') ?? VIEWS.find(v=>v.id===activeView)?.fullLabel ?? 'Car A'
+  const labelB = getSlot(compareB).file?.name?.replace(/\.[^.]+$/,'') ?? VIEWS.find(v=>v.id===compareB)?.fullLabel ?? 'Car B'
 
-  const renderCanvas = (g, isDrawingFlag, drawDoneFlag) => {
+  const ahmedColor = r=>({attached:'var(--md-success)',intermediate:'var(--md-warning)',critical:'var(--md-error)',separated:'var(--md-error)'}[r]??'var(--md-primary)')
+
+  const renderCanvas = (g,isDrawingFlag,drawDoneFlag) => {
     if (!g) return null
     if (activeView==='side')  return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag}/>
     if (activeView==='front') return <FrontViewSVG g={g}/>
@@ -589,261 +556,264 @@ export default function Views2DPage({ backend = '' }) {
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display:'flex', height:'100%', overflow:'hidden', background:'var(--md-surface)' }}>
+    <div style={{display:'flex',height:'100%',overflow:'hidden',background:'var(--md-surface)'}}>
 
       {showSimModal && geo && <SimulationModal geo={geo} onClose={()=>setShowSimModal(false)}/>}
 
       {/* ══ M3 Navigation Rail ═══════════════════════════════════════════════ */}
       <nav className="md-nav-rail">
-        {/* Logo mark */}
-        <div style={{ fontSize:18, color:'var(--md-primary)', marginBottom:8, fontWeight:700, fontFamily:'var(--font-mono)' }}>
-          A
-        </div>
-        <div style={{ width:32, height:1, background:'var(--md-outline-variant)', marginBottom:8 }}/>
-
-        {VIEWS.map(v => {
-          const s = getSlot(v.id)
+        <div style={{fontSize:18,color:'var(--md-primary)',marginBottom:8,fontWeight:700,fontFamily:'var(--font-mono)'}}>A</div>
+        <div style={{width:32,height:1,background:'var(--md-outline-variant)',marginBottom:8}}/>
+        {VIEWS.map(v=>{
+          const s=getSlot(v.id)
           return (
-            <button
-              key={v.id}
-              className="md-nav-rail-item"
-              data-active={activeView===v.id}
-              onClick={() => setActiveView(v.id)}
-            >
-              <div className="md-nav-indicator">
+            <button key={v.id} className="md-nav-rail-item" data-active={activeView===v.id && !compareMode}
+              onClick={()=>{setActiveView(v.id);setCompareMode(false)}}>
+              <div className="md-nav-indicator" style={{position:'relative'}}>
                 {v.icon}
-                {s.geo && !s.running && (
-                  <div style={{ position:'absolute', top:4, right:10, width:6, height:6, borderRadius:'50%', background:'var(--md-success)' }}/>
-                )}
-                {s.running && (
-                  <div style={{ position:'absolute', top:4, right:10, width:6, height:6, borderRadius:'50%', background:'var(--md-primary)', animation:'md-pulse 1s ease infinite' }}/>
-                )}
+                {s.geo&&!s.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-success)'}}/>}
+                {s.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-primary)',animation:'md-pulse 1s ease infinite'}}/>}
               </div>
               <span className="md-nav-label">{v.label}</span>
             </button>
           )
         })}
+
+        {/* Compare button in rail */}
+        <div style={{width:32,height:1,background:'var(--md-outline-variant)',margin:'8px 0'}}/>
+        <button className="md-nav-rail-item" data-active={compareMode}
+          onClick={()=>canCompare&&setCompareMode(p=>!p)}
+          style={{opacity:canCompare?1:0.35,cursor:canCompare?'pointer':'default'}}>
+          <div className="md-nav-indicator" style={{fontSize:16}}>⇔</div>
+          <span className="md-nav-label">Compare</span>
+        </button>
       </nav>
 
       {/* ══ M3 Side Sheet ════════════════════════════════════════════════════ */}
       <div style={{
-        width:272, flexShrink:0,
-        display:'flex', flexDirection:'column',
-        borderRight:`1px solid var(--md-outline-variant)`,
-        background:'var(--md-surface-container-low)',
-        overflow:'hidden',
+        width:272,flexShrink:0,display:'flex',flexDirection:'column',
+        borderRight:'1px solid var(--md-outline-variant)',
+        background:'var(--md-surface-container-low)',overflow:'hidden',
       }}>
-        <div style={{ flex:1, overflowY:'auto', padding:'16px 12px' }}>
+        <div style={{flex:1,overflowY:'auto',padding:'16px 12px'}}>
 
           {/* 01 — Saved outlines */}
           <SL n="01" t="Saved Outlines"/>
-          <div style={{ marginBottom:12 }}>
-            {VIEWS.map(v => (
-              <OutlineThumbnail
-                key={v.id}
-                geo={getSlot(v.id).geo}
-                label={v.fullLabel}
-                icon={v.icon}
-                isActive={activeView===v.id}
-                onClick={() => setActiveView(v.id)}
+          <div style={{marginBottom:12}}>
+            {VIEWS.map(v=>(
+              <OutlineThumbnail key={v.id}
+                geo={getSlot(v.id).geo} label={v.fullLabel} icon={v.icon}
+                isActive={activeView===v.id&&!compareMode}
+                onClick={()=>{setActiveView(v.id);setCompareMode(false)}}
               />
             ))}
           </div>
 
           {/* 02 — Upload */}
           <SL n="02" t={`Upload — ${VIEWS.find(v=>v.id===activeView)?.fullLabel}`}/>
-          <div style={{ marginBottom:10 }}>
-            <DropZone
-              viewId={activeView}
-              label={VIEWS.find(v=>v.id===activeView)?.fullLabel}
-              icon={VIEWS.find(v=>v.id===activeView)?.icon}
-              file={activeSlot.file}
-              onFile={setViewFile}
-            />
+          <div style={{marginBottom:10}}>
+            <DropZone viewId={activeView} label={VIEWS.find(v=>v.id===activeView)?.fullLabel}
+              icon={VIEWS.find(v=>v.id===activeView)?.icon} file={activeSlot.file} onFile={setViewFile}/>
           </div>
 
           {/* URL input */}
           {urlMode ? (
-            <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:10 }}>
-              <div style={{ display:'flex', gap:6 }}>
-                <input
-                  autoFocus
-                  className="md-text-field"
-                  value={urlInput}
+            <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
+              <div style={{display:'flex',gap:6}}>
+                <input autoFocus className="md-text-field" value={urlInput}
                   onChange={e=>setUrlInput(e.target.value)}
                   onKeyDown={e=>{
                     if(e.key==='Enter') fetchImageFromUrl(urlInput).then(f=>{setViewFile(activeView,f);setUrlMode(false)}).catch(err=>setUrlError(err.message))
                     if(e.key==='Escape') setUrlMode(false)
                   }}
-                  placeholder="https://example.com/car.jpg"
-                  style={{ flex:1, fontSize:11 }}
-                />
-                <button className="md-btn-tonal" style={{ height:40, padding:'0 14px', fontSize:12 }}
-                  onClick={()=>fetchImageFromUrl(urlInput).then(f=>{setViewFile(activeView,f);setUrlMode(false)}).catch(err=>setUrlError(err.message))}>
-                  Go
-                </button>
+                  placeholder="https://example.com/car.jpg" style={{flex:1,fontSize:11}}/>
+                <button className="md-btn-tonal" style={{height:40,padding:'0 14px',fontSize:12}}
+                  onClick={()=>fetchImageFromUrl(urlInput).then(f=>{setViewFile(activeView,f);setUrlMode(false)}).catch(err=>setUrlError(err.message))}>Go</button>
               </div>
-              {urlError && <div style={{ fontSize:11, color:'var(--md-error)', fontFamily:'var(--font-sans)' }}>{urlError}</div>}
-              <button className="md-btn-outlined" style={{ fontSize:12, height:36 }} onClick={()=>{setUrlMode(false);setUrlError('')}}>Cancel</button>
+              {urlError&&<div style={{fontSize:11,color:'var(--md-error)',fontFamily:'var(--font-sans)'}}>{urlError}</div>}
+              <button className="md-btn-outlined" style={{fontSize:12,height:36}} onClick={()=>{setUrlMode(false);setUrlError('')}}>Cancel</button>
             </div>
           ) : (
-            <button className="md-btn-outlined" style={{ width:'100%', fontSize:12, height:36, marginBottom:10 }} onClick={()=>setUrlMode(true)}>
+            <button className="md-btn-outlined" style={{width:'100%',fontSize:12,height:36,marginBottom:10}} onClick={()=>setUrlMode(true)}>
               🔗 Load from URL
             </button>
           )}
 
-          {/* Analysis mode — M3 filter chips */}
-          <div style={{ marginBottom:12 }}>
-            <div style={{ fontSize:11, color:'var(--md-on-surface-variant)', fontFamily:'var(--font-sans)', letterSpacing:'0.5px', marginBottom:8, textTransform:'uppercase' }}>
+          {/* Analysis mode */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px',marginBottom:8,textTransform:'uppercase'}}>
               Analysis Mode
             </div>
-            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-              {[
-                { id:'A', label:'Silhouette', sub:'~30s' },
-                { id:'B', label:'Panels',     sub:'~90s' },
-                { id:'C', label:'Full Aero',  sub:'~150s' },
-              ].map(m => (
-                <button key={m.id} className="md-chip" data-selected={analysisMode===m.id}
-                  onClick={()=>setAnalysisMode(m.id)}>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {[{id:'A',label:'Silhouette',sub:'~30s'},{id:'B',label:'Panels',sub:'~90s'},{id:'C',label:'Full Aero',sub:'~150s'}].map(m=>(
+                <button key={m.id} className="md-chip" data-selected={analysisMode===m.id} onClick={()=>setAnalysisMode(m.id)}>
                   {m.label}
-                  <span style={{ fontSize:10, opacity:0.6, fontFamily:'var(--font-mono)' }}>{m.sub}</span>
+                  <span style={{fontSize:10,opacity:0.6,fontFamily:'var(--font-mono)'}}>{m.sub}</span>
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Analyse — M3 Extended FAB */}
-          <button
-            className="md-fab-extended"
-            onClick={()=>runView(activeView)}
-            disabled={!hasFile||isRunning}
-            style={{ marginBottom:8 }}
-          >
-            {isRunning ? (
-              <>
-                <div className="md-spin" style={{ width:16,height:16,border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'var(--md-on-primary-container)',borderRadius:'50%' }}/>
-                Analysing…
-              </>
-            ) : (
-              <>▶ Analyse {VIEWS.find(v=>v.id===activeView)?.label}</>
-            )}
+          {/* Analyse FAB */}
+          <button className="md-fab-extended" onClick={()=>runView(activeView)}
+            disabled={!hasFile||isRunning} style={{marginBottom:8}}>
+            {isRunning
+              ? <><div className="md-spin" style={{width:16,height:16,border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'var(--md-on-primary-container)',borderRadius:'50%'}}/> Analysing…</>
+              : <>▶ Analyse {VIEWS.find(v=>v.id===activeView)?.label}</>
+            }
           </button>
 
           {/* CFD Simulation */}
           {drawDone && (
-            <button className="md-btn-outlined" style={{ width:'100%', height:40, fontSize:13, marginBottom:8, borderColor:'var(--md-success)', color:'var(--md-success)' }}
-              onClick={()=>setShowSimModal(true)}>
-              ▷ Run CFD Simulation
-            </button>
+            <button className="md-btn-outlined" style={{width:'100%',height:40,fontSize:13,marginBottom:8,borderColor:'var(--md-success)',color:'var(--md-success)'}}
+              onClick={()=>setShowSimModal(true)}>▷ Run CFD Simulation</button>
           )}
 
-          {/* Error — M3 error container */}
+          {/* Error */}
           {error && (
-            <div style={{
-              borderRadius:12, padding:'10px 14px', marginBottom:10,
-              background:'rgba(242,184,184,0.08)',
-              border:'1px solid rgba(242,184,184,0.20)',
-              color:'var(--md-error)', fontSize:12, lineHeight:1.5,
-              fontFamily:'var(--font-sans)',
-            }}>
+            <div style={{borderRadius:12,padding:'10px 14px',marginBottom:10,background:'rgba(242,184,184,0.08)',border:'1px solid rgba(242,184,184,0.20)',color:'var(--md-error)',fontSize:12,lineHeight:1.5,fontFamily:'var(--font-sans)'}}>
               {error}
             </div>
           )}
 
-          {/* 03 — Geometry */}
-          {geo && (
+          {/* Compare mode selector */}
+          {compareMode && canCompare && (
             <>
-              <SL n="03" t="Geometry"/>
-              <div className="md-card-outlined" style={{ padding:'10px 12px', marginBottom:10 }}>
-                {(() => {
-                  const isFront = geo._viewType==='front'||geo._viewType==='rear'
-                  const rows = isFront ? [
-                    ['Frontal Area', geo.frontalAreaNorm!=null?geo.frontalAreaNorm.toFixed(4):'—'],
-                    ['Track width',  geo.trackWidthNorm!=null?(geo.trackWidthNorm*100).toFixed(1)+'%':'—'],
-                    ['Shoulder w.',  geo.shoulderWidthNorm!=null?(geo.shoulderWidthNorm*100).toFixed(1)+'%':'—'],
-                    ['Ground clr.',  geo.rideH!=null?(geo.rideH*100).toFixed(1)+'%':'—'],
-                    ['Symmetry',     geo.symmetryScore!=null?geo.symmetryScore.toFixed(3):'—'],
-                    ['Aspect',       (geo.frontalAspect??geo.aspectRatio??0).toFixed(3)],
-                    ['Points',       (geo._contourPts?.length??0)+' pt'],
-                    ['Method',       geo._method??'—'],
-                  ] : [
-                    ['Points',     (geo._contourPts?.length??0)+' pt'],
-                    ['Method',     geo._method??'—'],
-                    ['Aspect',     (geo.aspectRatio??0).toFixed(2)],
-                    ['WS rake',    (geo.wsAngleDeg??0).toFixed(0)+'°'],
-                    ['Rear slant', (geo.rearSlantAngleDeg??0).toFixed(0)+'°'],
-                    ['Cd est.',    geo.Cd!=null?geo.Cd.toFixed(3):'—'],
-                    ['CdA',        geo.CdA!=null?geo.CdA.toFixed(4):'—'],
-                    ['Hood',       geo.hoodRatio!=null?(geo.hoodRatio*100).toFixed(0)+'%':'—'],
-                    ['Cabin',      geo.cabinRatio!=null?(geo.cabinRatio*100).toFixed(0)+'%':'—'],
-                    ['Boot',       geo.bootRatio!=null?(geo.bootRatio*100).toFixed(0)+'%':'—'],
-                    ['Ride h.',    geo.rideH!=null?(geo.rideH*100).toFixed(1)+'%':'—'],
-                    ['Arch d.',    geo.archDepth!=null?(geo.archDepth*100).toFixed(1)+'%':'—'],
-                  ]
-                  return rows.map(([k,v]) => (
-                    <div key={k} className="md-list-item">
-                      <span className="md-list-item-label">{k}</span>
-                      <span className="md-list-item-value">{v}</span>
+              <SL n="03" t="Compare Setup"/>
+              <div className="md-card-outlined" style={{padding:'10px 12px',marginBottom:10}}>
+                <div style={{fontSize:11,color:'var(--md-on-surface-variant)',marginBottom:8,fontFamily:'var(--font-sans)'}}>
+                  Car A: <strong style={{color:'#E0E0E0'}}>{labelA}</strong>
+                </div>
+                <div style={{fontSize:11,color:'var(--md-on-surface-variant)',marginBottom:8,fontFamily:'var(--font-sans)'}}>Car B:</div>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  {analysedViews.filter(v=>v.id!==activeView).map(v=>(
+                    <button key={v.id} className="md-chip" data-selected={compareB===v.id}
+                      onClick={()=>setCompareB(v.id)} style={{justifyContent:'flex-start',gap:8}}>
+                      <div style={{width:8,height:8,borderRadius:'50%',background:'#FFB74D',flexShrink:0}}/>
+                      {v.fullLabel}
+                      <span style={{fontSize:10,opacity:0.6,fontFamily:'var(--font-mono)',marginLeft:'auto'}}>
+                        {getSlot(v.id).file?.name?.replace(/\.[^.]+$/,'').slice(0,10)??''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* 03 — Geometry / Benchmarking */}
+          {geo && !compareMode && (
+            <>
+              <SL n="03" t="Proportions"/>
+              <div className="md-card-outlined" style={{padding:'10px 12px',marginBottom:10}}>
+
+                {/* Body type badge */}
+                {geo.bodyType && (
+                  <div style={{marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:18}}>{BODY_TYPE_ICONS[geo.bodyType]??'🚗'}</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:600,color:'var(--md-on-surface)',fontFamily:'var(--font-sans)',textTransform:'capitalize'}}>{geo.bodyType}</div>
+                      {geo.wasFlipped && <div style={{fontSize:10,color:'var(--md-warning)',fontFamily:'var(--font-sans)'}}>⚠ Auto-flipped to right-facing</div>}
                     </div>
-                  ))
-                })()}
+                  </div>
+                )}
+
+                <div style={{height:1,background:'var(--md-outline-variant)',marginBottom:8}}/>
+
+                {/* True proportions */}
+                {geo.trueAspect!=null && (
+                  <PropBar label="Length:Height" valA={geo.trueAspect} decimals={2}/>
+                )}
+                {geo.normHeight!=null && (
+                  <PropBar label="Norm. height" valA={geo.normHeight} decimals={3}/>
+                )}
+                {geo.wheelbaseNorm!=null && (
+                  <PropBar label="Wheelbase" valA={geo.wheelbaseNorm} decimals={3}/>
+                )}
+
+                <div style={{height:1,background:'var(--md-outline-variant)',margin:'8px 0'}}/>
+
+                {[
+                  ['Hood',   geo.hoodRatio,   null, 2],
+                  ['Cabin',  geo.cabinRatio,  null, 2],
+                  ['Boot',   geo.bootRatio,   null, 2],
+                ].filter(([,v])=>v!=null).map(([k,v,,d])=>(
+                  <div key={k} className="md-list-item">
+                    <span className="md-list-item-label">{k}</span>
+                    <span className="md-list-item-value">{(v*100).toFixed(1)}%</span>
+                  </div>
+                ))}
+
+                <div style={{height:1,background:'var(--md-outline-variant)',margin:'8px 0'}}/>
+
+                {[
+                  ['A-pillar',     geo.aPillarAngle,      '°', 1],
+                  ['WS rake',      geo.wsAngleDeg,        '°', 1],
+                  ['Rear slant',   geo.rearSlantAngleDeg, '°', 1],
+                  ['Ride height',  geo.rideH!=null?geo.rideH*100:null, '%', 1],
+                  ['Greenhouse',   geo.greenhouseRatio!=null?geo.greenhouseRatio*100:null, '%', 1],
+                  ['Roof flat.',   geo.roofFlatness,      '',  3],
+                  ['Underbody',    geo.underbodyFlatness,  '',  3],
+                  ['Convexity',    geo.convexityScore,     '',  3],
+                  ['Pts',          geo._contourPts?.length??null, 'pt', 0],
+                  ['Method',       null, null, 0],
+                ].filter(([,v])=>v!=null).map(([k,v,u,d])=>(
+                  <div key={k} className="md-list-item">
+                    <span className="md-list-item-label">{k}</span>
+                    <span className="md-list-item-value">{typeof v==='number'?v.toFixed(d):v}{u??''}</span>
+                  </div>
+                ))}
+
+                {geo._method && (
+                  <div className="md-list-item">
+                    <span className="md-list-item-label">Method</span>
+                    <span className="md-list-item-value" style={{fontSize:9}}>{geo._method}</span>
+                  </div>
+                )}
 
                 {/* Fine features */}
-                {geo.features?.length > 0 && (() => {
-                  const counts = geo.features.reduce((acc,f)=>({...acc,[f.type]:(acc[f.type]??0)+1}),{})
+                {geo.features?.length>0 && (() => {
+                  const counts=geo.features.reduce((acc,f)=>({...acc,[f.type]:(acc[f.type]??0)+1}),{})
                   return (
                     <>
-                      <div className="md-divider" style={{ margin:'8px 0 6px' }}/>
-                      {Object.entries(counts).map(([type,count]) => (
+                      <div style={{height:1,background:'var(--md-outline-variant)',margin:'8px 0 6px'}}/>
+                      {Object.entries(counts).map(([type,count])=>(
                         <div key={type} className="md-list-item">
                           <span className="md-list-item-label">{type}</span>
-                          <span className="md-list-item-value" style={{ color:FEAT_COLOR[type]??'var(--md-primary)' }}>{count} detected</span>
+                          <span className="md-list-item-value" style={{color:FEAT_COLOR[type]??'var(--md-primary)'}}>{count} detected</span>
                         </div>
                       ))}
                     </>
                   )
                 })()}
-
-                {geo.arch_wheels?.length > 0 && (
-                  <div className="md-list-item">
-                    <span className="md-list-item-label">arch detect</span>
-                    <span className="md-list-item-value">{geo.arch_wheels.length} wheel{geo.arch_wheels.length!==1?'s':''}</span>
-                  </div>
-                )}
               </div>
 
               {/* 04 — Quality */}
               <SL n="04" t="Quality"/>
-              <div className="md-card-outlined" style={{ padding:'12px', marginBottom:10 }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
-                  <span style={{ fontSize:24, fontWeight:300, fontFamily:'var(--font-mono)', color:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)' }}>
-                    {geo._quality?.score??0}<span style={{ fontSize:12, color:'var(--md-on-surface-variant)' }}>/100</span>
+              <div className="md-card-outlined" style={{padding:'12px',marginBottom:10}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                  <span style={{fontSize:24,fontWeight:300,fontFamily:'var(--font-mono)',color:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)'}}>
+                    {geo._quality?.score??0}<span style={{fontSize:12,color:'var(--md-on-surface-variant)'}}>/100</span>
                   </span>
-                  <span style={{ fontSize:11, color:'var(--md-on-surface-variant)', fontFamily:'var(--font-sans)', letterSpacing:'0.5px', textTransform:'uppercase' }}>
+                  <span style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px',textTransform:'uppercase'}}>
                     {geo._quality?.status??'ACCEPTED'}
                   </span>
                 </div>
-                <div className="md-linear-progress" style={{ marginBottom:10 }}>
-                  <div className="md-linear-progress-bar" style={{ width:`${geo._quality?.score??0}%`, background:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)' }}/>
+                <div className="md-linear-progress" style={{marginBottom:10}}>
+                  <div className="md-linear-progress-bar" style={{width:`${geo._quality?.score??0}%`,background:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)'}}/>
                 </div>
-                {geo._quality?.warnings?.slice(0,2).map((w,i)=>(
-                  <div key={i} style={{ fontSize:11, color:'var(--md-warning)', marginTop:4, lineHeight:1.4, fontFamily:'var(--font-sans)' }}>⚠ {w}</div>
+                {geo._quality?.warnings?.slice(0,3).map((w,i)=>(
+                  <div key={i} style={{fontSize:11,color:'var(--md-warning)',marginTop:4,lineHeight:1.4,fontFamily:'var(--font-sans)'}}>{w}</div>
                 ))}
               </div>
 
               {/* 05 — Ahmed body */}
               {geo.ahmedRegime && (
                 <>
-                  <SL n="05" t="Ahmed Body"/>
-                  <div className="md-card-outlined" style={{ padding:'10px 12px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                    <span style={{ fontSize:13, color:'var(--md-on-surface-variant)', fontFamily:'var(--font-sans)' }}>Regime</span>
-                    <span style={{
-                      fontSize:12, fontWeight:600, fontFamily:'var(--font-mono)',
-                      color:ahmedColor(geo.ahmedRegime),
-                      background:`${ahmedColor(geo.ahmedRegime)}18`,
-                      padding:'3px 10px', borderRadius:99,
-                      border:`1px solid ${ahmedColor(geo.ahmedRegime)}44`,
-                    }}>
+                  <SL n="05" t="Flow Regime"/>
+                  <div className="md-card-outlined" style={{padding:'10px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:13,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)'}}>Regime</span>
+                    <span style={{fontSize:12,fontWeight:600,fontFamily:'var(--font-mono)',color:ahmedColor(geo.ahmedRegime),background:`${ahmedColor(geo.ahmedRegime)}18`,padding:'3px 10px',borderRadius:99,border:`1px solid ${ahmedColor(geo.ahmedRegime)}44`}}>
                       {geo.ahmedRegime.toUpperCase()} {geo.rearSlantAngleDeg?.toFixed(1)}°
                     </span>
                   </div>
@@ -854,145 +824,146 @@ export default function Views2DPage({ backend = '' }) {
         </div>
       </div>
 
-      {/* ══ CENTRE — Canvas ══════════════════════════════════════════════════ */}
-      <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+      {/* ══ CENTRE ════════════════════════════════════════════════════════════ */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
-        {/* M3 Toolbar */}
-        <div style={{
-          height:48, flexShrink:0,
-          display:'flex', alignItems:'center', gap:4, padding:'0 12px',
-          background:'var(--md-surface-container)',
-          borderBottom:`1px solid var(--md-outline-variant)`,
-        }}>
-          {/* View label */}
-          <span style={{ fontSize:16, fontWeight:500, color:'var(--md-on-surface)', fontFamily:'var(--font-sans)', marginRight:8 }}>
-            {VIEWS.find(v=>v.id===activeView)?.fullLabel}
-          </span>
-
-          <div style={{ width:1, height:20, background:'var(--md-outline-variant)', margin:'0 4px' }}/>
-
-          {/* Sep toggle — M3 icon button */}
-          <button className="md-icon-btn" data-active={showSep} onClick={()=>setShowSep(p=>!p)} title="Separation lines">
-            ⌁
-          </button>
-
-          {/* Arches toggle */}
-          <button className="md-icon-btn" data-active={showArches && canShowArches}
-            onClick={()=>canShowArches&&setShowArches(p=>!p)}
-            style={{ opacity: canShowArches?1:0.35, cursor:canShowArches?'pointer':'default' }}
-            title="Wheel arches">
-            ⊙
-          </button>
-
-          {/* Diagnostic */}
-          {geo && (
-            <span style={{ fontSize:11, color:'var(--md-on-surface-disabled)', fontFamily:'var(--font-mono)', marginLeft:4 }}>
-              {geo._contourPts?.length??0}pts
-              {geo.features?.length>0?` · ${geo.features.length} feat`:''}
+        {/* Toolbar — hidden in compare mode (CompareOverlay has its own) */}
+        {!compareMode && (
+          <div style={{
+            height:48,flexShrink:0,display:'flex',alignItems:'center',gap:4,padding:'0 12px',
+            background:'var(--md-surface-container)',borderBottom:'1px solid var(--md-outline-variant)',
+          }}>
+            <span style={{fontSize:16,fontWeight:500,color:'var(--md-on-surface)',fontFamily:'var(--font-sans)',marginRight:8}}>
+              {VIEWS.find(v=>v.id===activeView)?.fullLabel}
             </span>
+            <div style={{width:1,height:20,background:'var(--md-outline-variant)',margin:'0 4px'}}/>
+
+            {/* Sep */}
+            <button className="md-icon-btn" data-active={showSep} onClick={()=>setShowSep(p=>!p)} title="Separation lines" style={{fontSize:12}}>⌁</button>
+
+            {/* Arches */}
+            <button className="md-icon-btn" data-active={showArches&&canShowArches}
+              onClick={()=>canShowArches&&setShowArches(p=>!p)}
+              style={{opacity:canShowArches?1:0.35,cursor:canShowArches?'pointer':'default',fontSize:12}}
+              title="Wheel arches">⊙</button>
+
+            {/* Diagnostic */}
+            {geo && (
+              <span style={{fontSize:11,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-mono)',marginLeft:4}}>
+                {geo._contourPts?.length??0}pts
+                {geo.bodyType?` · ${geo.bodyType}`:''}
+                {geo.wasFlipped?' · flipped':''}
+              </span>
+            )}
+
+            <div style={{flex:1}}/>
+
+            <button className="md-btn-outlined" style={{height:36,fontSize:12,padding:'0 14px'}}
+              onClick={exportSVG} disabled={!geo} title="Download full canvas SVG">↓ SVG</button>
+            <button className="md-btn-outlined"
+              style={{height:36,fontSize:12,padding:'0 14px',opacity:geo?1:0.35}}
+              onClick={exportOutlineSVG} disabled={!geo}
+              title="Download black outline SVG — insert into Word via Insert → Pictures">↓ Outline</button>
+            <button className="md-btn-outlined"
+              style={{height:36,fontSize:12,padding:'0 14px',borderColor:copyDone?'var(--md-success)':'var(--md-outline)',color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)'}}
+              onClick={copyOutline} disabled={!drawDone}
+              title="Download PNG — paste into Word, Slides, or Docs">
+              {copyDone?'✓ Downloaded':'⎘ Copy PNG'}
+            </button>
+          </div>
+        )}
+
+        {/* Canvas */}
+        <div style={{flex:1,position:'relative',overflow:'hidden',background:'var(--md-surface)'}} ref={svgRef}>
+
+          {/* Compare mode */}
+          {compareMode && canCompare && geoA && geoB && (
+            <CompareOverlay geoA={geoA} geoB={geoB} labelA={labelA} labelB={labelB}/>
           )}
 
-          <div style={{ flex:1 }}/>
-
-          {/* Action buttons */}
-          <button className="md-btn-outlined" style={{ height:36, fontSize:12, padding:'0 14px' }}
-            onClick={exportSVG} disabled={!geo}
-            title="Download full view SVG with background">
-            ↓ SVG
-          </button>
-          <button className="md-btn-outlined"
-            style={{ height:36, fontSize:12, padding:'0 14px',
-              opacity: geo ? 1 : 0.35 }}
-            onClick={exportOutlineSVG} disabled={!geo}
-            title="Download black outline SVG — insert into Word via Insert → Pictures">
-            ↓ Outline
-          </button>
-          <button className="md-btn-outlined"
-            style={{ height:36, fontSize:12, padding:'0 14px',
-              borderColor:copyDone?'var(--md-success)':'var(--md-outline)',
-              color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)' }}
-            onClick={copyOutline} disabled={!drawDone}
-            title="Copy transparent black outline PNG — paste directly into Word, Slides or Docs">
-            {copyDone?'✓ Copied':'⎘ Copy PNG'}
-          </button>
-        </div>
-
-        {/* Canvas area */}
-        <div style={{ flex:1, position:'relative', overflow:'hidden', background:'var(--md-surface)' }} ref={svgRef}>
-
-          <PipelineOverlay visible={isRunning} pct={traceProgress.pct} msg={traceProgress.msg} sub={traceProgress.sub} stages={STAGES}/>
-
-          {/* Empty state */}
-          {!geo && !isRunning && (
-            <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16 }}>
-              <div style={{ fontSize:48, color:'var(--md-outline-variant)' }}>
-                {VIEWS.find(v=>v.id===activeView)?.icon}
+          {/* Compare mode but not enough data */}
+          {compareMode && (!canCompare || !geoA || !geoB) && (
+            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}>
+              <div style={{fontSize:32,color:'var(--md-outline-variant)'}}>⇔</div>
+              <div style={{fontSize:16,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)'}}>Analyse two views to compare</div>
+              <div style={{fontSize:13,color:'var(--md-on-surface-disabled)',textAlign:'center',lineHeight:1.8,fontFamily:'var(--font-sans)'}}>
+                Upload and analyse at least two car photos<br/>then click Compare in the navigation rail
               </div>
-              <div style={{ fontSize:22, fontWeight:400, color:'var(--md-on-surface-variant)', fontFamily:'var(--font-sans)' }}>
-                {VIEWS.find(v=>v.id===activeView)?.fullLabel}
-              </div>
-              <div style={{ fontSize:14, color:'var(--md-on-surface-disabled)', textAlign:'center', lineHeight:1.8, fontFamily:'var(--font-sans)' }}>
-                Drop a photo into the {VIEWS.find(v=>v.id===activeView)?.label} slot<br/>
-                then click Analyse
-              </div>
-              {anyOutline && !hasFile && (
-                <div style={{ fontSize:12, color:'var(--md-primary)', fontFamily:'var(--font-mono)', opacity:0.6 }}>
-                  Other views have outlines — see sidebar
-                </div>
-              )}
             </div>
           )}
 
-          {geo && !isRunning && (
-            <div style={{ width:'100%', height:'100%' }}>
-              {renderCanvas(geo, isDrawing, drawDone)}
-            </div>
-          )}
-        </div>
+          {/* Normal view */}
+          {!compareMode && (
+            <>
+              <PipelineOverlay visible={isRunning} pct={traceProgress.pct} msg={traceProgress.msg} sub={traceProgress.sub} stages={STAGES}/>
 
-        {/* M3 Thumbnail strip — filter chips */}
-        <div style={{
-          height:88, flexShrink:0,
-          display:'grid', gridTemplateColumns:'repeat(4,1fr)',
-          gap:6, padding:6,
-          borderTop:`1px solid var(--md-outline-variant)`,
-          background:'var(--md-surface-container)',
-        }}>
-          {VIEWS.map(v => {
-            const s = getSlot(v.id)
-            const pts = s.geo?._smoothPts ?? s.geo?._contourPts ?? []
-            const aspect = s.geo?._bboxAspect ?? 2.2
-            const TW=100,TH=52,TP=4
-            let pathD=''
-            if (pts.length>10) {
-              const dw=(TW-TP*2)*0.93, dh=Math.min(dw/aspect,TH-TP*2)
-              const ox=TP+((TW-TP*2)-dw)/2, oy=TP+((TH-TP*2)-dh)/2
-              pathD=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`).join(' ')+' Z'
-            }
-            return (
-              <button key={v.id} className="md-view-thumb" data-active={activeView===v.id}
-                onClick={()=>setActiveView(v.id)}>
-                <div style={{ flex:1, background:'var(--md-surface)', borderRadius:8, overflow:'hidden', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  {s.geo ? (
-                    <div style={{ width:'100%', height:'100%', pointerEvents:'none' }}>
-                      {v.id==='side'  && <SideViewSVG  g={s.geo} showSep={false} showArches={false} isDrawing={false} drawDone={s.drawDone}/>}
-                      {v.id==='front' && <FrontViewSVG g={s.geo}/>}
-                      {v.id==='top'   && <TopViewSVG   g={s.geo}/>}
-                      {v.id==='rear'  && <RearViewSVG  g={s.geo}/>}
+              {!geo && !isRunning && (
+                <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16}}>
+                  <div style={{fontSize:48,color:'var(--md-outline-variant)'}}>{VIEWS.find(v=>v.id===activeView)?.icon}</div>
+                  <div style={{fontSize:22,fontWeight:400,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)'}}>{VIEWS.find(v=>v.id===activeView)?.fullLabel}</div>
+                  <div style={{fontSize:14,color:'var(--md-on-surface-disabled)',textAlign:'center',lineHeight:1.8,fontFamily:'var(--font-sans)'}}>
+                    Drop a photo into the {VIEWS.find(v=>v.id===activeView)?.label} slot<br/>then click Analyse
+                  </div>
+                  {anyOutline && !hasFile && (
+                    <div style={{fontSize:12,color:'var(--md-primary)',fontFamily:'var(--font-mono)',opacity:0.6}}>
+                      {analysedViews.length} view{analysedViews.length!==1?'s':''} analysed — see sidebar
                     </div>
-                  ) : (
-                    <span style={{ fontSize:16, color:'var(--md-outline-variant)' }}>{v.icon}</span>
                   )}
                 </div>
-                <div style={{ fontSize:11, fontWeight:500, textAlign:'center', color: activeView===v.id?'var(--md-on-primary-container)':'var(--md-on-surface-variant)', fontFamily:'var(--font-sans)', letterSpacing:'0.3px' }}>
-                  {v.label}
-                </div>
-                {s.geo && <div style={{ position:'absolute', top:5, right:5, width:6, height:6, borderRadius:'50%', background:'var(--md-success)' }}/>}
-                {s.running && <div style={{ position:'absolute', top:5, right:5, width:6, height:6, borderRadius:'50%', background:'var(--md-primary)', animation:'md-pulse 1s ease infinite' }}/>}
-              </button>
-            )
-          })}
+              )}
+
+              {geo && !isRunning && (
+                <div style={{width:'100%',height:'100%'}}>{renderCanvas(geo,isDrawing,drawDone)}</div>
+              )}
+            </>
+          )}
         </div>
+
+        {/* Thumbnail strip */}
+        {!compareMode && (
+          <div style={{
+            height:88,flexShrink:0,
+            display:'grid',gridTemplateColumns:'repeat(4,1fr)',
+            gap:6,padding:6,
+            borderTop:'1px solid var(--md-outline-variant)',
+            background:'var(--md-surface-container)',
+          }}>
+            {VIEWS.map(v=>{
+              const s=getSlot(v.id)
+              const pts=s.geo?._smoothPts??s.geo?._contourPts??[]
+              const aspect=s.geo?._bboxAspect??s.geo?.trueAspect??2.2
+              const TW=100,TH=52,TP=4
+              let pathD=''
+              if (pts.length>10) {
+                const dw=(TW-TP*2)*0.93,dh=Math.min(dw/aspect,TH-TP*2)
+                const ox=TP+((TW-TP*2)-dw)/2,oy=TP+((TH-TP*2)-dh)/2
+                pathD=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`).join(' ')+' Z'
+              }
+              return (
+                <button key={v.id} className="md-view-thumb" data-active={activeView===v.id}
+                  onClick={()=>{setActiveView(v.id);setCompareMode(false)}}>
+                  <div style={{flex:1,background:'var(--md-surface)',borderRadius:8,overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {s.geo?(
+                      <div style={{width:'100%',height:'100%',pointerEvents:'none'}}>
+                        {v.id==='side'  && <SideViewSVG  g={s.geo} showSep={false} showArches={false} isDrawing={false} drawDone={s.drawDone}/>}
+                        {v.id==='front' && <FrontViewSVG g={s.geo}/>}
+                        {v.id==='top'   && <TopViewSVG   g={s.geo}/>}
+                        {v.id==='rear'  && <RearViewSVG  g={s.geo}/>}
+                      </div>
+                    ):(
+                      <span style={{fontSize:16,color:'var(--md-outline-variant)'}}>{v.icon}</span>
+                    )}
+                  </div>
+                  <div style={{fontSize:11,fontWeight:500,textAlign:'center',color:activeView===v.id?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.3px'}}>
+                    {v.label}
+                  </div>
+                  {s.geo&&<div style={{position:'absolute',top:5,right:5,width:6,height:6,borderRadius:'50%',background:'var(--md-success)'}}/>}
+                  {s.running&&<div style={{position:'absolute',top:5,right:5,width:6,height:6,borderRadius:'50%',background:'var(--md-primary)',animation:'md-pulse 1s ease infinite'}}/>}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
