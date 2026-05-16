@@ -114,6 +114,8 @@ function SideViewSVGInner({ g, showSep, showArches, drawDone }) {
   // Match normPtsToPath layout: fit true car proportions into canvas
   const normW = g.normWidth  ?? g.norm_w  ?? null
   const normH = g.normHeight ?? g.norm_h  ?? null
+  // DEBUG — remove after confirming values
+  console.log('[SideViewSVG] normW=', normW, 'normH=', normH, 'bboxAspect=', bboxAspect, 'trueAspect=', g.trueAspect)
   let dw, dh, ox, oy
   if (normW && normH && normW > 0 && normH > 0) {
     const drawW = W - PAD * 2.5
