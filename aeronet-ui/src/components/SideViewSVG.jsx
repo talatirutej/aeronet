@@ -20,15 +20,20 @@ const FEAT_COLOR = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function normPtsToPath(pts, bboxAspect, cW=W, cH=H, pad=PAD) {
+function normPtsToPath(pts, bboxAspect, cW=W, cH=H, pad=PAD, normW=null, normH=null) {
   if (!pts?.length) return ''
   const aspect = bboxAspect ?? 2.4
   const dw = (cW-pad*2)*0.95
   const dh = Math.min(dw/aspect, cH-pad*2)
   const ox = pad+((cW-pad*2)-dw)/2
   const oy = pad+((cH-pad*2)-dh)/2
+  // If normW/normH provided, scale points to fill the draw box properly.
+  // Aspect-preserving norm: pts.x ∈ [0,normW], pts.y ∈ [0,normH] where normW≤1, normH≤1
+  // Without this, a car with normH=0.18 renders only in the top 18% of dh.
+  const scaleX = (normW && normW > 0) ? dw / normW : dw
+  const scaleY = (normH && normH > 0) ? dh / normH : dh
   return pts.map(([nx,ny],i) =>
-    `${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`
+    `${i===0?'M':'L'}${(ox+nx*scaleX).toFixed(2)},${(oy+ny*scaleY).toFixed(2)}`
   ).join(' ')+' Z'
 }
 
@@ -63,9 +68,9 @@ function SideViewSVGInner({ g, showSep, showArches, drawDone }) {
   const imageW     = g._imageW ?? 1536
   const imageH     = g._imageH ?? 768
 
-  const mainPath = normPtsToPath(mainPts, bboxAspect)
+  const mainPath = normPtsToPath(mainPts, bboxAspect, W, H, PAD, g.normWidth ?? g.norm_w ?? null, g.normHeight ?? g.norm_h ?? null)
   const archPath = g.arch_pts?.length
-    ? normPtsToPath(g.arch_pts, g.arch_bbox_aspect ?? bboxAspect)
+    ? normPtsToPath(g.arch_pts, g.arch_bbox_aspect ?? bboxAspect, W, H, PAD, g.normWidth ?? g.norm_w ?? null, g.normHeight ?? g.norm_h ?? null)
     : ''
   const sepLines = showSep ? buildSepLines(g, bboxAspect) : []
 
