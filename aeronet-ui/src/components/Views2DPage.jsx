@@ -368,7 +368,6 @@ export default function Views2DPage({ backend = '' }) {
         poll=await res.json()
       } catch(e) { setSlot(viewId,{running:false,error:`Connection lost: ${e.message}`}); return }
 
-      // Normalize: backend may use 'stage' (generator field) or 'status' (job wrapper field)
       const pollStatus = poll.status ?? poll.stage
       const pollMsg    = poll.error  ?? poll.msg ?? ''
 
@@ -380,7 +379,6 @@ export default function Views2DPage({ backend = '' }) {
         setSlot(viewId,{progress:{pct:Math.round(pct),msg:`${msg} (${elapsed}s)`,sub}}); continue
       }
 
-      // Also match intermediate 'done' stage events that have no result yet
       if (pollStatus==='done') {
         const result=poll.result
         if (!result?.geometry) { setSlot(viewId,{running:false,error:'No vehicle outline found. Use a clear photo.'}); return }
@@ -426,8 +424,8 @@ export default function Views2DPage({ backend = '' }) {
           symmetryScore:     cg.symmetryScore         ?? null,
           frontalAspect:     cg.frontalAspect         ?? null,
           // ── Contour points ─────────────────────────────────────────────
-          _smoothPts:        result.display_outline_pts ?? result.smooth_pts ?? result.outline_pts ?? result.technical_outline_pts ?? null,
-          _contourPts:       result.technical_outline_pts ?? result.outline_pts ?? result.display_outline_pts ?? result.smooth_pts ?? null,
+          _smoothPts:        result.display_outline_pts ?? result.smooth_pts_display ?? result.smooth_pts ?? result.outline_pts ?? result.technical_outline_pts ?? null,
+          _contourPts:       result.technical_outline_pts ?? result.smooth_pts_2k ?? result.outline_pts ?? result.display_outline_pts ?? result.smooth_pts_display ?? result.smooth_pts ?? null,
           _bboxAspect:       result.bbox ? result.bbox.w/Math.max(1,result.bbox.h) : undefined,
           _keypoints:        result.keypoints,
           _method:           result.method,
