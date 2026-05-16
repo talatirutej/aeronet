@@ -556,6 +556,34 @@ export default function Views2DPage({ backend = '' }) {
     document.body.appendChild(a); a.click(); document.body.removeChild(a)
   }
 
+  const exportTransparentPNG = async () => {
+    const geo = getSlot(activeView).geo
+    if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
+    // bg:false = transparent background SVG
+    const svgStr = _buildOutlineSVG(geo, {strokeColor:'#000000', strokeWidth:4, bg:false})
+    if (!svgStr) return
+    const wMatch = svgStr.match(/width="(\d+)"/)
+    const hMatch = svgStr.match(/height="(\d+)"/)
+    const CW = wMatch ? parseInt(wMatch[1]) : 1600
+    const CH = hMatch ? parseInt(hMatch[1]) : 700
+    const img = new window.Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width  = CW * 2
+      canvas.height = CH * 2
+      const ctx = canvas.getContext('2d')
+      // Do NOT fill background — leaves canvas transparent
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      canvas.toBlob(blob => {
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = `aeronet_outline_${activeView}_transparent.png`
+        document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      }, 'image/png')
+    }
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)))
+  }
+
   // ── Derived ─────────────────────────────────────────────────────────────────
 
   const activeSlot    = getSlot(activeView)
@@ -904,8 +932,14 @@ export default function Views2DPage({ backend = '' }) {
             <button className="md-btn-outlined"
               style={{height:36,fontSize:12,padding:'0 14px',borderColor:copyDone?'var(--md-success)':'var(--md-outline)',color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)'}}
               onClick={copyOutline} disabled={!geo}
-              title="Download PNG — paste into Word, Slides, or Docs">
-              {copyDone?'✓ Downloaded':'⎘ Copy PNG'}
+              title="Download PNG with white background">
+              {copyDone?'✓ Downloaded':'⎘ PNG'}
+            </button>
+            <button className="md-btn-outlined"
+              style={{height:36,fontSize:12,padding:'0 14px'}}
+              onClick={exportTransparentPNG} disabled={!geo}
+              title="Download transparent PNG — layer over anything in PowerPoint or Keynote">
+              ⎘ PNG (transparent)
             </button>
           </div>
         )}
