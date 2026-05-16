@@ -52,7 +52,7 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
   const sketchRef = useRef(null)
   const rafRef    = useRef(null)
   const timerRef  = useRef([])
-  const pctRef    = useRef(pct)   // Fix: keep pct current inside RAF loop closure
+  const pctRef    = useRef(pct)   // keeps pct current inside RAF loop closure
   const stRef     = useRef({
     t:0, pistonT:0, crankAngle:0, shakeX:0, shakeY:0,
     flashAlpha:0, rpmVal:800,
@@ -61,15 +61,20 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
     prevPct:-1,
   })
 
-  // Run once on mount / visibility change — use ResizeObserver to get real dims
+  // Keep pctRef in sync so the RAF loop always reads the latest value
+  useEffect(() => { pctRef.current = pct }, [pct])
+
+  // Main loop lifecycle — runs when visible changes
   useEffect(() => {
-    if (!visible) return
+    if (!visible) { stopLoop(); return }
+
     const S = stRef.current
     S.t=0; S.pistonT=0; S.crankAngle=0; S.shakeX=0; S.shakeY=0
     S.flashAlpha=0; S.rpmVal=800; S.exploded=false
     S.sketchProgress=0; S.sketching=false; S.prevPct=-1
-    S.debris.length=0; S.smoke.length=0; S.sparks.length=0
-    S.drops.length=0; S.expParts.length=0
+    S.debris=[]; S.smoke=[]; S.sparks=[]; S.drops=[]; S.expParts=[]
+
+    stopLoop() // cancel any existing loop before starting a new one
 
     // Wait for layout then start — ResizeObserver fires once element has real size
     const ro = new ResizeObserver((entries) => {
@@ -86,14 +91,11 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
     return () => { ro.disconnect(); stopLoop() }
   }, [visible]) // eslint-disable-line
 
-  // Keep pctRef in sync so the RAF loop always reads the latest value
-  useEffect(() => { pctRef.current = pct }, [pct])
-
   // React to pct changes — trigger sketch at 100
   useEffect(() => {
     if (!visible) return
     const S = stRef.current
-    if (pct >= 100 && !S.sketching && !S.exploded) {
+    if (pct >= 100 && S.debris && !S.sketching && !S.exploded) {
       triggerExplosion()
       setTimeout(() => { S.sketching = true }, 900)
     }
@@ -201,26 +203,26 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
       for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke() }
 
       // Drops
-      S.drops.forEach(d => {
+      S.drops?.forEach(d => {
         d.vy += .1; d.y += d.vy
         if (d.y > H + 10) d.dead = true
         else { ctx.beginPath(); ctx.arc(d.x,d.y,d.r,0,Math.PI*2); ctx.fillStyle='rgba(12,6,0,.65)'; ctx.fill() }
       })
-      S.drops = S.drops.filter(d => !d.dead)
+      if (S.drops) S.drops = S.drops.filter(d => !d.dead)
 
       // Smoke
-      S.smoke.forEach(s => {
+      S.smoke?.forEach(s => {
         s.x += s.vx; s.y += s.vy; s.r += .35; s.alpha -= .003
         if (s.alpha <= 0) s.dead = true
         else { ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fillStyle=`rgba(70,70,70,${s.alpha})`; ctx.fill() }
       })
-      S.smoke = S.smoke.filter(s => !s.dead)
+      if (S.smoke) S.smoke = S.smoke.filter(s => !s.dead)
 
       // Engine body
       if (!S.exploded) drawEngine(ctx, EX + S.shakeX, EY + S.shakeY, S, phase, W, H)
 
       // Sparks
-      S.sparks.forEach(s => {
+      S.sparks?.forEach(s => {
         s.vy += .22; s.x += s.vx; s.y += s.vy; s.life -= .055
         if (s.life <= 0) s.dead = true
         else {
@@ -229,17 +231,17 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
           ctx.lineWidth=1.5; ctx.lineCap='round'; ctx.stroke()
         }
       })
-      S.sparks = S.sparks.filter(s => !s.dead)
+      if (S.sparks) S.sparks = S.sparks.filter(s => !s.dead)
 
       // Debris
-      S.debris.forEach(d => {
+      S.debris?.forEach(d => {
         d.vy += .22; d.x += d.vx; d.y += d.vy; d.rot += d.vrot
         if (d.y > H + 60) d.dead = true; else drawDebris(ctx, d, EX, EY)
       })
-      S.debris = S.debris.filter(d => !d.dead)
+      if (S.debris) S.debris = S.debris.filter(d => !d.dead)
 
       // Explosion particles
-      S.expParts.forEach(p => {
+      S.expParts?.forEach(p => {
         p.trail.push({x: p.x + EX, y: p.y + EY})
         if (p.trail.length > 10) p.trail.shift()
         p.vy += .18; p.x += p.vx; p.y += p.vy; p.vx *= .97
@@ -255,7 +257,7 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
         ctx.beginPath(); ctx.arc(p.x+EX, p.y+EY, p.r, 0, Math.PI*2)
         ctx.fillStyle = `rgba(${p.col},${p.alpha})`; ctx.fill()
       })
-      S.expParts = S.expParts.filter(p => !p.dead)
+      if (S.expParts) S.expParts = S.expParts.filter(p => !p.dead)
 
       // Flash
       if (S.flashAlpha > 0) {
