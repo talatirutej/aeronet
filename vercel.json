@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/hf/:path*",
+      "destination": "https://rutejtalati16-aeronet.hf.space/:path*"
+    }
+  ]
+}
