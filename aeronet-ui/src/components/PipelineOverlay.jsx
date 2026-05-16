@@ -18,6 +18,7 @@ const STAGE_COL = {
 }
 
 function getStagePct(stage, pct) {
+  if (!stage?.pct) return 0
   const [s0, s1] = stage.pct
   if (pct <= s0) return 0
   if (pct >= s1) return 100
@@ -51,6 +52,7 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
   const sketchRef = useRef(null)
   const rafRef    = useRef(null)
   const timerRef  = useRef([])
+  const pctRef    = useRef(pct)   // Fix: keep pct current inside RAF loop closure
   const stRef     = useRef({
     t:0, pistonT:0, crankAngle:0, shakeX:0, shakeY:0,
     flashAlpha:0, rpmVal:800,
@@ -83,6 +85,9 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
 
     return () => { ro.disconnect(); stopLoop() }
   }, [visible]) // eslint-disable-line
+
+  // Keep pctRef in sync so the RAF loop always reads the latest value
+  useEffect(() => { pctRef.current = pct }, [pct])
 
   // React to pct changes — trigger sketch at 100
   useEffect(() => {
@@ -150,13 +155,14 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
       const S = stRef.current
       S.t += 0.016
 
-      // Derive engine phase from pct
+      // Derive engine phase from pctRef.current (fixes stale closure bug)
+      const livePct = pctRef.current ?? 0
       const phase =
-        pct < 8  ? 0 :
-        pct < 18 ? 1 :
-        pct < 46 ? 2 :
-        pct < 84 ? 3 :
-        pct < 100 ? 4 : 5
+        livePct < 8  ? 0 :
+        livePct < 18 ? 1 :
+        livePct < 46 ? 2 :
+        livePct < 84 ? 3 :
+        livePct < 100 ? 4 : 5
 
       const spd = 0.055 + phase * 0.028
       S.pistonT    += phase < 5 ? spd : 0
@@ -513,7 +519,7 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
   if (!visible) return null
 
   // Stage fill values
-  const stagePcts = stages.map(s => ({ ...s, fill: getStagePct(s, pct) }))
+  const stagePcts = (stages ?? []).map(s => ({ ...s, fill: getStagePct(s, pct) }))
 
   return (
     <div ref={wrapRef} style={{
