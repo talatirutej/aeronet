@@ -421,8 +421,8 @@ export default function Views2DPage({ backend = '' }) {
           symmetryScore:     cg.symmetryScore         ?? null,
           frontalAspect:     cg.frontalAspect         ?? null,
           // ── Contour points ─────────────────────────────────────────────
-          _smoothPts:        result.display_outline_pts  ?? result.smooth_pts  ?? null,
-          _contourPts:       result.technical_outline_pts ?? result.outline_pts ?? null,
+          _smoothPts:        result.display_outline_pts ?? result.smooth_pts ?? result.outline_pts ?? result.technical_outline_pts ?? null,
+          _contourPts:       result.technical_outline_pts ?? result.outline_pts ?? result.display_outline_pts ?? result.smooth_pts ?? null,
           _bboxAspect:       result.bbox ? result.bbox.w/Math.max(1,result.bbox.h) : undefined,
           _keypoints:        result.keypoints,
           _method:           result.method,
@@ -445,8 +445,8 @@ export default function Views2DPage({ backend = '' }) {
           CdA:               cg.CdA                  ?? null,
         }
 
-        setSlot(viewId,{running:false,progress:{pct:0,msg:'',sub:''},geo,isDrawing:true,drawDone:false})
-        setTimeout(()=>setSlot(viewId,{isDrawing:false,drawDone:true}),2600)
+        // Skip animation delay — set drawDone immediately so outline renders right away
+        setSlot(viewId,{running:false,progress:{pct:0,msg:'',sub:''},geo,isDrawing:false,drawDone:true})
         return
       }
     }
@@ -480,7 +480,8 @@ export default function Views2DPage({ backend = '' }) {
 
   const copyOutline = async () => {
     const geo = getSlot(activeView).geo
-    if (!geo?._contourPts && !geo?._smoothPts) return
+    const _hasPoints = geo?._smoothPts?.length || geo?._contourPts?.length
+    if (!_hasPoints) return
     const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true})
     if (!svgStr) return
     const CW=1600,CH=700
@@ -510,7 +511,7 @@ export default function Views2DPage({ backend = '' }) {
 
   const exportOutlineSVG = () => {
     const geo=getSlot(activeView).geo
-    if (!geo?._contourPts&&!geo?._smoothPts) return
+    if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
     const svgStr=_buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:2.5,bg:false})
     if (!svgStr) return
     const a=document.createElement('a')
@@ -866,7 +867,7 @@ export default function Views2DPage({ backend = '' }) {
               title="Download black outline SVG — insert into Word via Insert → Pictures">↓ Outline</button>
             <button className="md-btn-outlined"
               style={{height:36,fontSize:12,padding:'0 14px',borderColor:copyDone?'var(--md-success)':'var(--md-outline)',color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)'}}
-              onClick={copyOutline} disabled={!drawDone}
+              onClick={copyOutline} disabled={!geo}
               title="Download PNG — paste into Word, Slides, or Docs">
               {copyDone?'✓ Downloaded':'⎘ Copy PNG'}
             </button>
