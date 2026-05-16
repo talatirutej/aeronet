@@ -468,14 +468,43 @@ export default function Views2DPage({ backend = '' }) {
   const _buildOutlineSVG = (geo, {strokeColor='#111111',strokeWidth=3,bg=true}={}) => {
     const pts = geo._smoothPts ?? geo._contourPts
     if (!pts?.length) return null
-    const bboxAspect = geo._bboxAspect ?? geo.trueAspect ?? 2.4
-    const CW=1600,CH=700,PAD=48
-    const dw=(CW-PAD*2)*0.95, dh=Math.min(dw/bboxAspect,CH-PAD*2)
-    const ox=PAD+((CW-PAD*2)-dw)/2, oy=PAD+((CH-PAD*2)-dh)/2
-    const d=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`).join(' ')+' Z'
+
+    const normW = geo.normWidth  ?? geo.norm_w  ?? null
+    const normH = geo.normHeight ?? geo.norm_h  ?? null
+    const PAD = 60
+
+    let CW, CH, d
+    if (normW && normH && normW > 0 && normH > 0) {
+      // Size the output canvas to the car's true aspect ratio — no dead space.
+      // Fix long edge to 1600px, derive other edge from true proportions.
+      const trueAspect = normW / normH   // e.g. 3.2 for a saloon
+      if (trueAspect >= 1) {
+        CW = 1600
+        CH = Math.round(CW / trueAspect) + PAD * 2
+      } else {
+        CH = 1600
+        CW = Math.round(CH * trueAspect) + PAD * 2
+      }
+      // Map [0,normW]→[PAD, CW-PAD],  [0,normH]→[PAD, CH-PAD]
+      const scaleX = (CW - PAD * 2) / normW
+      const scaleY = (CH - PAD * 2) / normH
+      d = pts.map(([nx,ny],i) =>
+        `${i===0?'M':'L'}${(PAD + nx*scaleX).toFixed(2)},${(PAD + ny*scaleY).toFixed(2)}`
+      ).join(' ') + ' Z'
+    } else {
+      // Fallback: old behaviour for missing norm metadata
+      const bboxAspect = geo._bboxAspect ?? geo.trueAspect ?? 2.4
+      CW = 1600; CH = 700
+      const dw = (CW-PAD*2)*0.95, dh = Math.min(dw/bboxAspect, CH-PAD*2)
+      const ox = PAD+((CW-PAD*2)-dw)/2, oy = PAD+((CH-PAD*2)-dh)/2
+      d = pts.map(([nx,ny],i) =>
+        `${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`
+      ).join(' ') + ' Z'
+    }
+
     return (
       `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
-      (bg?`<rect width="${CW}" height="${CH}" fill="white"/>`:'') +
+      (bg ? `<rect width="${CW}" height="${CH}" fill="white"/>` : '') +
       `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round"/>` +
       `</svg>`
     )
@@ -487,7 +516,11 @@ export default function Views2DPage({ backend = '' }) {
     if (!_hasPoints) return
     const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true})
     if (!svgStr) return
-    const CW=1600,CH=700
+    // Extract actual dimensions from the generated SVG (aspect-correct, not hardcoded)
+    const wMatch = svgStr.match(/width="(\d+)"/)
+    const hMatch = svgStr.match(/height="(\d+)"/)
+    const CW = wMatch ? parseInt(wMatch[1]) : 1600
+    const CH = hMatch ? parseInt(hMatch[1]) : 700
     const renderPNG = () => new Promise((resolve,reject) => {
       const img=new window.Image()
       img.onload=()=>{
