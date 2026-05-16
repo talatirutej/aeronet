@@ -998,7 +998,7 @@ export default function Views2DPage({ backend = '' }) {
           {/* Normal view */}
           {!compareMode && (
             <>
-              <PipelineOverlay visible={isRunning} pct={traceProgress.pct} msg={traceProgress.msg} sub={traceProgress.sub} stages={STAGES}/>
+              <PipelineOverlay visible={isRunning} pct={traceProgress.pct ?? 0} msg={traceProgress.msg ?? ''} sub={traceProgress.sub ?? ''} stages={STAGES ?? []}/>
 
               {!geo && !isRunning && (
                 <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16}}>
