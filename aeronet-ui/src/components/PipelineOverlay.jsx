@@ -70,14 +70,16 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
     const start = () => {
       const cv = canvasRef.current
       if (!cv) return
-      const W = wrapRef.current?.offsetWidth || 680
-      const H = wrapRef.current?.offsetHeight || 360
+      const rect = wrapRef.current.getBoundingClientRect()
+      const W = Math.round(rect.width)  || 680
+      const H = Math.round(rect.height) || 360
       cv.width = W * 2; cv.height = H * 2
       cv.style.width = W + 'px'; cv.style.height = H + 'px'
       const ctx = cv.getContext('2d'); ctx.scale(2, 2)
 
       const EX = W / 2, EY = H / 2 + 10
       const pistonPhases = [0, Math.PI / 2, Math.PI, Math.PI * 1.5]
+      const scale = Math.max(0.75, Math.min(W / 680, H / 360) * 1.5)
 
       function loop() {
         rafRef.current = requestAnimationFrame(loop)
@@ -116,6 +118,7 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
 
         ctx.save()
         ctx.translate(EX, EY)
+        ctx.scale(scale, scale)
 
         // ─────────────────────────────────────────────────────────────────
         // ENGINE COMPONENTS — drawn back to front
@@ -607,7 +610,7 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
       </div>
 
       {/* Canvas */}
-      <div ref={wrapRef} style={{ flex:1, position:'relative', overflow:'hidden', minHeight:0 }}>
+      <div ref={wrapRef} style={{ flex:1, position:'relative', overflow:'hidden', minHeight:0, width:'100%' }}>
         <canvas ref={canvasRef} style={{ position:'absolute', top:0, left:0, width:'100%', height:'100%', display:'block' }}/>
 
         {/* msg */}
