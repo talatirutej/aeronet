@@ -59,18 +59,29 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
     prevPct:-1,
   })
 
-  // Run once on mount / visibility change
+  // Run once on mount / visibility change — use ResizeObserver to get real dims
   useEffect(() => {
     if (!visible) return
     const S = stRef.current
-    // Reset
     S.t=0; S.pistonT=0; S.crankAngle=0; S.shakeX=0; S.shakeY=0
     S.flashAlpha=0; S.rpmVal=800; S.exploded=false
     S.sketchProgress=0; S.sketching=false; S.prevPct=-1
     S.debris.length=0; S.smoke.length=0; S.sparks.length=0
     S.drops.length=0; S.expParts.length=0
-    startLoop()
-    return () => stopLoop()
+
+    // Wait for layout then start — ResizeObserver fires once element has real size
+    const ro = new ResizeObserver((entries) => {
+      if (entries[0].contentRect.width > 0) {
+        ro.disconnect()
+        stopLoop()
+        startLoop()
+      }
+    })
+    if (wrapRef.current) ro.observe(wrapRef.current)
+    // Fallback if already sized
+    if (wrapRef.current?.offsetWidth > 0) { ro.disconnect(); startLoop() }
+
+    return () => { ro.disconnect(); stopLoop() }
   }, [visible]) // eslint-disable-line
 
   // React to pct changes — trigger sketch at 100
@@ -123,9 +134,8 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
     const scv = sketchRef.current
     if (!ecv || !scv) return
 
-    const rect = ecv.getBoundingClientRect()
-    const W = rect.width || 680
-    const H = rect.height || 380
+    const W = wrapRef.current?.offsetWidth  || ecv.offsetWidth  || 680
+    const H = wrapRef.current?.offsetHeight || ecv.offsetHeight || 380
     ;[ecv, scv].forEach(c => {
       c.width = W * 2; c.height = H * 2
       c.style.width = W + 'px'; c.style.height = H + 'px'
@@ -510,11 +520,12 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
       position:'absolute', inset:0, zIndex:20,
       background:'#080808',
       display:'flex', flexDirection:'column',
+      width:'100%', height:'100%',
     }}>
       {/* Engine canvas */}
-      <div style={{flex:1, position:'relative', overflow:'hidden'}}>
-        <canvas ref={engRef} style={{position:'absolute',inset:0,width:'100%',height:'100%'}}/>
-        <canvas ref={sketchRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',opacity:0,transition:'opacity 0.6s'}}/>
+      <div style={{flex:1, position:'relative', overflow:'hidden', minHeight:0}}>
+        <canvas ref={engRef} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',display:'block'}}/>
+        <canvas ref={sketchRef} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',display:'block',opacity:0,transition:'opacity 0.6s'}}/>
 
         {/* MSG overlay */}
         <div style={{
