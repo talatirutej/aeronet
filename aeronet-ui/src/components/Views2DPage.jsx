@@ -1,1072 +1,610 @@
-// Views2DPage.jsx — AeroNet Vehicle Outline Analysis + Benchmarking
-// Copyright (c) 2026 Rutej Talati / statinsite.com
+// PipelineOverlay.jsx — AeroNet Engine Destruction Loading Animation
+// Copyright (c) 2026 Rutej Talati. All rights reserved.
 //
-// Updated:
-//   - Compare mode: overlay two car outlines with alignment controls
-//   - New geo fields: normWidth, normHeight, trueAspect, bodyType,
-//     wasFlipped, roofFlatness, aPillarAngle, underbodyFlatness,
-//     greenhouseRatio, wheelbaseNorm, convexityScore
-//   - Fixed copy/export: downloads PNG with white background + black stroke
-//   - Benchmarking sidebar: proportion metrics with visual bars
-//   - M3 black/white theme throughout
+// Props (unchanged API — drop-in replacement):
+//   visible  — boolean, show/hide
+//   pct      — 0-100, drives engine phase + stage bars
+//   msg      — current stage message
+//   sub      — subtitle
+//   stages   — [{id,label,icon,pct:[start,end]}, ...]
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import SideViewSVG     from './SideViewSVG.jsx'
-import FrontViewSVG    from './FrontViewSVG.jsx'
-import TopViewSVG      from './TopViewSVG.jsx'
-import PipelineOverlay from './PipelineOverlay.jsx'
-import SimulationModal from './SimulationModal.jsx'
-import CompareOverlay  from './CompareOverlay.jsx'
+import { useEffect, useRef } from 'react'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────────────────────────
+// Stage colour map
+const STAGE_COL = {
+  prep:'#22cc55', rmbg:'#22cc55', yolo:'#0a84ff',
+  sam3:'#ff9f0a', contour:'#ff9f0a', enh:'#ff453a',
+  keys:'#bf5af2', cfd:'#bf5af2', done:'#30d158',
+}
 
-const VIEWS = [
-  { id:'side',  label:'Side',  icon:'▭', fullLabel:'Side View'  },
-  { id:'front', label:'Front', icon:'◈', fullLabel:'Front View' },
-  { id:'top',   label:'Top',   icon:'⊟', fullLabel:'Top View'   },
-  { id:'rear',  label:'Rear',  icon:'◧', fullLabel:'Rear View'  },
+function getStagePct(stage, pct) {
+  if (!stage?.pct) return 0
+  const [s0, s1] = stage.pct
+  if (pct <= s0) return 0
+  if (pct >= s1) return 100
+  return Math.round((pct - s0) / (s1 - s0) * 100)
+}
+
+// Car outline points (normalised saloon silhouette)
+const CAR_BODY = [
+  [.04,.72],[.06,.58],[.10,.48],[.16,.38],[.24,.28],[.32,.20],[.42,.16],
+  [.58,.16],[.68,.20],[.76,.28],[.82,.36],[.86,.44],[.88,.52],[.89,.60],
+  [.89,.72],[.82,.72],[.76,.72],[.68,.72],[.58,.72],[.48,.72],[.38,.72],
+  [.28,.72],[.18,.72],[.10,.72],[.04,.72],
+]
+const CAR_SILL = [
+  [.10,.72],[.12,.66],[.16,.64],[.28,.62],[.38,.62],[.48,.62],
+  [.58,.62],[.68,.64],[.76,.66],[.82,.72],
+]
+const CAR_WIN = [
+  [.24,.28],[.28,.22],[.36,.17],[.48,.16],[.60,.16],[.68,.20],
+  [.72,.26],[.72,.44],[.60,.46],[.48,.46],[.36,.46],[.28,.46],[.24,.28],
+]
+const CAR_LINES = [
+  { pts: CAR_BODY, col: '#c8ffc8', w: 2.2, lbl: 'BODY OUTLINE' },
+  { pts: CAR_SILL, col: '#44aa44', w: 1.0, lbl: 'SILL LINE'    },
+  { pts: CAR_WIN,  col: '#4488cc', w: 1.2, lbl: 'GREENHOUSE'   },
 ]
 
-const STAGES = [
-  { id:'prep',    label:'Preprocess', icon:'⚙',  pct:[0,  8]  },
-  { id:'rmbg',   label:'RMBG 2.0',   icon:'◉',  pct:[8,  18] },
-  { id:'yolo',   label:'YOLO11',     icon:'◎',  pct:[18, 32] },
-  { id:'sam3',   label:'SAM3',       icon:'⬡',  pct:[32, 46] },
-  { id:'contour',label:'Contour',    icon:'✦',  pct:[46, 60] },
-  { id:'enh',    label:'Enhance',    icon:'◈',  pct:[60, 74] },
-  { id:'keys',   label:'Keypoints',  icon:'⊞',  pct:[74, 84] },
-  { id:'cfd',    label:'Geometry',   icon:'◈',  pct:[84, 92] },
-  { id:'done',   label:'Complete',   icon:'✓',  pct:[92,100] },
-]
-
-const BACKEND_MSGS = [
-  [0,  'Stage 0a: EXIF fix, canvas margin, resize to 1536px…',         'Input normalisation'],
-  [8,  'Stage 0b: RMBG 2.0 — foreground extraction…',                  'Separating car from background'],
-  [18, 'Stage 1: YOLO11x-seg — vehicle detection…',                    '10% bbox padding applied'],
-  [32, 'Stage 2: SAM3 point-prompted mask refinement…',                '5 fg + 4 bg prompt points'],
-  [46, 'Stage 3-5: morph close → contour → Canny snap…',              'Constrained to ±5px boundary band'],
-  [60, 'Stage 7: Wheel arch detection + smoothing…',                   'Hough on distance transform'],
-  [68, 'Stage 7c: Catmull-Rom spline (120sps, 2× Chaikin)…',          'Maximum smoothing'],
-  [74, 'Stage 8: Hough wheel geometry…',                               'Wheel centre + radius'],
-  [84, 'Stage 9: Aspect-ratio-preserving normalisation…',              'True proportions preserved'],
-  [88, 'Stage 9: Orientation detection + benchmarking geometry…',      '15 proportion metrics'],
-  [92, 'Quality scoring — convexity + 9 other signals…',              'Checking outline quality'],
-  [97, 'Finalising SVG, engineering exports…',                         'Complete — rendering'],
-]
-
-const FEAT_COLOR = {
-  antenna: '#FFB74D',
-  mirror:  '#81C784',
-  spoiler: '#E0E0E0',
-  wiper:   '#CE93D8',
-  detail:  'rgba(255,255,255,0.45)',
-}
-
-const BODY_TYPE_ICONS = {
-  sports:'🏎', saloon:'🚗', hatchback:'🚙', estate:'🚙',
-  suv:'🛻', mpv:'🚐', coupe:'🚗', pickup:'🛻',
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// IMAGE UTILITIES
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function prepareImage(file, maxWidth = 1440) {
-  return new Promise((resolve) => {
-    const img = new window.Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      const scale = Math.min(1.0, maxWidth / Math.max(img.width, 900))
-      const w = Math.round(img.width  * Math.max(scale, 900/img.width))
-      const h = Math.round(img.height * Math.max(scale, 900/img.width))
-      const canvas = document.createElement('canvas')
-      canvas.width = w; canvas.height = h
-      const ctx = canvas.getContext('2d')
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,w,h)
-      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
-      ctx.drawImage(img,0,0,w,h)
-      canvas.toBlob(
-        blob => resolve(new File([blob], file.name.replace(/\.[^.]+$/,'.png'), {type:'image/png'})),
-        'image/png'
-      )
-    }
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
-    img.src = url
-  })
-}
-
-async function fetchImageFromUrl(url) {
-  const proxies = [
-    u => u,
-    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-  ]
-  for (const proxy of proxies) {
-    try {
-      const r = await fetch(proxy(url), { signal: AbortSignal.timeout(8000) })
-      if (!r.ok) continue
-      const blob = await r.blob()
-      if (!blob.type.startsWith('image/') && !blob.type.includes('octet')) continue
-      const filename = url.split('/').pop()?.split('?')[0] || 'car.png'
-      return new File([blob], filename, { type: blob.type.startsWith('image/') ? blob.type : 'image/png' })
-    } catch { continue }
-  }
-  throw new Error('Could not fetch image — download and upload directly')
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SUBCOMPONENTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-function SL({ n, t }) {
-  return (
-    <div className="md-section-header">
-      <span className="md-section-number">{n}</span>
-      <div className="md-section-divider"/>
-      <span className="md-section-title">{t}</span>
-    </div>
-  )
-}
-
-function DropZone({ viewId, label, icon, file, onFile }) {
-  const [drag, setDrag] = useState(false)
-  const inputRef = useRef(null)
-  const handleDrop = e => {
-    e.preventDefault(); setDrag(false)
-    const f = e.dataTransfer.files?.[0]
-    if (f?.type.startsWith('image/')) onFile(viewId, f)
-  }
-  return (
-    <div className="md-dropzone" data-drag={drag} data-has-file={!!file}
-      onClick={() => inputRef.current?.click()}
-      onDragOver={e=>{e.preventDefault();setDrag(true)}}
-      onDragLeave={()=>setDrag(false)}
-      onDrop={handleDrop}>
-      <input ref={inputRef} type="file" accept="image/*" style={{display:'none'}}
-        onChange={e=>{const f=e.target.files?.[0];if(f)onFile(viewId,f)}}/>
-      {file && <div style={{position:'absolute',top:8,right:8,width:8,height:8,borderRadius:'50%',background:'var(--md-success)'}}/>}
-      <div style={{fontSize:28,color:file?'var(--md-success)':'var(--md-on-surface-disabled)'}}>{file?'✓':icon}</div>
-      <div style={{fontSize:12,fontWeight:500,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px'}}>{label}</div>
-      <div style={{fontSize:11,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-sans)'}}>
-        {file ? file.name.slice(0,18)+(file.name.length>18?'…':'') : 'drop or click'}
-      </div>
-    </div>
-  )
-}
-
-function OutlineThumbnail({ geo, label, icon, isActive, onClick }) {
-  const TW=96,TH=48,TP=5
-  const pts = geo?._smoothPts ?? geo?._contourPts ?? []
-  let pathD=''
-  if (pts.length>10) {
-    const aspect = geo._bboxAspect ?? geo.trueAspect ?? 2.2
-    const dw=(TW-TP*2)*0.93, dh=Math.min(dw/aspect,TH-TP*2)
-    const ox=TP+((TW-TP*2)-dw)/2, oy=TP+((TH-TP*2)-dh)/2
-    pathD=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`).join(' ')+' Z'
-  }
-  return (
-    <button onClick={onClick} style={{
-      display:'flex',alignItems:'center',gap:10,width:'100%',
-      padding:'8px 10px',borderRadius:12,cursor:'pointer',
-      border:`1px solid ${isActive?'var(--md-primary)':'var(--md-outline-variant)'}`,
-      background:isActive?'var(--md-primary-container)':'var(--md-surface-container-low)',
-      transition:'all 0.2s',marginBottom:4,
-    }}>
-      <div className="md-card-filled" style={{width:TW,height:TH,flexShrink:0,overflow:'hidden'}}>
-        <svg viewBox={`0 0 ${TW} ${TH}`} width={TW} height={TH}>
-          <rect width={TW} height={TH} fill="var(--md-surface-container-highest)"/>
-          {pathD
-            ? <path d={pathD} fill="none" stroke={isActive?'var(--md-primary)':'rgba(255,255,255,0.55)'} strokeWidth="1" strokeLinejoin="round" strokeLinecap="round"/>
-            : <text x={TW/2} y={TH/2+4} textAnchor="middle" fill="var(--md-on-surface-disabled)" fontSize="9" fontFamily="var(--font-sans)">{icon}</text>
-          }
-        </svg>
-      </div>
-      <div style={{flex:1,textAlign:'left',minWidth:0}}>
-        <div style={{fontSize:13,fontWeight:500,color:isActive?'var(--md-on-primary-container)':'var(--md-on-surface)',fontFamily:'var(--font-sans)',marginBottom:2}}>
-          {label}
-        </div>
-        <div style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-mono)'}}>
-          {geo
-            ? `${geo._contourPts?.length??0}pt · ${geo.bodyType??geo._method??'—'}`
-            : 'not analysed'
-          }
-        </div>
-      </div>
-      {geo && (
-        <div style={{width:8,height:8,borderRadius:'50%',flexShrink:0,
-          background:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)'}}/>
-      )}
-    </button>
-  )
-}
-
-function RearViewSVG({ g }) {
-  const W=300,H=220,cx=W/2,gY=H-14
-  const wheels=g?._keypoints?.wheels??[]
-  const wsAngle=g?.wsAngleDeg??55
-  const bh=Math.round(Math.min(120,Math.max(75,(g?.cabinH??0.58)*H*1.1)))
-  const bw=Math.round(Math.min(120,Math.max(70,0.50*W)))
-  const bodyBot=gY-bh*0.06,bodyTop=bodyBot-bh
-  const roofNarrow=Math.max(0.28,Math.min(0.46,0.38-(wsAngle-55)*0.003))
-  const roofHW=bw*roofNarrow,shoulderHW=bw*0.50,sillHW=bw*0.46
-  const shoulderY=bodyTop+bh*0.55,sillY=bodyTop+bh*0.92
-  const rearPath=[
-    `M ${cx} ${bodyTop}`,
-    `C ${cx-roofHW*0.6} ${bodyTop} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,
-    `C ${cx-shoulderHW} ${shoulderY+bh*0.12} ${cx-sillHW} ${sillY} ${cx-sillHW*0.80} ${bodyBot}`,
-    `L ${cx+sillHW*0.80} ${bodyBot}`,
-    `C ${cx+sillHW} ${sillY} ${cx+shoulderHW} ${shoulderY+bh*0.12} ${cx+shoulderHW} ${shoulderY}`,
-    `C ${cx+shoulderHW} ${shoulderY-bh*0.22} ${cx+roofHW*0.6} ${bodyTop} ${cx} ${bodyTop}`,
-    'Z',
-  ].join(' ')
-  const wR=wheels.length>=1?Math.max(12,Math.min(22,wheels[0].r/800*W*0.9)):15
-  const w1x=cx-shoulderHW*1.05,w2x=cx+shoulderHW*1.05,wY=gY-wR
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
-      <rect width={W} height={H} fill="var(--md-surface)"/>
-      <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="var(--md-outline-variant)" strokeWidth="1"/>
-      <path d={rearPath} fill="none" stroke="var(--md-primary)" strokeWidth="1.2"/>
-      {[[w1x,wY],[w2x,wY]].map(([wx,wy],i)=>(
-        <g key={i}>
-          <circle cx={wx} cy={wy} r={wR} fill="none" stroke="var(--md-primary)" strokeWidth="1.2"/>
-          <circle cx={wx} cy={wy} r={wR*0.5} fill="none" stroke="var(--md-outline)" strokeWidth="0.8"/>
-        </g>
-      ))}
-      <text x={cx} y={H-6} textAnchor="middle" fill="var(--md-on-surface-disabled)"
-        fontSize="9" fontFamily="var(--font-mono)" letterSpacing=".12em">REAR</text>
-    </svg>
-  )
-}
-
-// Proportion bar for benchmarking sidebar
-function PropBar({ label, valA, valB, colorA='#E0E0E0', colorB='#FFB74D', unit='', decimals=2 }) {
-  if (valA==null) return null
-  const max = Math.max(Math.abs(valA), valB!=null?Math.abs(valB):0, 0.001)
-  const wA  = (Math.abs(valA)/max)*100
-  const wB  = valB!=null ? (Math.abs(valB)/max)*100 : null
-  return (
-    <div style={{marginBottom:8}}>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:2}}>
-        <span style={{fontSize:10,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-mono)'}}>{label}</span>
-        <div style={{display:'flex',gap:8}}>
-          <span style={{fontSize:10,color:colorA,fontFamily:'var(--font-mono)',fontWeight:600}}>{valA.toFixed(decimals)}{unit}</span>
-          {valB!=null && <span style={{fontSize:10,color:colorB,fontFamily:'var(--font-mono)',fontWeight:600}}>{valB.toFixed(decimals)}{unit}</span>}
-        </div>
-      </div>
-      <div style={{height:4,background:'var(--md-surface-container-highest)',borderRadius:2,overflow:'hidden',marginBottom:valB!=null?2:0}}>
-        <div style={{height:'100%',width:`${wA}%`,background:colorA,borderRadius:2,opacity:0.8}}/>
-      </div>
-      {valB!=null && (
-        <div style={{height:4,background:'var(--md-surface-container-highest)',borderRadius:2,overflow:'hidden'}}>
-          <div style={{height:'100%',width:`${wB}%`,background:colorB,borderRadius:2,opacity:0.8}}/>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN
-// ─────────────────────────────────────────────────────────────────────────────
-
-const EMPTY_SLOT = {file:null,geo:null,running:false,progress:{pct:0,msg:'',sub:''},drawDone:false,isDrawing:false,error:null}
-
-export default function Views2DPage({ backend = '' }) {
-  const [slots, setSlots] = useState({
-    side:  {...EMPTY_SLOT},
-    front: {...EMPTY_SLOT},
-    top:   {...EMPTY_SLOT},
-    rear:  {...EMPTY_SLOT},
+export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', stages = [] }) {
+  const wrapRef    = useRef(null)
+  const engRef     = useRef(null)
+  const sketchRef  = useRef(null)
+  const rafRef     = useRef(null)
+  const timerRef   = useRef([])
+  const pctRef     = useRef(pct)      // Fix: keep pct current inside RAF loop closure
+  const visibleRef = useRef(visible)  // Fix: stabilise visible — only react to true transitions
+  const stRef     = useRef({
+    t:0, pistonT:0, crankAngle:0, shakeX:0, shakeY:0,
+    flashAlpha:0, rpmVal:800,
+    debris:[], smoke:[], sparks:[], drops:[], expParts:[],
+    exploded:false, sketchProgress:0, sketching:false,
+    prevPct:-1,
   })
 
-  const [activeView,   setActiveView]   = useState('side')
-  const [analysisMode, setAnalysisMode] = useState('A')
-  const [showSep,      setShowSep]      = useState(true)
-  const [outlineMode,  setOutlineMode]  = useState('smooth') // 'smooth' | 'technical'
-  const [showArches,   setShowArches]   = useState(false)
-  const [compareMode,  setCompareMode]  = useState(false)
-  const [compareB,     setCompareB]     = useState('front')  // which slot is Car B
-  const [copyDone,     setCopyDone]     = useState(false)
-  const [showSimModal, setShowSimModal] = useState(false)
-  const [urlMode,      setUrlMode]      = useState(false)
-  const [urlInput,     setUrlInput]     = useState('')
-  const [urlError,     setUrlError]     = useState('')
-  const svgRef = useRef(null)
-
-  const getSlot = id => slots[id]
-  const setSlot = (id, patch) => setSlots(p => ({...p,[id]:{...p[id],...patch}}))
-
-  const setViewFile = useCallback((viewId, file) => {
-    setSlot(viewId, {file,geo:null,error:null,drawDone:false,isDrawing:false,progress:{pct:0,msg:'',sub:''}})
-    setActiveView(viewId)
-  }, []) // eslint-disable-line
-
+  // Run ONLY on true visible transitions (false→true / true→false)
+  // Using visibleRef prevents the effect re-firing on every parent setSlot re-render
   useEffect(() => {
-    const handle = e => {
-      const items = Array.from(e.clipboardData?.items??[])
-      const imgItem = items.find(i=>i.type.startsWith('image/'))
-      if (imgItem) { setViewFile(activeView,imgItem.getAsFile()); return }
-      const text = e.clipboardData?.getData('text')??''
-      if (/^https?:\/\//i.test(text)) {
-        fetchImageFromUrl(text).then(f=>setViewFile(activeView,f)).catch(err=>setSlot(activeView,{error:err.message}))
+    const prev = visibleRef.current
+    visibleRef.current = visible
+    if (visible === prev) return   // same value — do nothing (prevents loop restart storms)
+
+    if (!visible) { stopLoop(); return }
+
+    const S = stRef.current
+    S.t=0; S.pistonT=0; S.crankAngle=0; S.shakeX=0; S.shakeY=0
+    S.flashAlpha=0; S.rpmVal=800; S.exploded=false
+    S.sketchProgress=0; S.sketching=false; S.prevPct=-1
+    S.debris=[]; S.smoke=[]; S.sparks=[]; S.drops=[]; S.expParts=[]
+
+    // Wait for layout then start — ResizeObserver fires once element has real size
+    const ro = new ResizeObserver((entries) => {
+      if (entries[0].contentRect.width > 0) {
+        ro.disconnect()
+        stopLoop()
+        startLoop()
       }
-    }
-    window.addEventListener('paste', handle)
-    return () => window.removeEventListener('paste', handle)
-  }, [activeView, setViewFile]) // eslint-disable-line
-
-  const apiUrl = path => backend ? `${backend}${path}` : `/api${path}`
-  const getMsgForPct = pct => {
-    const e = [...BACKEND_MSGS].reverse().find(m=>pct>=m[0])
-    return e ? {msg:e[1],sub:e[2]} : {msg:'Processing…',sub:''}
-  }
-
-  // ── Run analysis ────────────────────────────────────────────────────────────
-
-  const runView = async (viewId) => {
-    const slot = getSlot(viewId)
-    if (!slot.file) return
-    setSlot(viewId,{running:true,error:null,geo:null,drawDone:false,isDrawing:false,progress:{pct:2,msg:'Preparing image…',sub:'Input normalisation'}})
-    let uploadFile
-    try { uploadFile = await prepareImage(slot.file) } catch { uploadFile = slot.file }
-
-    let jobId=null
-    const MAX=8
-    for (let attempt=0; attempt<MAX; attempt++) {
-      setSlot(viewId,{progress:{pct:5,msg:attempt===0?'Connecting to server…':`Retrying… (${attempt*5}s)`,sub:'Establishing connection'}})
-      try {
-        const fd=new FormData()
-        fd.append('file',uploadFile); fd.append('mode',analysisMode); fd.append('view',viewId)
-        const ctrl=new AbortController(), timer=setTimeout(()=>ctrl.abort(),25000)
-        let res
-        try { res=await fetch(apiUrl('/analyze-contour/start'),{method:'POST',body:fd,signal:ctrl.signal}) }
-        finally { clearTimeout(timer) }
-        if (res.ok) { jobId=(await res.json()).job_id; break }
-        const txt=await res.text().catch(()=>'')
-        setSlot(viewId,{running:false,error:`Server error ${res.status}${txt?': '+txt.slice(0,100):''}`}); return
-      } catch {
-        if (attempt>=MAX-1) { setSlot(viewId,{running:false,error:`Could not reach server after ${MAX*5}s.`}); return }
-        await new Promise(r=>setTimeout(r,5000))
-      }
-    }
-    if (!jobId) { setSlot(viewId,{running:false,error:'Failed to start job.'}); return }
-    setSlot(viewId,{progress:{pct:10,msg:'Job queued — preprocessing…',sub:'Input normalisation'}})
-
-    const t0=Date.now()
-    while (true) {
-      await new Promise(r=>setTimeout(r,3000))
-      const elapsed=Math.round((Date.now()-t0)/1000)
-      let poll
-      try {
-        const pc=new AbortController(), timer=setTimeout(()=>pc.abort(),10000)
-        let res
-        try { res=await fetch(apiUrl(`/analyze-contour/result/${jobId}`),{signal:pc.signal}) }
-        finally { clearTimeout(timer) }
-        if (!res.ok) { setSlot(viewId,{running:false,error:`Poll error ${res.status}`}); return }
-        poll=await res.json()
-      } catch(e) { setSlot(viewId,{running:false,error:`Connection lost: ${e.message}`}); return }
-
-      const pollStatus = poll.status ?? poll.stage
-      const pollMsg    = poll.error  ?? poll.msg ?? ''
-
-      if (pollStatus==='error') { setSlot(viewId,{running:false,error:pollMsg||'Analysis failed'}); return }
-
-      if (pollStatus==='running'||pollStatus==='pending') {
-        const pct=Math.min(90,10+elapsed*1.2)
-        const {msg,sub}=getMsgForPct(pct)
-        setSlot(viewId,{progress:{pct:Math.round(pct),msg:`${msg} (${elapsed}s)`,sub}}); continue
-      }
-
-      if (pollStatus==='done') {
-        const result=poll.result
-        if (!result?.geometry) { setSlot(viewId,{running:false,error:'No vehicle outline found. Use a clear photo.'}); return }
-        const cg=result.geometry
-
-        const geo = {
-          // ── Core proportions (new — aspect-ratio-preserving) ──────────
-          trueAspect:        result.true_aspect       ?? cg.trueAspect      ?? cg.aspectRatio ?? 2.0,
-          normWidth:         result.norm_w            ?? cg.normWidth        ?? null,
-          normHeight:        result.norm_h            ?? cg.normHeight       ?? null,
-          wasFlipped:        result.was_flipped       ?? cg.wasFlipped       ?? false,
-          // ── Body classification ────────────────────────────────────────
-          bodyType:          cg.bodyType              ?? null,
-          ahmedRegime:       cg.ahmedRegime           ?? null,
-          // ── Roofline ──────────────────────────────────────────────────
-          hoodRatio:         cg.hoodRatio             ?? null,
-          cabinRatio:        cg.cabinRatio            ?? null,
-          bootRatio:         cg.bootRatio             ?? null,
-          roofFlatness:      cg.roofFlatness          ?? null,
-          roofPeakOffset:    cg.roofPeakOffset        ?? null,
-          // ── Glass + pillar angles ──────────────────────────────────────
-          aPillarAngle:      cg.aPillarAngle          ?? null,
-          wsAngleDeg:        cg.wsAngleDeg            ?? 58,
-          rearSlantAngleDeg: cg.rearSlantAngleDeg     ?? null,
-          // ── Stance ────────────────────────────────────────────────────
-          rideH:             cg.rideH                ?? cg.groundClearanceNorm ?? 0.08,
-          underbodyFlatness: cg.underbodyFlatness     ?? null,
-          archDepth:         cg.archDepth             ?? null,
-          // ── Greenhouse ────────────────────────────────────────────────
-          greenhouseRatio:   cg.greenhouseRatio       ?? null,
-          beltlineH:         cg.beltlineH             ?? null,
-          // ── Wheels + wheelbase ─────────────────────────────────────────
-          wheelbaseNorm:     cg.wheelbaseNorm         ?? null,
-          wheelDiamRatio:    cg.wheelDiamRatio        ?? null,
-          w1:                cg.w1                    ?? 0.22,
-          w2:                cg.w2                    ?? 0.76,
-          // ── Quality ───────────────────────────────────────────────────
-          convexityScore:    cg.convexityScore        ?? null,
-          // ── Front/rear view ───────────────────────────────────────────
-          frontalAreaNorm:   cg.frontalAreaNorm       ?? null,
-          trackWidthNorm:    cg.trackWidthNorm        ?? null,
-          shoulderWidthNorm: cg.shoulderWidthNorm     ?? null,
-          symmetryScore:     cg.symmetryScore         ?? null,
-          frontalAspect:     cg.frontalAspect         ?? null,
-          // ── Contour points ─────────────────────────────────────────────
-          _smoothPts:        result.display_outline_pts ?? result.smooth_pts_display ?? result.smooth_pts ?? result.outline_pts ?? result.technical_outline_pts ?? null,
-          _contourPts:       result.technical_outline_pts ?? result.smooth_pts_2k ?? result.outline_pts ?? result.display_outline_pts ?? result.smooth_pts_display ?? result.smooth_pts ?? null,
-          _hasBothModes:     !!(result.display_outline_pts && result.technical_outline_pts),
-          _bboxAspect:       result.bbox ? result.bbox.w/Math.max(1,result.bbox.h) : undefined,
-          _keypoints:        result.keypoints,
-          _method:           result.method,
-          _quality:          result.quality ?? null,
-          _viewType:         cg._view ?? viewId,
-          // ── Arch ──────────────────────────────────────────────────────
-          arch_pts:          result.arch_pts          ?? null,
-          arch_bbox_aspect:  result.arch_bbox_aspect  ?? null,
-          arch_wheels:       result.arch_wheels       ?? [],
-          // ── Features ──────────────────────────────────────────────────
-          features:          result.features          ?? [],
-          sharp_indices:     result.sharp_indices     ?? [],
-          // ── Image dims ────────────────────────────────────────────────
-          _imageW:           result._imageW           ?? 1536,
-          _imageH:           result._imageH           ?? 768,
-          // ── Legacy ────────────────────────────────────────────────────
-          aspectRatio:       result.true_aspect       ?? cg.aspectRatio ?? 2.0,
-          cabinH:            cg.cabinH               ?? 0.58,
-          Cd:                cg.Cd                   ?? null,
-          CdA:               cg.CdA                  ?? null,
-        }
-
-        // Skip animation delay — set drawDone immediately so outline renders right away
-        setSlot(viewId,{running:false,progress:{pct:0,msg:'',sub:''},geo,isDrawing:false,drawDone:true})
-        return
-      }
-    }
-  }
-
-  // ── Export helpers ──────────────────────────────────────────────────────────
-
-  const exportSVG = () => {
-    const svg = svgRef.current?.querySelector('svg')
-    if (!svg) return
-    const a=document.createElement('a')
-    a.href=URL.createObjectURL(new Blob([svg.outerHTML],{type:'image/svg+xml'}))
-    a.download=`aeronet_${activeView}.svg`; a.click()
-  }
-
-  const _buildOutlineSVG = (geo, {strokeColor='#111111',strokeWidth=3,bg=true,mode=null}={}) => {
-    const pts = (mode==='technical' ? geo._contourPts : null) ?? geo._smoothPts ?? geo._contourPts
-    if (!pts?.length) return null
-
-    const normW = geo.normWidth  ?? geo.norm_w  ?? null
-    const normH = geo.normHeight ?? geo.norm_h  ?? null
-    const PAD = 60
-
-    let CW, CH, d
-    if (normW && normH && normW > 0 && normH > 0) {
-      // Size the output canvas to the car's true aspect ratio — no dead space.
-      // Fix long edge to 1600px, derive other edge from true proportions.
-      const trueAspect = normW / normH   // e.g. 3.2 for a saloon
-      if (trueAspect >= 1) {
-        CW = 1600
-        CH = Math.round(CW / trueAspect) + PAD * 2
-      } else {
-        CH = 1600
-        CW = Math.round(CH * trueAspect) + PAD * 2
-      }
-      // Map [0,normW]→[PAD, CW-PAD],  [0,normH]→[PAD, CH-PAD]
-      const scaleX = (CW - PAD * 2) / normW
-      const scaleY = (CH - PAD * 2) / normH
-      d = pts.map(([nx,ny],i) =>
-        `${i===0?'M':'L'}${(PAD + nx*scaleX).toFixed(2)},${(PAD + ny*scaleY).toFixed(2)}`
-      ).join(' ') + ' Z'
-    } else {
-      // Fallback: old behaviour for missing norm metadata
-      const bboxAspect = geo._bboxAspect ?? geo.trueAspect ?? 2.4
-      CW = 1600; CH = 700
-      const dw = (CW-PAD*2)*0.95, dh = Math.min(dw/bboxAspect, CH-PAD*2)
-      const ox = PAD+((CW-PAD*2)-dw)/2, oy = PAD+((CH-PAD*2)-dh)/2
-      d = pts.map(([nx,ny],i) =>
-        `${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`
-      ).join(' ') + ' Z'
-    }
-
-    return (
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
-      (bg ? `<rect width="${CW}" height="${CH}" fill="white"/>` : '') +
-      `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round"/>` +
-      `</svg>`
-    )
-  }
-
-  const copyOutline = async () => {
-    const geo = getSlot(activeView).geo
-    const _hasPoints = geo?._smoothPts?.length || geo?._contourPts?.length
-    if (!_hasPoints) return
-    const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true,mode:outlineMode})
-    if (!svgStr) return
-    // Extract actual dimensions from the generated SVG (aspect-correct, not hardcoded)
-    const wMatch = svgStr.match(/width="(\d+)"/)
-    const hMatch = svgStr.match(/height="(\d+)"/)
-    const CW = wMatch ? parseInt(wMatch[1]) : 1600
-    const CH = hMatch ? parseInt(hMatch[1]) : 700
-    const renderPNG = () => new Promise((resolve,reject) => {
-      const img=new window.Image()
-      img.onload=()=>{
-        const canvas=document.createElement('canvas')
-        canvas.width=CW*2; canvas.height=CH*2
-        const ctx=canvas.getContext('2d')
-        ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height)
-        ctx.drawImage(img,0,0,canvas.width,canvas.height)
-        canvas.toBlob(resolve,'image/png')
-      }
-      img.onerror=reject
-      img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svgStr)))
     })
-    try {
-      const png=await renderPNG()
-      try { await navigator.clipboard.write([new ClipboardItem({'image/png':png})]) } catch {}
-      const a=document.createElement('a')
-      a.href=URL.createObjectURL(png)
-      a.download=`aeronet_outline_${activeView}.png`
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-      setCopyDone(true); setTimeout(()=>setCopyDone(false),3000)
-    } catch(err) { exportOutlineSVG() }
-  }
+    if (wrapRef.current) ro.observe(wrapRef.current)
+    // Fallback if already sized
+    if (wrapRef.current?.offsetWidth > 0) { ro.disconnect(); startLoop() }
 
-  const exportOutlineSVG = () => {
-    const geo=getSlot(activeView).geo
-    if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
-    const svgStr=_buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:2.5,bg:false,mode:outlineMode})
-    if (!svgStr) return
-    const a=document.createElement('a')
-    a.href=URL.createObjectURL(new Blob([svgStr],{type:'image/svg+xml'}))
-    a.download=`aeronet_outline_${activeView}.svg`
-    document.body.appendChild(a); a.click(); document.body.removeChild(a)
-  }
+    return () => { ro.disconnect(); stopLoop() }
+  }, [visible]) // eslint-disable-line
 
-  const exportTransparentPNG = async () => {
-    const geo = getSlot(activeView).geo
-    if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
-    // bg:false = transparent background SVG
-    const svgStr = _buildOutlineSVG(geo, {strokeColor:'#000000', strokeWidth:4, bg:false, mode:outlineMode})
-    if (!svgStr) return
-    const wMatch = svgStr.match(/width="(\d+)"/)
-    const hMatch = svgStr.match(/height="(\d+)"/)
-    const CW = wMatch ? parseInt(wMatch[1]) : 1600
-    const CH = hMatch ? parseInt(hMatch[1]) : 700
-    const img = new window.Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width  = CW * 2
-      canvas.height = CH * 2
-      const ctx = canvas.getContext('2d')
-      // Do NOT fill background — leaves canvas transparent
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-      canvas.toBlob(blob => {
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        a.download = `aeronet_outline_${activeView}_transparent.png`
-        document.body.appendChild(a); a.click(); document.body.removeChild(a)
-      }, 'image/png')
+  // Keep pctRef in sync so the RAF loop always reads the latest value
+  useEffect(() => { pctRef.current = pct }, [pct])
+
+  // React to pct changes — trigger sketch at 100
+  useEffect(() => {
+    if (!visibleRef.current) return
+    const S = stRef.current
+    if (pct >= 100 && S.debris && !S.sketching && !S.exploded) {
+      triggerExplosion()
+      setTimeout(() => { S.sketching = true }, 900)
     }
-    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)))
+  }, [pct]) // eslint-disable-line
+
+  function stopLoop() {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    timerRef.current.forEach(t => clearTimeout(t))
+    timerRef.current = []
   }
 
-  // ── Derived ─────────────────────────────────────────────────────────────────
-
-  const activeSlot    = getSlot(activeView)
-  const isRunning     = activeSlot.running
-  const geo           = activeSlot.geo
-  const drawDone      = activeSlot.drawDone
-  const isDrawing     = activeSlot.isDrawing
-  const traceProgress = activeSlot.progress
-  const error         = activeSlot.error
-  const hasFile       = !!activeSlot.file
-  const anyOutline    = VIEWS.some(v=>!!getSlot(v.id).geo)
-  const canShowArches = activeView==='side' && !!geo?.arch_pts
-  const analysedViews = VIEWS.filter(v=>!!getSlot(v.id).geo)
-  const canCompare    = analysedViews.length >= 2
-
-  // Compare: Car A = activeView slot, Car B = compareB slot
-  const geoA = getSlot(activeView).geo
-  const geoB = getSlot(compareB).geo
-  const labelA = getSlot(activeView).file?.name?.replace(/\.[^.]+$/,'') ?? VIEWS.find(v=>v.id===activeView)?.fullLabel ?? 'Car A'
-  const labelB = getSlot(compareB).file?.name?.replace(/\.[^.]+$/,'') ?? VIEWS.find(v=>v.id===compareB)?.fullLabel ?? 'Car B'
-
-  const ahmedColor = r=>({attached:'var(--md-success)',intermediate:'var(--md-warning)',critical:'var(--md-error)',separated:'var(--md-error)'}[r]??'var(--md-primary)')
-
-  const renderCanvas = (g,isDrawingFlag,drawDoneFlag) => {
-    if (!g) return null
-    if (activeView==='side')  return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag} outlineMode={outlineMode}/>
-    if (activeView==='front') return <FrontViewSVG g={g}/>
-    if (activeView==='top')   return <TopViewSVG g={g}/>
-    if (activeView==='rear')  return <RearViewSVG g={g}/>
-    return null
+  function sched(fn, ms) {
+    const t = setTimeout(fn, ms); timerRef.current.push(t)
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function rr(a, b) { return a + (b - a) * Math.random() }
+
+  function triggerExplosion() {
+    const S = stRef.current; S.exploded = true; S.flashAlpha = 1
+    const cols = ['255,120,0','255,210,40','255,255,180','255,40,0','210,210,210']
+    for (let i = 0; i < 120; i++) {
+      const a = Math.random() * Math.PI * 2, sp = rr(3, 18)
+      S.expParts.push({
+        x: 0, y: 0, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp,
+        col: cols[Math.floor(Math.random()*cols.length)],
+        alpha: 1, r: rr(1.5, 5), trail: [], dead: false,
+      })
+    }
+    for (let i = 0; i < 30; i++) {
+      S.debris.push({
+        x: 0+rr(-20,20), y: 0+rr(-20,20),
+        vx: rr(-10,10), vy: rr(-12,-2),
+        rot: Math.random()*Math.PI*2, vrot: rr(-.3,.3),
+        type: 'frag', dead: false,
+      })
+    }
+  }
+
+  // ── Canvas loop ────────────────────────────────────────────────────────────
+  function startLoop() {
+    const ecv = engRef.current
+    const scv = sketchRef.current
+    if (!ecv || !scv) return
+
+    const W = wrapRef.current?.offsetWidth  || ecv.offsetWidth  || 680
+    const H = wrapRef.current?.offsetHeight || ecv.offsetHeight || 380
+    ;[ecv, scv].forEach(c => {
+      c.width = W * 2; c.height = H * 2
+      c.style.width = W + 'px'; c.style.height = H + 'px'
+    })
+    const ctx  = ecv.getContext('2d');  ctx.scale(2, 2)
+    const sctx = scv.getContext('2d');  sctx.scale(2, 2)
+
+    const EX = W / 2, EY = H / 2 - 10
+
+    function loop() {
+      rafRef.current = requestAnimationFrame(loop)
+      const S = stRef.current
+      S.t += 0.016
+
+      // Derive engine phase from pctRef.current (fixes stale closure bug)
+      const livePct = pctRef.current ?? 0
+      const phase =
+        livePct < 8  ? 0 :
+        livePct < 18 ? 1 :
+        livePct < 46 ? 2 :
+        livePct < 84 ? 3 :
+        livePct < 100 ? 4 : 5
+
+      const spd = 0.055 + phase * 0.028
+      S.pistonT    += phase < 5 ? spd : 0
+      S.crankAngle += phase < 5 ? spd : 0
+
+      // RPM
+      const targetRpm = [800,3500,6000,9000,9000,0][Math.min(phase,5)]
+      S.rpmVal += (targetRpm - S.rpmVal) * 0.04
+
+      // Shake amplitude
+      const amp = [0, 1.5, 5, 12, 18, 0][Math.min(phase, 5)]
+      if (phase > 0 && phase < 5) {
+        S.shakeX = Math.sin(S.t * (3 + phase*2) * Math.PI * 2) * (amp + Math.sin(S.t*7)*amp*.4)
+        S.shakeY = Math.cos(S.t * (4 + phase*2) * Math.PI * 2) * (amp * .35)
+      } else { S.shakeX = 0; S.shakeY = 0 }
+
+      // Auto-spawn debris based on phase
+      if (phase >= 1 && phase < 5) {
+        if (Math.random() < 0.04 + phase * 0.03) spawnDebris(EX, EY, 'bolt')
+        if (phase >= 2 && Math.random() < 0.02) spawnDebris(EX, EY, 'valve')
+        if (phase >= 3 && Math.random() < 0.025) spawnDebris(EX, EY, 'gasket')
+        if (phase >= 3 && Math.random() < 0.012) spawnDebris(EX, EY, 'piston')
+        if (phase >= 4 && Math.random() < 0.015) spawnDebris(EX, EY, 'frag')
+        if (Math.random() < 0.015 + phase * 0.01)
+          S.smoke.push({ x: EX+rr(-25,25), y: EY-75, vx: rr(-1,1), vy: rr(-1.2,-.3), r: rr(4,12), alpha: .22, dead: false })
+      }
+      if (phase >= 1 && phase < 5 && Math.random() < .05 + phase * .025)
+        S.drops.push({ x: EX+rr(-70,70), y: EY+62, vy: rr(1,3), r: rr(1,2.5), dead: false })
+
+      // ── Draw ──────────────────────────────────────────────────────────────
+      ctx.fillStyle = '#080808'; ctx.fillRect(0, 0, W, H)
+
+      // Grid
+      ctx.strokeStyle = 'rgba(20,45,20,.1)'; ctx.lineWidth = .4
+      for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke() }
+      for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke() }
+
+      // Drops
+      S.drops?.forEach(d => {
+        d.vy += .1; d.y += d.vy
+        if (d.y > H + 10) d.dead = true
+        else { ctx.beginPath(); ctx.arc(d.x,d.y,d.r,0,Math.PI*2); ctx.fillStyle='rgba(12,6,0,.65)'; ctx.fill() }
+      })
+      if (S.drops) S.drops = S.drops.filter(d => !d.dead)
+
+      // Smoke
+      S.smoke?.forEach(s => {
+        s.x += s.vx; s.y += s.vy; s.r += .35; s.alpha -= .003
+        if (s.alpha <= 0) s.dead = true
+        else { ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fillStyle=`rgba(70,70,70,${s.alpha})`; ctx.fill() }
+      })
+      if (S.smoke) S.smoke = S.smoke.filter(s => !s.dead)
+
+      // Engine body
+      if (!S.exploded) drawEngine(ctx, EX + S.shakeX, EY + S.shakeY, S, phase, W, H)
+
+      // Sparks
+      S.sparks?.forEach(s => {
+        s.vy += .22; s.x += s.vx; s.y += s.vy; s.life -= .055
+        if (s.life <= 0) s.dead = true
+        else {
+          ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x-s.vx*2.5,s.y-s.vy*2.5)
+          ctx.strokeStyle=`rgba(255,${160+Math.floor(Math.random()*95)},0,${s.life})`
+          ctx.lineWidth=1.5; ctx.lineCap='round'; ctx.stroke()
+        }
+      })
+      if (S.sparks) S.sparks = S.sparks.filter(s => !s.dead)
+
+      // Debris
+      S.debris?.forEach(d => {
+        d.vy += .22; d.x += d.vx; d.y += d.vy; d.rot += d.vrot
+        if (d.y > H + 60) d.dead = true; else drawDebris(ctx, d, EX, EY)
+      })
+      if (S.debris) S.debris = S.debris.filter(d => !d.dead)
+
+      // Explosion particles
+      S.expParts?.forEach(p => {
+        p.trail.push({x: p.x + EX, y: p.y + EY})
+        if (p.trail.length > 10) p.trail.shift()
+        p.vy += .18; p.x += p.vx; p.y += p.vy; p.vx *= .97
+        p.alpha -= .016
+        if (p.alpha <= 0) { p.dead = true; return }
+        if (p.trail.length > 1) {
+          ctx.beginPath()
+          ctx.moveTo(p.trail[0].x, p.trail[0].y)
+          p.trail.forEach(pt => ctx.lineTo(pt.x, pt.y))
+          ctx.strokeStyle = `rgba(${p.col},${p.alpha*.4})`
+          ctx.lineWidth = p.r * .6; ctx.lineCap = 'round'; ctx.stroke()
+        }
+        ctx.beginPath(); ctx.arc(p.x+EX, p.y+EY, p.r, 0, Math.PI*2)
+        ctx.fillStyle = `rgba(${p.col},${p.alpha})`; ctx.fill()
+      })
+      if (S.expParts) S.expParts = S.expParts.filter(p => !p.dead)
+
+      // Flash
+      if (S.flashAlpha > 0) {
+        ctx.fillStyle = `rgba(255,180,60,${S.flashAlpha})`
+        ctx.fillRect(0, 0, W, H)
+        S.flashAlpha = Math.max(0, S.flashAlpha - .038)
+      }
+
+      // RPM gauge
+      drawRPM(ctx, W - 60, 46, S.rpmVal)
+
+      // Phase warning
+      if (phase >= 2 && phase < 5 && Math.sin(S.t * 10) > .2) {
+        ctx.fillStyle = 'rgba(255,40,0,.75)'; ctx.font = 'bold 9px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText('⚠  CRITICAL LOAD — PIPELINE ACTIVE', W/2, H - 96)
+      }
+      if (S.exploded && S.flashAlpha < .3 && !S.sketching) {
+        if (Math.sin(S.t * 6) > 0) {
+          ctx.fillStyle = 'rgba(34,200,80,.8)'; ctx.font = 'bold 10px monospace'
+          ctx.textAlign = 'center'
+          ctx.fillText('✓  ALL STAGES COMPLETE — RENDERING OUTLINE', W/2, H - 96)
+        }
+      }
+
+      // ── Sketch overlay ──────────────────────────────────────────────────
+      if (S.sketching) {
+        S.sketchProgress = Math.min(1, S.sketchProgress + .004)
+        drawSketch(sctx, S.sketchProgress, W, H)
+        scv.style.opacity = '1'
+      } else {
+        scv.style.opacity = '0'
+        sctx.clearRect(0, 0, W * 2, H * 2)
+      }
+    }
+    loop()
+  }
+
+  function spawnDebris(EX, EY, type) {
+    const S = stRef.current
+    S.debris.push({
+      x: rr(-60,60), y: rr(-40,40),
+      vx: rr(-5,5) * (1 + stRef.current.debris.length*.01),
+      vy: rr(-7,-1), rot: Math.random()*Math.PI*2,
+      vrot: rr(-.28,.28), type, dead: false,
+    })
+  }
+
+  function drawDebris(ctx, d, EX, EY) {
+    ctx.save(); ctx.translate(d.x + EX, d.y + EY); ctx.rotate(d.rot); ctx.globalAlpha = .88
+    switch (d.type) {
+      case 'bolt':
+        ctx.fillStyle='#8a9aaa'; ctx.fillRect(-3,-7,6,14)
+        ctx.fillStyle='#6a8a9a'; ctx.fillRect(-5,-9,10,5); break
+      case 'valve':
+        ctx.fillStyle='#7a8a9a'; ctx.fillRect(-2,-12,4,22)
+        ctx.beginPath(); ctx.arc(0,12,5,0,Math.PI*2); ctx.fillStyle='#5a7a8a'; ctx.fill(); break
+      case 'gasket':
+        ctx.strokeStyle='#cc5522'; ctx.lineWidth=2; ctx.strokeRect(-14,-5,28,10)
+        ctx.strokeStyle='#993311'; ctx.lineWidth=1; ctx.strokeRect(-9,-3,18,6); break
+      case 'piston':
+        ctx.fillStyle='#445577'; ctx.fillRect(-13,-11,26,22)
+        ctx.strokeStyle='#6688aa'; ctx.lineWidth=1; ctx.strokeRect(-13,-11,26,22); break
+      case 'frag':
+        ctx.fillStyle=`hsl(${20+Math.random()*20},35%,${25+Math.random()*15}%)`
+        ctx.beginPath()
+        for (let i=0; i<4; i++) { const a=i/4*Math.PI*2,r=3+Math.random()*9; i?ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r):ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r) }
+        ctx.closePath(); ctx.fill(); break
+    }
+    ctx.restore()
+  }
+
+  function drawEngine(ctx, ox, oy, S, phase, W, H) {
+    ctx.save(); ctx.translate(ox, oy)
+    const ph = [0,Math.PI/2,Math.PI,Math.PI*1.5]
+
+    // Glow
+    if (phase >= 3) {
+      const g = ctx.createRadialGradient(0,0,10,0,0,88)
+      g.addColorStop(0, `rgba(255,100,0,${Math.min(.18, phase*.04)})`); g.addColorStop(1,'transparent')
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,88,0,Math.PI*2); ctx.fill()
+    }
+
+    // Oil pan
+    ctx.fillStyle='#111c24'; ctx.strokeStyle='#1a3040'; ctx.lineWidth=1
+    ctx.beginPath(); ctx.roundRect(-70,60,140,22,3); ctx.fill(); ctx.stroke()
+    ctx.fillStyle='#223344'; ctx.beginPath(); ctx.arc(0,71,4,0,Math.PI*2); ctx.fill()
+
+    // Block
+    ctx.fillStyle='#17242f'; ctx.strokeStyle='#255060'; ctx.lineWidth=1.5
+    ctx.beginPath(); ctx.roundRect(-70,-50,140,112,4); ctx.fill(); ctx.stroke()
+
+    // Bores
+    for (let i=0; i<4; i++) {
+      const bx=-52+i*35
+      ctx.fillStyle='#0b1520'; ctx.fillRect(bx-10,-50,20,70)
+      ctx.strokeStyle='#1a3545'; ctx.lineWidth=.7; ctx.strokeRect(bx-10,-50,20,70)
+    }
+
+    // Pistons
+    ph.forEach((p, i) => {
+      const bx=-52+i*35, py=Math.sin(S.pistonT+p)*22
+      ctx.fillStyle='#3a5878'; ctx.strokeStyle='#4a78a8'; ctx.lineWidth=.8
+      ctx.fillRect(bx-9,py-13,18,24); ctx.strokeRect(bx-9,py-13,18,24)
+      ctx.strokeStyle='#2a4868'; ctx.lineWidth=.4
+      [-5,0,5].forEach(dy=>{ctx.beginPath();ctx.moveTo(bx-9,py+dy);ctx.lineTo(bx+9,py+dy);ctx.stroke()})
+      ctx.strokeStyle='#4a6880'; ctx.lineWidth=1.8; ctx.lineCap='round'
+      ctx.beginPath(); ctx.moveTo(bx,py+11); ctx.lineTo(bx,py+40); ctx.stroke()
+    })
+
+    // Crank
+    ctx.strokeStyle='#6a8a9a'; ctx.lineWidth=3; ctx.lineCap='round'
+    ctx.beginPath(); ctx.moveTo(-68,50); ctx.lineTo(68,50); ctx.stroke()
+    ph.forEach((p, i) => {
+      const bx=-52+i*35, cy=50+Math.sin(S.crankAngle+p)*14
+      ctx.fillStyle='#4a6a7a'; ctx.beginPath(); ctx.arc(bx,cy,5,0,Math.PI*2); ctx.fill()
+      ctx.strokeStyle='#5a7a8a'; ctx.lineWidth=1.2
+      ctx.beginPath(); ctx.moveTo(bx,50); ctx.lineTo(bx,cy); ctx.stroke()
+    })
+
+    // Head
+    ctx.fillStyle='#1c3040'; ctx.strokeStyle='#2a5060'; ctx.lineWidth=1.2
+    ctx.beginPath(); ctx.roundRect(-70,-62,140,14,3); ctx.fill(); ctx.stroke()
+
+    // Valve cover
+    if (phase < 3) {
+      ctx.fillStyle='#22303e'; ctx.strokeStyle='#335060'; ctx.lineWidth=1.2
+      ctx.beginPath(); ctx.roundRect(-72,-80,144,20,4); ctx.fill(); ctx.stroke()
+      ;[-55,-18,18,55].forEach(bx=>{
+        ctx.fillStyle = phase>=2 ? '#885544' : '#3a5a6a'
+        ctx.beginPath(); ctx.arc(bx,-70,3,0,Math.PI*2); ctx.fill()
+      })
+    }
+
+    // Timing cover
+    ctx.fillStyle='#162028'; ctx.strokeStyle='#203040'; ctx.lineWidth=1
+    ctx.beginPath(); ctx.roundRect(-80,-58,13,126,3); ctx.fill(); ctx.stroke()
+
+    // Spark firing
+    if (phase >= 1) {
+      ph.forEach((p, i) => {
+        if (Math.sin(S.pistonT*2+p) > .88) {
+          const bx=-52+i*35
+          ctx.fillStyle=`rgba(255,220,100,${Math.random()*.8+.2})`
+          ctx.beginPath(); ctx.arc(bx,-62,2.5,0,Math.PI*2); ctx.fill()
+          for(let j=0;j<2;j++) S.sparks.push({x:bx+ox,y:-62+oy,vx:rr(-4,4),vy:rr(-5,-1),life:1,dead:false})
+        }
+      })
+    }
+
+    // Crack
+    if (phase >= 2) {
+      ctx.strokeStyle=`rgba(255,80,30,${.5+Math.sin(S.t*8)*.2})`; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.moveTo(-28,-46); ctx.lineTo(-8,-16); ctx.lineTo(-18,14); ctx.lineTo(4,30); ctx.stroke()
+    }
+
+    // Hole
+    if (phase >= 3) {
+      ctx.fillStyle='#040c12'; ctx.strokeStyle=`rgba(255,60,0,${.6+Math.sin(S.t*12)*.3})`; ctx.lineWidth=1
+      ctx.beginPath(); ctx.ellipse(46,20,18,12,-.28,0,Math.PI*2); ctx.fill(); ctx.stroke()
+      ctx.strokeStyle='rgba(12,6,0,.55)'; ctx.lineWidth=1
+      for(let j=0;j<7;j++){const a=-.28+j*.18,l=12+j*5;ctx.beginPath();ctx.moveTo(46+Math.cos(a)*18,20+Math.sin(a)*12);ctx.lineTo(46+Math.cos(a)*(18+l),20+Math.sin(a)*(12+l*.5));ctx.stroke()}
+    }
+
+    ctx.restore()
+  }
+
+  function drawRPM(ctx, cx, cy, val) {
+    const r=26
+    ctx.strokeStyle='#0f1f0f'; ctx.lineWidth=4
+    ctx.beginPath(); ctx.arc(cx,cy,r,Math.PI*.75,Math.PI*2.25); ctx.stroke()
+    const ratio=Math.min(val/9000,1)
+    const col=val>7000?`rgba(255,${Math.max(0,200-(val-7000)/8)},0,.9)`:val>5500?'rgba(255,150,0,.9)':'rgba(34,180,60,.9)'
+    ctx.strokeStyle=col; ctx.lineWidth=2.5
+    ctx.shadowColor=col; ctx.shadowBlur=6
+    ctx.beginPath(); ctx.arc(cx,cy,r,Math.PI*.75,Math.PI*.75+Math.PI*1.5*ratio); ctx.stroke()
+    ctx.shadowBlur=0
+    const na=Math.PI*.75+Math.PI*1.5*ratio
+    ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.lineCap='round'
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(na)*r*.72,cy+Math.sin(na)*r*.72); ctx.stroke()
+    ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(cx,cy,3,0,Math.PI*2); ctx.fill()
+    ctx.fillStyle=val>7000?'#ff2200':val>5500?'#ff9900':'#22aa44'
+    ctx.font='bold 6px monospace'; ctx.textAlign='center'; ctx.fillText('RPM',cx,cy+r+10)
+    ctx.fillStyle='#334433'; ctx.font='5px monospace'; ctx.fillText(Math.round(val/100)*100,cx,cy+r+17)
+  }
+
+  function drawSketch(sctx, progress, W, H) {
+    sctx.clearRect(0, 0, W * 2, H * 2)
+    const cw=W*.72, ch=H*.58, cxo=W*.14, cyo=H*.2
+    const total=CAR_LINES.length, perLine=1/total
+
+    function wb(x,y,a){return[x+(Math.random()-.5)*a,y+(Math.random()-.5)*a]}
+
+    CAR_LINES.forEach((line, li) => {
+      const ls=li*perLine, le=(li+1)*perLine
+      if (progress < ls) return
+      const lp=Math.min(1,(progress-ls)/perLine)
+      const pts=line.pts.map(([nx,ny])=>[cxo+nx*cw, cyo+ny*ch])
+      const totalDist=pts.reduce((s,p,i)=>i?s+Math.hypot(p[0]-pts[i-1][0],p[1]-pts[i-1][1]):0,0)
+      const drawDist=totalDist*lp
+      let dist=0, started=false
+
+      sctx.beginPath(); sctx.strokeStyle=line.col; sctx.lineWidth=line.w
+      sctx.lineCap='round'; sctx.lineJoin='round'
+
+      for (let i=1; i<pts.length; i++) {
+        const seg=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1])
+        if (!started) { const[wx,wy]=wb(pts[0][0],pts[0][1],1.2); sctx.moveTo(wx,wy); started=true }
+        if (dist+seg > drawDist) {
+          const t=(drawDist-dist)/seg
+          const ex=pts[i-1][0]+(pts[i][0]-pts[i-1][0])*t
+          const ey=pts[i-1][1]+(pts[i][1]-pts[i-1][1])*t
+          const[wx,wy]=wb(ex,ey,1.5); sctx.lineTo(wx,wy); sctx.stroke()
+          // tip glow
+          sctx.beginPath(); sctx.arc(wx,wy,5+Math.random()*3,0,Math.PI*2)
+          sctx.fillStyle=`rgba(${line.col==='#4488cc'?'68,136,220':'200,255,180'},.12)`; sctx.fill()
+          sctx.beginPath(); sctx.arc(wx,wy,1.8,0,Math.PI*2)
+          sctx.fillStyle='rgba(255,255,255,.85)'; sctx.fill()
+          break
+        }
+        const[wx,wy]=wb(pts[i][0],pts[i][1],.9); sctx.lineTo(wx,wy)
+        dist+=seg
+      }
+      if (lp >= 1) sctx.stroke()
+
+      // glass hatch when window complete
+      if (li===2 && lp>.98) {
+        const gpts=CAR_WIN.map(([nx,ny])=>[cxo+nx*cw,cyo+ny*ch])
+        sctx.save(); sctx.beginPath()
+        gpts.forEach(([x,y],i)=>i?sctx.lineTo(x,y):sctx.moveTo(x,y))
+        sctx.closePath(); sctx.clip()
+        sctx.strokeStyle='rgba(68,136,220,.1)'; sctx.lineWidth=1
+        for(let x=-200;x<W+200;x+=7){sctx.beginPath();sctx.moveTo(x,0);sctx.lineTo(x-120,H);sctx.stroke()}
+        sctx.restore()
+      }
+
+      // label after line done
+      if (progress > ls + perLine*.92) {
+        const mid=pts[Math.floor(pts.length/2)]
+        sctx.globalAlpha=Math.min(1,(progress-(ls+perLine*.92))*12)
+        sctx.fillStyle=line.col; sctx.font='bold 8px monospace'
+        sctx.textAlign='left'; sctx.fillText(line.lbl, mid[0]+8, mid[1]-8)
+        sctx.globalAlpha=1
+      }
+    })
+
+    // ANALYSIS COMPLETE when fully drawn
+    if (progress > .96) {
+      const fade=Math.min(1,(progress-.96)/.04)
+      sctx.globalAlpha=fade
+      if (Math.sin(Date.now()*.006)>.0) {
+        sctx.fillStyle='#22cc55'; sctx.font='bold 20px monospace'
+        sctx.textAlign='center'; sctx.fillText('ANALYSIS COMPLETE', W/2, H*.88)
+        sctx.fillStyle='#1a6a1a'; sctx.font='8px monospace'
+        sctx.fillText('OUTLINE READY · 2000pt · SALOON', W/2, H*.88+16)
+      }
+      sctx.globalAlpha=1
+    }
+  }
+
+  if (!visible) return null
+
+  // Stage fill values
+  const stagePcts = (stages ?? []).map(s => ({ ...s, fill: getStagePct(s, pct) }))
 
   return (
-    <div style={{display:'flex',height:'100%',overflow:'hidden',background:'var(--md-surface)'}}>
+    <div ref={wrapRef} style={{
+      position:'absolute', inset:0, zIndex:20,
+      background:'#080808',
+      display:'flex', flexDirection:'column',
+      width:'100%', height:'100%',
+    }}>
+      {/* Engine canvas */}
+      <div style={{flex:1, position:'relative', overflow:'hidden', minHeight:0}}>
+        <canvas ref={engRef} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',display:'block'}}/>
+        <canvas ref={sketchRef} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',display:'block',opacity:0,transition:'opacity 0.6s'}}/>
 
-      {showSimModal && geo && <SimulationModal geo={geo} onClose={()=>setShowSimModal(false)}/>}
+        {/* MSG overlay */}
+        <div style={{
+          position:'absolute', bottom:8, left:0, right:0,
+          textAlign:'center', pointerEvents:'none',
+        }}>
+          <div style={{fontSize:11,fontFamily:'var(--font-mono)',color:'#1a5a1a',letterSpacing:'.08em',marginBottom:2}}>{msg}</div>
+          {sub && <div style={{fontSize:9,fontFamily:'var(--font-sans)',color:'#0f3a0f',letterSpacing:'.04em'}}>{sub}</div>}
+        </div>
+      </div>
 
-      {/* ══ M3 Navigation Rail ═══════════════════════════════════════════════ */}
-      <nav className="md-nav-rail">
-        <div style={{fontSize:18,color:'var(--md-primary)',marginBottom:8,fontWeight:700,fontFamily:'var(--font-mono)'}}>A</div>
-        <div style={{width:32,height:1,background:'var(--md-outline-variant)',marginBottom:8}}/>
-        {VIEWS.map(v=>{
-          const s=getSlot(v.id)
+      {/* Stage progress bars */}
+      <div style={{
+        background:'rgba(0,0,0,.96)',
+        borderTop:'1px solid #0f1f0f',
+        padding:'8px 16px 10px',
+      }}>
+        {stagePcts.map(s => {
+          const col = STAGE_COL[s.id] ?? '#22cc55'
+          const active = pct >= s.pct[0] && pct < s.pct[1]
+          const done   = pct >= s.pct[1]
           return (
-            <button key={v.id} className="md-nav-rail-item" data-active={activeView===v.id && !compareMode}
-              onClick={()=>{setActiveView(v.id);setCompareMode(false)}}>
-              <div className="md-nav-indicator" style={{position:'relative'}}>
-                {v.icon}
-                {s.geo&&!s.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-success)'}}/>}
-                {s.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-primary)',animation:'md-pulse 1s ease infinite'}}/>}
+            <div key={s.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+              <span style={{
+                fontSize:8, fontFamily:'monospace', letterSpacing:'.1em',
+                width:68, textAlign:'right', textTransform:'uppercase',
+                color: done ? col : active ? col : '#1a2a1a',
+                transition:'color .3s',
+              }}>{s.label}</span>
+              <div style={{flex:1,height:3,background:'#0f1a0f',borderRadius:2,overflow:'visible',position:'relative'}}>
+                <div style={{
+                  height:'100%', width:`${s.fill}%`,
+                  background: col,
+                  borderRadius:2,
+                  boxShadow: active ? `0 0 8px ${col}88` : 'none',
+                  transition:'width .3s ease, box-shadow .3s',
+                  position:'relative',
+                }}>
+                  {active && (
+                    <div style={{
+                      position:'absolute',right:-3,top:-4,
+                      width:8,height:11,background:col,borderRadius:2,
+                      boxShadow:`0 0 6px ${col}`,
+                    }}/>
+                  )}
+                </div>
               </div>
-              <span className="md-nav-label">{v.label}</span>
-            </button>
+              <span style={{
+                fontSize:9, fontFamily:'monospace', width:28,
+                textAlign:'right', letterSpacing:'.04em',
+                color: done ? col : active ? col : '#1a2a1a',
+              }}>
+                {done ? '✓' : active ? `${s.fill}%` : ''}
+              </span>
+            </div>
           )
         })}
 
-        {/* Compare button in rail */}
-        <div style={{width:32,height:1,background:'var(--md-outline-variant)',margin:'8px 0'}}/>
-        <button className="md-nav-rail-item" data-active={compareMode}
-          onClick={()=>canCompare&&setCompareMode(p=>!p)}
-          style={{opacity:canCompare?1:0.35,cursor:canCompare?'pointer':'default'}}>
-          <div className="md-nav-indicator" style={{fontSize:16}}>⇔</div>
-          <span className="md-nav-label">Compare</span>
-        </button>
-      </nav>
-
-      {/* ══ M3 Side Sheet ════════════════════════════════════════════════════ */}
-      <div style={{
-        width:272,flexShrink:0,display:'flex',flexDirection:'column',
-        borderRight:'1px solid var(--md-outline-variant)',
-        background:'var(--md-surface-container-low)',overflow:'hidden',
-      }}>
-        <div style={{flex:1,overflowY:'auto',padding:'16px 12px'}}>
-
-          {/* 01 — Saved outlines */}
-          <SL n="01" t="Saved Outlines"/>
-          <div style={{marginBottom:12}}>
-            {VIEWS.map(v=>(
-              <OutlineThumbnail key={v.id}
-                geo={getSlot(v.id).geo} label={v.fullLabel} icon={v.icon}
-                isActive={activeView===v.id&&!compareMode}
-                onClick={()=>{setActiveView(v.id);setCompareMode(false)}}
-              />
-            ))}
+        {/* Global pct */}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:6,paddingTop:6,borderTop:'1px solid #0f1a0f'}}>
+          <div style={{height:2,flex:1,background:'#0f1a0f',borderRadius:1,marginRight:10,overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${pct}%`,background:'#22cc55',borderRadius:1,transition:'width .4s ease'}}/>
           </div>
-
-          {/* 02 — Upload */}
-          <SL n="02" t={`Upload — ${VIEWS.find(v=>v.id===activeView)?.fullLabel}`}/>
-          <div style={{marginBottom:10}}>
-            <DropZone viewId={activeView} label={VIEWS.find(v=>v.id===activeView)?.fullLabel}
-              icon={VIEWS.find(v=>v.id===activeView)?.icon} file={activeSlot.file} onFile={setViewFile}/>
-          </div>
-
-          {/* URL input */}
-          {urlMode ? (
-            <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
-              <div style={{display:'flex',gap:6}}>
-                <input autoFocus className="md-text-field" value={urlInput}
-                  onChange={e=>setUrlInput(e.target.value)}
-                  onKeyDown={e=>{
-                    if(e.key==='Enter') fetchImageFromUrl(urlInput).then(f=>{setViewFile(activeView,f);setUrlMode(false)}).catch(err=>setUrlError(err.message))
-                    if(e.key==='Escape') setUrlMode(false)
-                  }}
-                  placeholder="https://example.com/car.jpg" style={{flex:1,fontSize:11}}/>
-                <button className="md-btn-tonal" style={{height:40,padding:'0 14px',fontSize:12}}
-                  onClick={()=>fetchImageFromUrl(urlInput).then(f=>{setViewFile(activeView,f);setUrlMode(false)}).catch(err=>setUrlError(err.message))}>Go</button>
-              </div>
-              {urlError&&<div style={{fontSize:11,color:'var(--md-error)',fontFamily:'var(--font-sans)'}}>{urlError}</div>}
-              <button className="md-btn-outlined" style={{fontSize:12,height:36}} onClick={()=>{setUrlMode(false);setUrlError('')}}>Cancel</button>
-            </div>
-          ) : (
-            <button className="md-btn-outlined" style={{width:'100%',fontSize:12,height:36,marginBottom:10}} onClick={()=>setUrlMode(true)}>
-              🔗 Load from URL
-            </button>
-          )}
-
-          {/* Analysis mode */}
-          <div style={{marginBottom:12}}>
-            <div style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px',marginBottom:8,textTransform:'uppercase'}}>
-              Analysis Mode
-            </div>
-            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-              {[{id:'A',label:'Silhouette',sub:'~30s'},{id:'B',label:'Panels',sub:'~90s'},{id:'C',label:'Full Aero',sub:'~150s'}].map(m=>(
-                <button key={m.id} className="md-chip" data-selected={analysisMode===m.id} onClick={()=>setAnalysisMode(m.id)}>
-                  {m.label}
-                  <span style={{fontSize:10,opacity:0.6,fontFamily:'var(--font-mono)'}}>{m.sub}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Analyse FAB */}
-          <button className="md-fab-extended" onClick={()=>runView(activeView)}
-            disabled={!hasFile||isRunning} style={{marginBottom:8}}>
-            {isRunning
-              ? <><div className="md-spin" style={{width:16,height:16,border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'var(--md-on-primary-container)',borderRadius:'50%'}}/> Analysing…</>
-              : <>▶ Analyse {VIEWS.find(v=>v.id===activeView)?.label}</>
-            }
-          </button>
-
-          {/* CFD Simulation */}
-          {drawDone && (
-            <button className="md-btn-outlined" style={{width:'100%',height:40,fontSize:13,marginBottom:8,borderColor:'var(--md-success)',color:'var(--md-success)'}}
-              onClick={()=>setShowSimModal(true)}>▷ Run CFD Simulation</button>
-          )}
-
-          {/* Error */}
-          {error && (
-            <div style={{borderRadius:12,padding:'10px 14px',marginBottom:10,background:'rgba(242,184,184,0.08)',border:'1px solid rgba(242,184,184,0.20)',color:'var(--md-error)',fontSize:12,lineHeight:1.5,fontFamily:'var(--font-sans)'}}>
-              {error}
-            </div>
-          )}
-
-          {/* Compare mode selector */}
-          {compareMode && canCompare && (
-            <>
-              <SL n="03" t="Compare Setup"/>
-              <div className="md-card-outlined" style={{padding:'10px 12px',marginBottom:10}}>
-                <div style={{fontSize:11,color:'var(--md-on-surface-variant)',marginBottom:8,fontFamily:'var(--font-sans)'}}>
-                  Car A: <strong style={{color:'#E0E0E0'}}>{labelA}</strong>
-                </div>
-                <div style={{fontSize:11,color:'var(--md-on-surface-variant)',marginBottom:8,fontFamily:'var(--font-sans)'}}>Car B:</div>
-                <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                  {analysedViews.filter(v=>v.id!==activeView).map(v=>(
-                    <button key={v.id} className="md-chip" data-selected={compareB===v.id}
-                      onClick={()=>setCompareB(v.id)} style={{justifyContent:'flex-start',gap:8}}>
-                      <div style={{width:8,height:8,borderRadius:'50%',background:'#FFB74D',flexShrink:0}}/>
-                      {v.fullLabel}
-                      <span style={{fontSize:10,opacity:0.6,fontFamily:'var(--font-mono)',marginLeft:'auto'}}>
-                        {getSlot(v.id).file?.name?.replace(/\.[^.]+$/,'').slice(0,10)??''}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* 03 — Geometry / Benchmarking */}
-          {geo && !compareMode && (
-            <>
-              <SL n="03" t="Proportions"/>
-              <div className="md-card-outlined" style={{padding:'10px 12px',marginBottom:10}}>
-
-                {/* Body type badge */}
-                {geo.bodyType && (
-                  <div style={{marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontSize:18}}>{BODY_TYPE_ICONS[geo.bodyType]??'🚗'}</span>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:600,color:'var(--md-on-surface)',fontFamily:'var(--font-sans)',textTransform:'capitalize'}}>{geo.bodyType}</div>
-                      {geo.wasFlipped && <div style={{fontSize:10,color:'var(--md-warning)',fontFamily:'var(--font-sans)'}}>⚠ Auto-flipped to right-facing</div>}
-                    </div>
-                  </div>
-                )}
-
-                <div style={{height:1,background:'var(--md-outline-variant)',marginBottom:8}}/>
-
-                {/* True proportions */}
-                {geo.trueAspect!=null && (
-                  <PropBar label="Length:Height" valA={geo.trueAspect} decimals={2}/>
-                )}
-                {geo.normHeight!=null && (
-                  <PropBar label="Norm. height" valA={geo.normHeight} decimals={3}/>
-                )}
-                {geo.wheelbaseNorm!=null && (
-                  <PropBar label="Wheelbase" valA={geo.wheelbaseNorm} decimals={3}/>
-                )}
-
-                <div style={{height:1,background:'var(--md-outline-variant)',margin:'8px 0'}}/>
-
-                {[
-                  ['Hood',   geo.hoodRatio,   null, 2],
-                  ['Cabin',  geo.cabinRatio,  null, 2],
-                  ['Boot',   geo.bootRatio,   null, 2],
-                ].filter(([,v])=>v!=null).map(([k,v,,d])=>(
-                  <div key={k} className="md-list-item">
-                    <span className="md-list-item-label">{k}</span>
-                    <span className="md-list-item-value">{(v*100).toFixed(1)}%</span>
-                  </div>
-                ))}
-
-                <div style={{height:1,background:'var(--md-outline-variant)',margin:'8px 0'}}/>
-
-                {[
-                  ['A-pillar',     geo.aPillarAngle,      '°', 1],
-                  ['WS rake',      geo.wsAngleDeg,        '°', 1],
-                  ['Rear slant',   geo.rearSlantAngleDeg, '°', 1],
-                  ['Ride height',  geo.rideH!=null?geo.rideH*100:null, '%', 1],
-                  ['Greenhouse',   geo.greenhouseRatio!=null?geo.greenhouseRatio*100:null, '%', 1],
-                  ['Roof flat.',   geo.roofFlatness,      '',  3],
-                  ['Underbody',    geo.underbodyFlatness,  '',  3],
-                  ['Convexity',    geo.convexityScore,     '',  3],
-                  ['Pts',          geo._contourPts?.length??null, 'pt', 0],
-                  ['Method',       null, null, 0],
-                ].filter(([,v])=>v!=null).map(([k,v,u,d])=>(
-                  <div key={k} className="md-list-item">
-                    <span className="md-list-item-label">{k}</span>
-                    <span className="md-list-item-value">{typeof v==='number'?v.toFixed(d):v}{u??''}</span>
-                  </div>
-                ))}
-
-                {geo._method && (
-                  <div className="md-list-item">
-                    <span className="md-list-item-label">Method</span>
-                    <span className="md-list-item-value" style={{fontSize:9}}>{geo._method}</span>
-                  </div>
-                )}
-
-                {/* Fine features */}
-                {geo.features?.length>0 && (() => {
-                  const counts=geo.features.reduce((acc,f)=>({...acc,[f.type]:(acc[f.type]??0)+1}),{})
-                  return (
-                    <>
-                      <div style={{height:1,background:'var(--md-outline-variant)',margin:'8px 0 6px'}}/>
-                      {Object.entries(counts).map(([type,count])=>(
-                        <div key={type} className="md-list-item">
-                          <span className="md-list-item-label">{type}</span>
-                          <span className="md-list-item-value" style={{color:FEAT_COLOR[type]??'var(--md-primary)'}}>{count} detected</span>
-                        </div>
-                      ))}
-                    </>
-                  )
-                })()}
-              </div>
-
-              {/* 04 — Quality */}
-              <SL n="04" t="Quality"/>
-              <div className="md-card-outlined" style={{padding:'12px',marginBottom:10}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-                  <span style={{fontSize:24,fontWeight:300,fontFamily:'var(--font-mono)',color:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)'}}>
-                    {geo._quality?.score??0}<span style={{fontSize:12,color:'var(--md-on-surface-variant)'}}>/100</span>
-                  </span>
-                  <span style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px',textTransform:'uppercase'}}>
-                    {geo._quality?.status??'ACCEPTED'}
-                  </span>
-                </div>
-                <div className="md-linear-progress" style={{marginBottom:10}}>
-                  <div className="md-linear-progress-bar" style={{width:`${geo._quality?.score??0}%`,background:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)'}}/>
-                </div>
-                {geo._quality?.warnings?.slice(0,3).map((w,i)=>(
-                  <div key={i} style={{fontSize:11,color:'var(--md-warning)',marginTop:4,lineHeight:1.4,fontFamily:'var(--font-sans)'}}>{w}</div>
-                ))}
-              </div>
-
-              {/* 05 — Ahmed body */}
-              {geo.ahmedRegime && (
-                <>
-                  <SL n="05" t="Flow Regime"/>
-                  <div className="md-card-outlined" style={{padding:'10px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <span style={{fontSize:13,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)'}}>Regime</span>
-                    <span style={{fontSize:12,fontWeight:600,fontFamily:'var(--font-mono)',color:ahmedColor(geo.ahmedRegime),background:`${ahmedColor(geo.ahmedRegime)}18`,padding:'3px 10px',borderRadius:99,border:`1px solid ${ahmedColor(geo.ahmedRegime)}44`}}>
-                      {geo.ahmedRegime.toUpperCase()} {geo.rearSlantAngleDeg?.toFixed(1)}°
-                    </span>
-                  </div>
-                </>
-              )}
-            </>
-          )}
+          <span style={{fontSize:14,fontFamily:'monospace',fontWeight:'bold',color:'#22cc55',letterSpacing:'.06em',minWidth:42,textAlign:'right'}}>
+            {Math.round(pct)}<span style={{fontSize:10,color:'#1a5a1a'}}>%</span>
+          </span>
         </div>
-      </div>
-
-      {/* ══ CENTRE ════════════════════════════════════════════════════════════ */}
-      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
-
-        {/* Toolbar — hidden in compare mode (CompareOverlay has its own) */}
-        {!compareMode && (
-          <div style={{
-            height:48,flexShrink:0,display:'flex',alignItems:'center',gap:4,padding:'0 12px',
-            background:'var(--md-surface-container)',borderBottom:'1px solid var(--md-outline-variant)',
-          }}>
-            <span style={{fontSize:16,fontWeight:500,color:'var(--md-on-surface)',fontFamily:'var(--font-sans)',marginRight:8}}>
-              {VIEWS.find(v=>v.id===activeView)?.fullLabel}
-            </span>
-            <div style={{width:1,height:20,background:'var(--md-outline-variant)',margin:'0 4px'}}/>
-
-            {/* Sep */}
-            <button className="md-icon-btn" data-active={showSep} onClick={()=>setShowSep(p=>!p)} title="Separation lines" style={{fontSize:12}}>⌁</button>
-
-            {/* Outline mode toggle */}
-            {geo?._hasBothModes && (
-              <div style={{display:'flex',alignItems:'center',gap:0,background:'var(--md-surface-container-highest)',borderRadius:8,padding:2}}>
-                <button
-                  onClick={()=>setOutlineMode('smooth')}
-                  style={{
-                    padding:'3px 10px',borderRadius:6,fontSize:10,border:'none',cursor:'pointer',
-                    fontFamily:'var(--font-mono)',fontWeight:600,letterSpacing:'0.04em',
-                    background:outlineMode==='smooth'?'var(--md-primary-container)':'transparent',
-                    color:outlineMode==='smooth'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
-                    transition:'all 0.15s',
-                  }}
-                  title="Maximum smoothing — for presentations and slides">
-                  Smooth
-                </button>
-                <button
-                  onClick={()=>setOutlineMode('technical')}
-                  style={{
-                    padding:'3px 10px',borderRadius:6,fontSize:10,border:'none',cursor:'pointer',
-                    fontFamily:'var(--font-mono)',fontWeight:600,letterSpacing:'0.04em',
-                    background:outlineMode==='technical'?'var(--md-primary-container)':'transparent',
-                    color:outlineMode==='technical'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
-                    transition:'all 0.15s',
-                  }}
-                  title="Preserves geometry — for overlays and benchmarking">
-                  Technical
-                </button>
-              </div>
-            )}
-
-            {/* Arches */}
-            <button className="md-icon-btn" data-active={showArches&&canShowArches}
-              onClick={()=>canShowArches&&setShowArches(p=>!p)}
-              style={{opacity:canShowArches?1:0.35,cursor:canShowArches?'pointer':'default',fontSize:12}}
-              title="Wheel arches">⊙</button>
-
-            {/* Diagnostic */}
-            {geo && (
-              <span style={{fontSize:11,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-mono)',marginLeft:4}}>
-                {geo._contourPts?.length??0}pts
-                {geo.bodyType?` · ${geo.bodyType}`:''}
-                {geo.wasFlipped?' · flipped':''}
-              </span>
-            )}
-
-            <div style={{flex:1}}/>
-
-            <button className="md-btn-outlined" style={{height:36,fontSize:12,padding:'0 14px'}}
-              onClick={exportSVG} disabled={!geo} title="Download full canvas SVG">↓ SVG</button>
-            <button className="md-btn-outlined"
-              style={{height:36,fontSize:12,padding:'0 14px',opacity:geo?1:0.35}}
-              onClick={exportOutlineSVG} disabled={!geo}
-              title="Download black outline SVG — insert into Word via Insert → Pictures">↓ Outline</button>
-            <button className="md-btn-outlined"
-              style={{height:36,fontSize:12,padding:'0 14px',borderColor:copyDone?'var(--md-success)':'var(--md-outline)',color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)'}}
-              onClick={copyOutline} disabled={!geo}
-              title="Download PNG with white background">
-              {copyDone?'✓ Downloaded':'⎘ PNG'}
-            </button>
-            <button className="md-btn-outlined"
-              style={{height:36,fontSize:12,padding:'0 14px'}}
-              onClick={exportTransparentPNG} disabled={!geo}
-              title="Download transparent PNG — layer over anything in PowerPoint or Keynote">
-              ⎘ PNG (transparent)
-            </button>
-          </div>
-        )}
-
-        {/* Canvas */}
-        <div style={{flex:1,position:'relative',overflow:'hidden',background:'var(--md-surface)'}} ref={svgRef}>
-
-          {/* Compare mode */}
-          {compareMode && canCompare && geoA && geoB && (
-            <CompareOverlay geoA={geoA} geoB={geoB} labelA={labelA} labelB={labelB}/>
-          )}
-
-          {/* Compare mode but not enough data */}
-          {compareMode && (!canCompare || !geoA || !geoB) && (
-            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}>
-              <div style={{fontSize:32,color:'var(--md-outline-variant)'}}>⇔</div>
-              <div style={{fontSize:16,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)'}}>Analyse two views to compare</div>
-              <div style={{fontSize:13,color:'var(--md-on-surface-disabled)',textAlign:'center',lineHeight:1.8,fontFamily:'var(--font-sans)'}}>
-                Upload and analyse at least two car photos<br/>then click Compare in the navigation rail
-              </div>
-            </div>
-          )}
-
-          {/* Normal view */}
-          {!compareMode && (
-            <>
-              <PipelineOverlay visible={isRunning} pct={traceProgress.pct ?? 0} msg={traceProgress.msg ?? ''} sub={traceProgress.sub ?? ''} stages={STAGES ?? []}/>
-
-              {!geo && !isRunning && (
-                <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16}}>
-                  <div style={{fontSize:48,color:'var(--md-outline-variant)'}}>{VIEWS.find(v=>v.id===activeView)?.icon}</div>
-                  <div style={{fontSize:22,fontWeight:400,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)'}}>{VIEWS.find(v=>v.id===activeView)?.fullLabel}</div>
-                  <div style={{fontSize:14,color:'var(--md-on-surface-disabled)',textAlign:'center',lineHeight:1.8,fontFamily:'var(--font-sans)'}}>
-                    Drop a photo into the {VIEWS.find(v=>v.id===activeView)?.label} slot<br/>then click Analyse
-                  </div>
-                  {anyOutline && !hasFile && (
-                    <div style={{fontSize:12,color:'var(--md-primary)',fontFamily:'var(--font-mono)',opacity:0.6}}>
-                      {analysedViews.length} view{analysedViews.length!==1?'s':''} analysed — see sidebar
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {geo && !isRunning && (
-                <div style={{width:'100%',height:'100%'}}>{renderCanvas(geo,isDrawing,drawDone)}</div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Thumbnail strip */}
-        {!compareMode && (
-          <div style={{
-            height:88,flexShrink:0,
-            display:'grid',gridTemplateColumns:'repeat(4,1fr)',
-            gap:6,padding:6,
-            borderTop:'1px solid var(--md-outline-variant)',
-            background:'var(--md-surface-container)',
-          }}>
-            {VIEWS.map(v=>{
-              const s=getSlot(v.id)
-              const pts=s.geo?._smoothPts??s.geo?._contourPts??[]
-              const aspect=s.geo?._bboxAspect??s.geo?.trueAspect??2.2
-              const TW=100,TH=52,TP=4
-              let pathD=''
-              if (pts.length>10) {
-                const dw=(TW-TP*2)*0.93,dh=Math.min(dw/aspect,TH-TP*2)
-                const ox=TP+((TW-TP*2)-dw)/2,oy=TP+((TH-TP*2)-dh)/2
-                pathD=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`).join(' ')+' Z'
-              }
-              return (
-                <button key={v.id} className="md-view-thumb" data-active={activeView===v.id}
-                  onClick={()=>{setActiveView(v.id);setCompareMode(false)}}>
-                  <div style={{flex:1,background:'var(--md-surface)',borderRadius:8,overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                    {s.geo?(
-                      <div style={{width:'100%',height:'100%',pointerEvents:'none'}}>
-                        {v.id==='side'  && <SideViewSVG  g={s.geo} showSep={false} showArches={false} isDrawing={false} drawDone={s.drawDone}/>}
-                        {v.id==='front' && <FrontViewSVG g={s.geo}/>}
-                        {v.id==='top'   && <TopViewSVG   g={s.geo}/>}
-                        {v.id==='rear'  && <RearViewSVG  g={s.geo}/>}
-                      </div>
-                    ):(
-                      <span style={{fontSize:16,color:'var(--md-outline-variant)'}}>{v.icon}</span>
-                    )}
-                  </div>
-                  <div style={{fontSize:11,fontWeight:500,textAlign:'center',color:activeView===v.id?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.3px'}}>
-                    {v.label}
-                  </div>
-                  {s.geo&&<div style={{position:'absolute',top:5,right:5,width:6,height:6,borderRadius:'50%',background:'var(--md-success)'}}/>}
-                  {s.running&&<div style={{position:'absolute',top:5,right:5,width:6,height:6,borderRadius:'50%',background:'var(--md-primary)',animation:'md-pulse 1s ease infinite'}}/>}
-                </button>
-              )
-            })}
-          </div>
-        )}
       </div>
     </div>
   )
