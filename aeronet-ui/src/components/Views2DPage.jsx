@@ -285,6 +285,7 @@ export default function Views2DPage({ backend = '' }) {
   const [activeView,   setActiveView]   = useState('side')
   const [analysisMode, setAnalysisMode] = useState('A')
   const [showSep,      setShowSep]      = useState(true)
+  const [outlineMode,  setOutlineMode]  = useState('smooth') // 'smooth' | 'technical'
   const [showArches,   setShowArches]   = useState(false)
   const [compareMode,  setCompareMode]  = useState(false)
   const [compareB,     setCompareB]     = useState('front')  // which slot is Car B
@@ -426,6 +427,7 @@ export default function Views2DPage({ backend = '' }) {
           // ── Contour points ─────────────────────────────────────────────
           _smoothPts:        result.display_outline_pts ?? result.smooth_pts_display ?? result.smooth_pts ?? result.outline_pts ?? result.technical_outline_pts ?? null,
           _contourPts:       result.technical_outline_pts ?? result.smooth_pts_2k ?? result.outline_pts ?? result.display_outline_pts ?? result.smooth_pts_display ?? result.smooth_pts ?? null,
+          _hasBothModes:     !!(result.display_outline_pts && result.technical_outline_pts),
           _bboxAspect:       result.bbox ? result.bbox.w/Math.max(1,result.bbox.h) : undefined,
           _keypoints:        result.keypoints,
           _method:           result.method,
@@ -465,8 +467,8 @@ export default function Views2DPage({ backend = '' }) {
     a.download=`aeronet_${activeView}.svg`; a.click()
   }
 
-  const _buildOutlineSVG = (geo, {strokeColor='#111111',strokeWidth=3,bg=true}={}) => {
-    const pts = geo._smoothPts ?? geo._contourPts
+  const _buildOutlineSVG = (geo, {strokeColor='#111111',strokeWidth=3,bg=true,mode=null}={}) => {
+    const pts = (mode==='technical' ? geo._contourPts : null) ?? geo._smoothPts ?? geo._contourPts
     if (!pts?.length) return null
 
     const normW = geo.normWidth  ?? geo.norm_w  ?? null
@@ -514,7 +516,7 @@ export default function Views2DPage({ backend = '' }) {
     const geo = getSlot(activeView).geo
     const _hasPoints = geo?._smoothPts?.length || geo?._contourPts?.length
     if (!_hasPoints) return
-    const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true})
+    const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true,mode:outlineMode})
     if (!svgStr) return
     // Extract actual dimensions from the generated SVG (aspect-correct, not hardcoded)
     const wMatch = svgStr.match(/width="(\d+)"/)
@@ -548,7 +550,7 @@ export default function Views2DPage({ backend = '' }) {
   const exportOutlineSVG = () => {
     const geo=getSlot(activeView).geo
     if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
-    const svgStr=_buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:2.5,bg:false})
+    const svgStr=_buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:2.5,bg:false,mode:outlineMode})
     if (!svgStr) return
     const a=document.createElement('a')
     a.href=URL.createObjectURL(new Blob([svgStr],{type:'image/svg+xml'}))
@@ -560,7 +562,7 @@ export default function Views2DPage({ backend = '' }) {
     const geo = getSlot(activeView).geo
     if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
     // bg:false = transparent background SVG
-    const svgStr = _buildOutlineSVG(geo, {strokeColor:'#000000', strokeWidth:4, bg:false})
+    const svgStr = _buildOutlineSVG(geo, {strokeColor:'#000000', strokeWidth:4, bg:false, mode:outlineMode})
     if (!svgStr) return
     const wMatch = svgStr.match(/width="(\d+)"/)
     const hMatch = svgStr.match(/height="(\d+)"/)
@@ -609,7 +611,7 @@ export default function Views2DPage({ backend = '' }) {
 
   const renderCanvas = (g,isDrawingFlag,drawDoneFlag) => {
     if (!g) return null
-    if (activeView==='side')  return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag}/>
+    if (activeView==='side')  return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag} outlineMode={outlineMode}/>
     if (activeView==='front') return <FrontViewSVG g={g}/>
     if (activeView==='top')   return <TopViewSVG g={g}/>
     if (activeView==='rear')  return <RearViewSVG g={g}/>
@@ -905,6 +907,36 @@ export default function Views2DPage({ backend = '' }) {
 
             {/* Sep */}
             <button className="md-icon-btn" data-active={showSep} onClick={()=>setShowSep(p=>!p)} title="Separation lines" style={{fontSize:12}}>⌁</button>
+
+            {/* Outline mode toggle */}
+            {geo?._hasBothModes && (
+              <div style={{display:'flex',alignItems:'center',gap:0,background:'var(--md-surface-container-highest)',borderRadius:8,padding:2}}>
+                <button
+                  onClick={()=>setOutlineMode('smooth')}
+                  style={{
+                    padding:'3px 10px',borderRadius:6,fontSize:10,border:'none',cursor:'pointer',
+                    fontFamily:'var(--font-mono)',fontWeight:600,letterSpacing:'0.04em',
+                    background:outlineMode==='smooth'?'var(--md-primary-container)':'transparent',
+                    color:outlineMode==='smooth'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
+                    transition:'all 0.15s',
+                  }}
+                  title="Maximum smoothing — for presentations and slides">
+                  Smooth
+                </button>
+                <button
+                  onClick={()=>setOutlineMode('technical')}
+                  style={{
+                    padding:'3px 10px',borderRadius:6,fontSize:10,border:'none',cursor:'pointer',
+                    fontFamily:'var(--font-mono)',fontWeight:600,letterSpacing:'0.04em',
+                    background:outlineMode==='technical'?'var(--md-primary-container)':'transparent',
+                    color:outlineMode==='technical'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
+                    transition:'all 0.15s',
+                  }}
+                  title="Preserves geometry — for overlays and benchmarking">
+                  Technical
+                </button>
+              </div>
+            )}
 
             {/* Arches */}
             <button className="md-icon-btn" data-active={showArches&&canShowArches}
