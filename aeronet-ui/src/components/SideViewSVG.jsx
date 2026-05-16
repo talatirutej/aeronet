@@ -22,18 +22,43 @@ const FEAT_COLOR = {
 
 function normPtsToPath(pts, bboxAspect, cW=W, cH=H, pad=PAD, normW=null, normH=null) {
   if (!pts?.length) return ''
+  // When normW/normH are provided (aspect-preserving normalisation):
+  //   pts.x ∈ [0, normW],  pts.y ∈ [0, normH]  where normW ≤ 1, normH ≤ 1
+  // We map these to fill the canvas with uniform padding on all sides.
+  // scaleX maps [0,normW] → draw width,  scaleY maps [0,normH] → draw height.
+  // This gives the car its natural proportions relative to the canvas.
+  if (normW && normH && normW > 0 && normH > 0) {
+    const drawW = cW - pad * 2.5
+    const drawH = cH - pad * 2.5
+    // Fit the car's true aspect ratio inside the draw area (letterbox/pillarbox)
+    const carAspect = normW / normH
+    const canvasAspect = drawW / drawH
+    let scaleX, scaleY, ox, oy
+    if (carAspect > canvasAspect) {
+      // Car is wider than canvas ratio — constrain by width
+      scaleX = drawW / normW
+      scaleY = scaleX          // uniform scale preserves proportions
+      ox = pad * 1.25
+      oy = (cH - normH * scaleY) / 2
+    } else {
+      // Car is taller than canvas ratio — constrain by height
+      scaleY = drawH / normH
+      scaleX = scaleY
+      oy = pad * 1.25
+      ox = (cW - normW * scaleX) / 2
+    }
+    return pts.map(([nx,ny],i) =>
+      `${i===0?'M':'L'}${(ox+nx*scaleX).toFixed(2)},${(oy+ny*scaleY).toFixed(2)}`
+    ).join(' ')+' Z'
+  }
+  // Fallback (no norm metadata): old behaviour
   const aspect = bboxAspect ?? 2.4
   const dw = (cW-pad*2)*0.95
   const dh = Math.min(dw/aspect, cH-pad*2)
   const ox = pad+((cW-pad*2)-dw)/2
   const oy = pad+((cH-pad*2)-dh)/2
-  // If normW/normH provided, scale points to fill the draw box properly.
-  // Aspect-preserving norm: pts.x ∈ [0,normW], pts.y ∈ [0,normH] where normW≤1, normH≤1
-  // Without this, a car with normH=0.18 renders only in the top 18% of dh.
-  const scaleX = (normW && normW > 0) ? dw / normW : dw
-  const scaleY = (normH && normH > 0) ? dh / normH : dh
   return pts.map(([nx,ny],i) =>
-    `${i===0?'M':'L'}${(ox+nx*scaleX).toFixed(2)},${(oy+ny*scaleY).toFixed(2)}`
+    `${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`
   ).join(' ')+' Z'
 }
 
@@ -86,10 +111,30 @@ function SideViewSVGInner({ g, showSep, showArches, drawDone }) {
     separated:    '#F2B8B8',
   }[regime] ?? '#E0E0E0'
 
-  const dw = (W-PAD*2)*0.95
-  const dh = Math.min(dw/bboxAspect, H-PAD*2)
-  const ox  = PAD+((W-PAD*2)-dw)/2
-  const oy  = PAD+((H-PAD*2)-dh)/2
+  // Match normPtsToPath layout: fit true car proportions into canvas
+  const normW = g.normWidth  ?? g.norm_w  ?? null
+  const normH = g.normHeight ?? g.norm_h  ?? null
+  let dw, dh, ox, oy
+  if (normW && normH && normW > 0 && normH > 0) {
+    const drawW = W - PAD * 2.5
+    const drawH = H - PAD * 2.5
+    const carAspect = normW / normH
+    const canvasAspect = drawW / drawH
+    if (carAspect > canvasAspect) {
+      const scale = drawW / normW
+      dw = normW * scale; dh = normH * scale
+      ox = PAD * 1.25;    oy = (H - dh) / 2
+    } else {
+      const scale = drawH / normH
+      dw = normW * scale; dh = normH * scale
+      oy = PAD * 1.25;    ox = (W - dw) / 2
+    }
+  } else {
+    dw = (W-PAD*2)*0.95
+    dh = Math.min(dw/bboxAspect, H-PAD*2)
+    ox = PAD+((W-PAD*2)-dw)/2
+    oy = PAD+((H-PAD*2)-dh)/2
+  }
 
   const sx = px => (px/imageW)*W
   const sy = py => (py/imageH)*H
