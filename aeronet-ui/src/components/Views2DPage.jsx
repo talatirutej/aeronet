@@ -1,10 +1,16 @@
 // Views2DPage.jsx — StatCFD Vehicle Outline Analysis
 // Copyright (c) 2026 Rutej Talati / statinsite.com
 //
-// Updated: showArches toggle, new geo fields (arch_pts, arch_wheels,
-//          arch_bbox_aspect, features, sharp_indices, _imageW, _imageH),
-//          detected feature rows in sidebar, PNG upload encoding,
-//          updated pipeline stage labels.
+// Changes vs original:
+//   - showArches state + Arches toolbar toggle (side view only)
+//   - geo object maps new backend fields: arch_pts, arch_wheels,
+//     arch_bbox_aspect, features, sharp_indices, _imageW, _imageH
+//   - prepareImage: PNG (lossless) instead of JPEG 0.93
+//   - Sidebar 03: detected feature rows + arch wheel count
+//   - Toolbar: Arches button, feature count in diagnostic label
+//   - Thumbnail strip: explicit showArches={false} on SideViewSVG
+//   - STAGES + BACKEND_MSGS updated for new stage 7 (enhance)
+//   - SideViewSVG never called with g=null (fixes blank render)
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import SideViewSVG     from './SideViewSVG.jsx'
@@ -14,7 +20,7 @@ import PipelineOverlay from './PipelineOverlay.jsx'
 import SimulationModal from './SimulationModal.jsx'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VIEW DEFINITIONS
+// CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 
 const VIEWS = [
@@ -24,7 +30,6 @@ const VIEWS = [
   { id: 'rear',  label: 'Rear View',  icon: '◧', shortLabel: 'Rear'  },
 ]
 
-// Updated stages — includes the new enhancement stage (7)
 const STAGES = [
   { id: 'prep',    label: 'Preprocess', icon: '⚙',  pct: [0,  8]  },
   { id: 'rmbg',   label: 'RMBG 2.0',   icon: '◉',  pct: [8,  18] },
@@ -37,23 +42,22 @@ const STAGES = [
   { id: 'done',   label: 'Complete',   icon: '✓',  pct: [92, 100]},
 ]
 
-// Updated backend messages — reflect new stage 7 labels
 const BACKEND_MSGS = [
-  [0,  'Stage 0a: EXIF fix, canvas margin, resize to 1536px…',          'Input normalisation'],
-  [8,  'Stage 0b: RMBG 2.0 — product-photo foreground extraction…',     'Separating car from background'],
-  [18, 'Stage 1: YOLO11x-seg — confirming vehicle + bounding box…',     '10% bbox padding applied'],
-  [32, 'Stage 2: SAM3 point-prompted mask refinement…',                 '5 foreground + 4 background pts'],
-  [46, 'Stage 3-5: morph close → CHAIN_APPROX_NONE → Canny snap…',     'Constrained to ±8px boundary band'],
-  [60, 'Stage 7a: Wheel arch punch — Hough on distance transform…',     'Punching open arch cutouts'],
-  [65, 'Stage 7b: Fine feature merge — antenna, mirror, spoiler…',      '2× res Canny on pre-RMBG image'],
-  [70, 'Stage 7c: Catmull-Rom spline — curvature-adaptive tension…',    'Sharp corners preserved'],
-  [75, 'Stage 8: Hough circles — wheel centre, rim radius, spokes…',   'Reading wheel geometry'],
-  [84, 'Stage 9: Ahmed body params — Cd, CdA, rear slant angle…',      'Ahmed 1984 correlation'],
-  [92, 'Quality scoring — 10-signal confidence assessment…',            'Checking segmentation'],
-  [97, 'Finalising SVG, engineering exports…',                          'Complete — rendering'],
+  [0,  'Stage 0a: EXIF fix, canvas margin, resize to 1536px…',        'Input normalisation'],
+  [8,  'Stage 0b: RMBG 2.0 — product-photo foreground extraction…',   'Separating car from background'],
+  [18, 'Stage 1: YOLO11x-seg — confirming vehicle + bounding box…',   '10% bbox padding applied'],
+  [32, 'Stage 2: SAM3 point-prompted mask refinement…',               '5 foreground + 4 background pts'],
+  [46, 'Stage 3-5: morph close → CHAIN_APPROX_NONE → Canny snap…',   'Constrained to ±8px boundary band'],
+  [60, 'Stage 7a: Wheel arch punch — Hough on distance transform…',   'Punching open arch cutouts'],
+  [65, 'Stage 7b: Fine feature merge — antenna, mirror, spoiler…',    '2× res Canny on pre-RMBG image'],
+  [70, 'Stage 7c: Catmull-Rom spline — curvature-adaptive tension…',  'Sharp corners preserved'],
+  [74, 'Stage 8: Hough circles — wheel centre, rim radius, spokes…',  'Reading wheel geometry'],
+  [84, 'Stage 9: Ahmed body params — Cd, CdA, rear slant angle…',     'Ahmed 1984 correlation'],
+  [92, 'Quality scoring — 10-signal confidence assessment…',          'Checking segmentation'],
+  [97, 'Finalising SVG, engineering exports…',                        'Complete — rendering'],
 ]
 
-// Feature colour palette — must match contour_enhancements.py
+// Feature colour map — must match contour_enhancements.py + SideViewSVG.jsx
 const FEAT_COLOR = {
   antenna: 'rgba(255,159,10,0.92)',
   mirror:  'rgba(48,209,88,0.92)',
@@ -66,8 +70,7 @@ const FEAT_COLOR = {
 // IMAGE UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
 
-// CHANGED: send PNG (lossless) instead of JPEG 0.93 to avoid blocking
-// artifacts at contour boundaries — critical for Canny edge snapping accuracy.
+// Send PNG (lossless) — eliminates JPEG blocking artifacts at contour edges
 async function prepareImage(file, maxWidth = 1440) {
   return new Promise((resolve) => {
     const img = new window.Image()
@@ -83,7 +86,6 @@ async function prepareImage(file, maxWidth = 1440) {
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h)
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
       ctx.drawImage(img, 0, 0, w, h)
-      // PNG — lossless, no JPEG artifacts at contour edges
       canvas.toBlob(
         blob => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.png'), { type: 'image/png' })),
         'image/png'
@@ -114,7 +116,7 @@ async function fetchImageFromUrl(url) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DROP ZONE
+// SUBCOMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DropZone({ viewId, label, icon, file, onFile, compact = false }) {
@@ -152,10 +154,6 @@ function DropZone({ viewId, label, icon, file, onFile, compact = false }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SECTION LABEL
-// ─────────────────────────────────────────────────────────────────────────────
-
 function SL({ n, t }) {
   return (
     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, marginTop:10 }}>
@@ -166,20 +164,16 @@ function SL({ n, t }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// OUTLINE THUMBNAIL — small preview for sidebar list
-// ─────────────────────────────────────────────────────────────────────────────
-
 function OutlineThumbnail({ geo, label, isActive, onClick }) {
-  const TW = 120, TH = 60, TPAD = 6
+  const TW = 120, TH = 60, TP = 6
   const pts = geo?._smoothPts ?? geo?._contourPts ?? []
   let pathD = ''
   if (pts.length > 10) {
-    const bboxAspect = geo._bboxAspect ?? 2.2
-    const dw = (TW - TPAD*2) * 0.95
-    const dh = Math.min(dw / bboxAspect, TH - TPAD*2)
-    const ox = TPAD + ((TW - TPAD*2) - dw) / 2
-    const oy = TPAD + ((TH - TPAD*2) - dh) / 2
+    const aspect = geo._bboxAspect ?? 2.2
+    const dw = (TW - TP*2) * 0.95
+    const dh = Math.min(dw / aspect, TH - TP*2)
+    const ox = TP + ((TW - TP*2) - dw) / 2
+    const oy = TP + ((TH - TP*2) - dh) / 2
     pathD = pts.map(([nx,ny],i) =>
       `${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`
     ).join(' ') + ' Z'
@@ -201,7 +195,7 @@ function OutlineThumbnail({ geo, label, isActive, onClick }) {
           ) : (
             <text x={TW/2} y={TH/2+4} textAnchor="middle"
               fill="rgba(255,255,255,0.12)" fontSize="9"
-              fontFamily="'IBM Plex Mono',monospace">no outline</text>
+              fontFamily="'IBM Plex Mono',monospace">—</text>
           )}
         </svg>
       </div>
@@ -209,12 +203,11 @@ function OutlineThumbnail({ geo, label, isActive, onClick }) {
         <div style={{ fontSize:10, fontWeight:700, color: isActive ? 'var(--blue)' : 'var(--text-secondary)', fontFamily:'var(--font-mono)' }}>
           {label}
         </div>
-        {geo && (
+        {geo ? (
           <div style={{ fontSize:8, color:'var(--text-quaternary)', fontFamily:'var(--font-mono)', marginTop:2 }}>
             {(geo._contourPts?.length ?? 0)}pt · {geo._method ?? '—'}
           </div>
-        )}
-        {!geo && (
+        ) : (
           <div style={{ fontSize:8, color:'var(--text-quaternary)' }}>not analysed</div>
         )}
       </div>
@@ -228,25 +221,20 @@ function OutlineThumbnail({ geo, label, isActive, onClick }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REAR VIEW SVG — synthetic reconstruction from geometry parameters
-// ─────────────────────────────────────────────────────────────────────────────
-
 function RearViewSVG({ g }) {
-  const W = 300, H = 220, cx = W/2, gY = H-14
-  const kp     = g?._keypoints
-  const wheels = kp?.wheels ?? []
-  const wsAngle  = g?.wsAngleDeg ?? 55
-  const bh = Math.round(Math.min(120, Math.max(75, (g?.cabinH ?? 0.58) * H * 1.1)))
-  const bw = Math.round(Math.min(120, Math.max(70, 0.50 * W)))
-  const bodyBot = gY - bh * 0.06
-  const bodyTop = bodyBot - bh
-  const roofNarrow  = Math.max(0.28, Math.min(0.46, 0.38-(wsAngle-55)*0.003))
-  const roofHW      = bw * roofNarrow
-  const shoulderHW  = bw * 0.50
-  const sillHW      = bw * 0.46
-  const shoulderY   = bodyTop + bh * 0.55
-  const sillY       = bodyTop + bh * 0.92
+  const RW = 300, RH = 220, cx = RW/2, gY = RH-14
+  const wheels  = g?._keypoints?.wheels ?? []
+  const wsAngle = g?.wsAngleDeg ?? 55
+  const bh = Math.round(Math.min(120, Math.max(75, (g?.cabinH ?? 0.58) * RH * 1.1)))
+  const bw = Math.round(Math.min(120, Math.max(70, 0.50 * RW)))
+  const bodyBot    = gY - bh * 0.06
+  const bodyTop    = bodyBot - bh
+  const roofNarrow = Math.max(0.28, Math.min(0.46, 0.38-(wsAngle-55)*0.003))
+  const roofHW     = bw * roofNarrow
+  const shoulderHW = bw * 0.50
+  const sillHW     = bw * 0.46
+  const shoulderY  = bodyTop + bh * 0.55
+  const sillY      = bodyTop + bh * 0.92
   const rearPath = [
     `M ${cx} ${bodyTop}`,
     `C ${cx-roofHW*0.6} ${bodyTop} ${cx-shoulderHW} ${shoulderY-bh*0.22} ${cx-shoulderHW} ${shoulderY}`,
@@ -263,51 +251,52 @@ function RearViewSVG({ g }) {
     `L ${cx-shoulderHW*0.82} ${bodyTop+bh*0.55}`,
     'Z',
   ].join(' ')
-  const wR  = wheels.length >= 1 ? Math.max(12, Math.min(22, wheels[0].r/800*W*0.9)) : 15
+  const wR  = wheels.length >= 1 ? Math.max(12, Math.min(22, wheels[0].r/800*RW*0.9)) : 15
   const w1x = cx - shoulderHW * 1.05
   const w2x = cx + shoulderHW * 1.05
   const wY  = gY - wR
-  const rearLightPath = (side) => {
-    const sx = side === 'L' ? cx - shoulderHW : cx + shoulderHW * 0.55
-    return `M ${sx} ${bodyTop+bh*0.05} L ${sx} ${bodyTop+bh*0.35}`
+  const lightPath = (side) => {
+    const lx = side === 'L' ? cx - shoulderHW : cx + shoulderHW * 0.55
+    return `M ${lx} ${bodyTop+bh*0.05} L ${lx} ${bodyTop+bh*0.35}`
   }
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
-      <rect width={W} height={H} fill="#070d14"/>
-      <line x1={12} y1={gY} x2={W-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
-      <path d={rearPath}  fill="none" stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
-      <path d={wscPath}   fill="none" stroke="rgba(10,132,255,0.32)" strokeWidth=".9"/>
-      {['L','R'].map(s => <path key={s} d={rearLightPath(s)} stroke="rgba(255,80,80,0.65)" strokeWidth="3.5" strokeLinecap="round"/>)}
+    <svg viewBox={`0 0 ${RW} ${RH}`} style={{width:'100%',height:'100%'}} preserveAspectRatio="xMidYMid meet">
+      <rect width={RW} height={RH} fill="#070d14"/>
+      <line x1={12} y1={gY} x2={RW-12} y2={gY} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+      <path d={rearPath} fill="none" stroke="rgba(10,132,255,0.7)" strokeWidth="1.2"/>
+      <path d={wscPath}  fill="none" stroke="rgba(10,132,255,0.32)" strokeWidth=".9"/>
+      {['L','R'].map(s => <path key={s} d={lightPath(s)} stroke="rgba(255,80,80,0.65)" strokeWidth="3.5" strokeLinecap="round"/>)}
       <rect x={cx-bw*0.12} y={bodyBot-8} width={bw*0.24} height={6} rx="2"
         fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth=".8"/>
-      {[[w1x,wY],[w2x,wY]].map(([wcx,wcy],i) => (
+      {[[w1x,wY],[w2x,wY]].map(([wx,wy],i) => (
         <g key={i}>
-          <circle cx={wcx} cy={wcy} r={wR} fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth="1.4"/>
-          <circle cx={wcx} cy={wcy} r={wR*0.5} fill="none" stroke="rgba(10,132,255,0.3)" strokeWidth=".8"/>
+          <circle cx={wx} cy={wy} r={wR} fill="none" stroke="rgba(10,132,255,0.9)" strokeWidth="1.4"/>
+          <circle cx={wx} cy={wy} r={wR*0.5} fill="none" stroke="rgba(10,132,255,0.3)" strokeWidth=".8"/>
         </g>
       ))}
-      <text x={cx} y={H-4} textAnchor="middle" fill="rgba(255,255,255,0.1)"
+      <text x={cx} y={RH-4} textAnchor="middle" fill="rgba(255,255,255,0.1)"
         fontSize="9" fontFamily="'IBM Plex Mono',monospace" letterSpacing=".12em">REAR</text>
     </svg>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN COMPONENT
+// MAIN
 // ─────────────────────────────────────────────────────────────────────────────
+
+const EMPTY_SLOT = { file: null, geo: null, running: false, progress: { pct:0, msg:'', sub:'' }, drawDone: false, isDrawing: false, error: null }
 
 export default function Views2DPage({ backend = '' }) {
   const [slots, setSlots] = useState({
-    side:  { file: null, geo: null, running: false, progress: { pct:0,msg:'',sub:'' }, drawDone: false, isDrawing: false, error: null },
-    front: { file: null, geo: null, running: false, progress: { pct:0,msg:'',sub:'' }, drawDone: false, isDrawing: false, error: null },
-    top:   { file: null, geo: null, running: false, progress: { pct:0,msg:'',sub:'' }, drawDone: false, isDrawing: false, error: null },
-    rear:  { file: null, geo: null, running: false, progress: { pct:0,msg:'',sub:'' }, drawDone: false, isDrawing: false, error: null },
+    side:  { ...EMPTY_SLOT },
+    front: { ...EMPTY_SLOT },
+    top:   { ...EMPTY_SLOT },
+    rear:  { ...EMPTY_SLOT },
   })
 
   const [activeView,   setActiveView]   = useState('side')
   const [analysisMode, setAnalysisMode] = useState('A')
   const [showSep,      setShowSep]      = useState(true)
-  // NEW — wheel arch overlay toggle (side view only)
   const [showArches,   setShowArches]   = useState(false)
   const [copyDone,     setCopyDone]     = useState(false)
   const [showSimModal, setShowSimModal] = useState(false)
@@ -316,26 +305,14 @@ export default function Views2DPage({ backend = '' }) {
   const [urlError,     setUrlError]     = useState('')
   const svgRef = useRef(null)
 
-  // ── Slot helpers ────────────────────────────────────────────────────────────
-
-  const getSlot = (id) => slots[id]
-  const setSlot = (id, patch) => setSlots(p => ({ ...p, [id]: { ...p[id], ...patch } }))
-
-  // ── File drop ───────────────────────────────────────────────────────────────
+  const getSlot = (id)         => slots[id]
+  const setSlot = (id, patch)  => setSlots(p => ({ ...p, [id]: { ...p[id], ...patch } }))
 
   const setViewFile = useCallback((viewId, file) => {
-    setSlot(viewId, {
-      file,
-      geo: null,
-      error: null,
-      drawDone: false,
-      isDrawing: false,
-      progress: { pct:0, msg:'', sub:'' },
-    })
+    setSlot(viewId, { file, geo: null, error: null, drawDone: false, isDrawing: false, progress: { pct:0, msg:'', sub:'' } })
     setActiveView(viewId)
-  }, [])
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Paste handler
   useEffect(() => {
     const handle = (e) => {
       const items = Array.from(e.clipboardData?.items ?? [])
@@ -343,23 +320,22 @@ export default function Views2DPage({ backend = '' }) {
       if (imgItem) { setViewFile(activeView, imgItem.getAsFile()); return }
       const text = e.clipboardData?.getData('text') ?? ''
       if (/^https?:\/\//i.test(text)) {
-        fetchImageFromUrl(text).then(f => setViewFile(activeView, f)).catch(err => setSlot(activeView, { error: err.message }))
+        fetchImageFromUrl(text)
+          .then(f => setViewFile(activeView, f))
+          .catch(err => setSlot(activeView, { error: err.message }))
       }
     }
     window.addEventListener('paste', handle)
     return () => window.removeEventListener('paste', handle)
-  }, [activeView, setViewFile])
+  }, [activeView, setViewFile])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Backend URL ─────────────────────────────────────────────────────────────
-
-  const apiUrl = path => backend ? `${backend}${path}` : `/api${path}`
-
+  const apiUrl      = path => backend ? `${backend}${path}` : `/api${path}`
   const getMsgForPct = pct => {
-    const entry = [...BACKEND_MSGS].reverse().find(m => pct >= m[0])
-    return entry ? { msg: entry[1], sub: entry[2] } : { msg: 'Processing…', sub: '' }
+    const e = [...BACKEND_MSGS].reverse().find(m => pct >= m[0])
+    return e ? { msg: e[1], sub: e[2] } : { msg: 'Processing…', sub: '' }
   }
 
-  // ── Run analysis ────────────────────────────────────────────────────────────
+  // ── Run analysis ──────────────────────────────────────────────────────────
 
   const runView = async (viewId) => {
     const slot = getSlot(viewId)
@@ -371,7 +347,6 @@ export default function Views2DPage({ backend = '' }) {
     let uploadFile
     try { uploadFile = await prepareImage(slot.file) } catch { uploadFile = slot.file }
 
-    // Start job with retry
     let jobId = null
     const MAX_ATTEMPTS = 8
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -391,8 +366,8 @@ export default function Views2DPage({ backend = '' }) {
         try { res = await fetch(apiUrl('/analyze-contour/start'), { method:'POST', body:fd, signal:ctrl.signal }) }
         finally { clearTimeout(timer) }
         if (res.ok) { jobId = (await res.json()).job_id; break }
-        const text = await res.text().catch(() => '')
-        setSlot(viewId, { running:false, error:`Server error ${res.status}${text?': '+text.slice(0,100):''}` })
+        const txt = await res.text().catch(() => '')
+        setSlot(viewId, { running:false, error:`Server error ${res.status}${txt?': '+txt.slice(0,100):''}` })
         return
       } catch {
         if (attempt >= MAX_ATTEMPTS - 1) {
@@ -406,7 +381,6 @@ export default function Views2DPage({ backend = '' }) {
 
     setSlot(viewId, { progress:{ pct:10, msg:'Job queued — preprocessing…', sub:'Input normalisation' } })
 
-    // Poll for result
     const startTime = Date.now()
     while (true) {
       await new Promise(r => setTimeout(r, 3000))
@@ -422,7 +396,9 @@ export default function Views2DPage({ backend = '' }) {
         poll = await res.json()
       } catch (e) { setSlot(viewId, { running:false, error:`Connection lost: ${e.message}` }); return }
 
-      if (poll.status === 'error') { setSlot(viewId, { running:false, error: poll.error ?? 'Analysis failed' }); return }
+      if (poll.status === 'error') {
+        setSlot(viewId, { running:false, error: poll.error ?? 'Analysis failed' }); return
+      }
 
       if (poll.status === 'running' || poll.status === 'pending') {
         const pct = Math.min(90, 10 + elapsed * 1.2)
@@ -440,66 +416,62 @@ export default function Views2DPage({ backend = '' }) {
         const cg = result.geometry
 
         const geo = {
-          // ── Common geometry fields ─────────────────────────────────────────
-          aspectRatio:       cg.aspectRatio      ?? cg.frontalAspect ?? 2.0,
-          wsAngleDeg:        cg.wsAngleDeg       ?? 58,
-          rearDrop:          cg.rearDrop         ?? 0.15,
-          rideH:             cg.rideH            ?? cg.groundClearanceNorm ?? 0.08,
-          archDepth:         cg.archDepth        ?? null,
-          Cd:                cg.Cd               ?? null,
-          CdA:               cg.CdA              ?? null,
+          // Common
+          aspectRatio:       cg.aspectRatio       ?? cg.frontalAspect ?? 2.0,
+          wsAngleDeg:        cg.wsAngleDeg        ?? 58,
+          rearDrop:          cg.rearDrop          ?? 0.15,
+          rideH:             cg.rideH             ?? cg.groundClearanceNorm ?? 0.08,
+          archDepth:         cg.archDepth         ?? null,
+          Cd:                cg.Cd                ?? null,
+          CdA:               cg.CdA               ?? null,
           rearSlantAngleDeg: cg.rearSlantAngleDeg ?? null,
-          ahmedRegime:       cg.ahmedRegime      ?? null,
-          cabinH:            cg.cabinH           ?? 0.58,
-          w1:                cg.w1               ?? 0.22,
-          w2:                cg.w2               ?? 0.76,
-          // ── Side-view specific ─────────────────────────────────────────────
-          hoodRatio:         cg.hoodRatio        ?? null,
-          cabinRatio:        cg.cabinRatio       ?? null,
-          bootRatio:         cg.bootRatio        ?? null,
-          // ── Front/rear-view specific ───────────────────────────────────────
-          frontalAreaNorm:   cg.frontalAreaNorm  ?? null,
-          trackWidthNorm:    cg.trackWidthNorm   ?? null,
+          ahmedRegime:       cg.ahmedRegime       ?? null,
+          cabinH:            cg.cabinH            ?? 0.58,
+          w1:                cg.w1                ?? 0.22,
+          w2:                cg.w2                ?? 0.76,
+          // Side-view
+          hoodRatio:         cg.hoodRatio         ?? null,
+          cabinRatio:        cg.cabinRatio        ?? null,
+          bootRatio:         cg.bootRatio         ?? null,
+          // Front/rear
+          frontalAreaNorm:   cg.frontalAreaNorm   ?? null,
+          trackWidthNorm:    cg.trackWidthNorm    ?? null,
           shoulderWidthNorm: cg.shoulderWidthNorm ?? null,
-          roofWidthNorm:     cg.roofWidthNorm    ?? null,
-          sillWidthNorm:     cg.sillWidthNorm    ?? null,
-          symmetryScore:     cg.symmetryScore    ?? null,
-          symmetryWarning:   cg.symmetryWarning  ?? null,
-          frontalAspect:     cg.frontalAspect    ?? null,
-          // ── View info ─────────────────────────────────────────────────────
-          _viewType:         cg._view            ?? viewId,
-          // ── Contour points ─────────────────────────────────────────────────
-          // _smoothPts  = Catmull-Rom dense display path (new)
-          // _contourPts = 2000pt technical path for surrogate (new)
-          _smoothPts:        result.display_outline_pts   ?? result.smooth_pts,
-          _contourPts:       result.technical_outline_pts ?? result.outline_pts,
+          roofWidthNorm:     cg.roofWidthNorm     ?? null,
+          sillWidthNorm:     cg.sillWidthNorm     ?? null,
+          symmetryScore:     cg.symmetryScore     ?? null,
+          symmetryWarning:   cg.symmetryWarning   ?? null,
+          frontalAspect:     cg.frontalAspect     ?? null,
+          // Meta
+          _viewType:         cg._view             ?? viewId,
+          // Contour points — prefer new field names, fall back to old
+          _smoothPts:        result.display_outline_pts   ?? result.smooth_pts   ?? null,
+          _contourPts:       result.technical_outline_pts ?? result.outline_pts  ?? null,
           _bboxAspect:       result.bbox ? result.bbox.w / Math.max(1, result.bbox.h) : undefined,
           _keypoints:        result.keypoints,
           _method:           result.method,
           _quality:          result.quality ?? null,
-          // ── NEW: wheel arch data (side view) ──────────────────────────────
-          arch_pts:          result.arch_pts        ?? null,
+          // NEW — wheel arch (side view)
+          arch_pts:          result.arch_pts         ?? null,
           arch_bbox_aspect:  result.arch_bbox_aspect ?? null,
           arch_wheels:       result.arch_wheels      ?? [],
-          // ── NEW: fine feature annotations ─────────────────────────────────
+          // NEW — fine features
           features:          result.features         ?? [],
           sharp_indices:     result.sharp_indices    ?? [],
-          // ── NEW: image dimensions for pixel→SVG scaling ───────────────────
+          // NEW — image dimensions for pixel→SVG scaling in SideViewSVG
           _imageW:           result._imageW          ?? cg._imageW ?? 1536,
           _imageH:           result._imageH          ?? cg._imageH ?? 768,
         }
 
         setSlot(viewId, { running:false, progress:{ pct:0, msg:'', sub:'' }, geo,
                           isDrawing:true, drawDone:false })
-        setTimeout(() => {
-          setSlot(viewId, { isDrawing:false, drawDone:true })
-        }, 2600)
+        setTimeout(() => setSlot(viewId, { isDrawing:false, drawDone:true }), 2600)
         return
       }
     }
   }
 
-  // ── Export SVG ──────────────────────────────────────────────────────────────
+  // ── Export / copy ─────────────────────────────────────────────────────────
 
   const exportSVG = () => {
     const svg = svgRef.current?.querySelector('svg')
@@ -509,17 +481,15 @@ export default function Views2DPage({ backend = '' }) {
     a.download = `statcfd_${activeView}.svg`; a.click()
   }
 
-  // ── Copy outline PNG ────────────────────────────────────────────────────────
-
   const copyOutline = async () => {
     const geo = getSlot(activeView).geo
     if (!geo?._contourPts) return
     const CW = 800, CH = 380, CP = 24
-    const rawPts = geo._smoothPts ?? geo._contourPts
-    const bboxAspect   = geo._bboxAspect ?? (CW/CH)
-    const canvasAspect = (CW-CP*2)/(CH-CP*2)
+    const rawPts     = geo._smoothPts ?? geo._contourPts
+    const bboxAspect = geo._bboxAspect ?? (CW/CH)
+    const cAspect    = (CW-CP*2)/(CH-CP*2)
     let dw, dh
-    if (bboxAspect > canvasAspect) { dw=(CW-CP*2)*0.95; dh=dw/bboxAspect }
+    if (bboxAspect > cAspect) { dw=(CW-CP*2)*0.95; dh=dw/bboxAspect }
     else { dh=(CH-CP*2)*0.90; dw=dh*bboxAspect; if(dw>(CW-CP*2)*0.95){dw=(CW-CP*2)*0.95;dh=dw/bboxAspect} }
     const ox=CP+((CW-CP*2)-dw)/2, oy=CP+((CH-CP*2)-dh)/2
     const d = rawPts.map(([nx,ny],i) =>
@@ -543,7 +513,7 @@ export default function Views2DPage({ backend = '' }) {
     img.src = url
   }
 
-  // ── Convenience accessors ───────────────────────────────────────────────────
+  // ── Derived state ─────────────────────────────────────────────────────────
 
   const activeSlot    = getSlot(activeView)
   const isRunning     = activeSlot.running
@@ -555,14 +525,13 @@ export default function Views2DPage({ backend = '' }) {
   const hasFile       = !!activeSlot.file
   const anyOutline    = VIEWS.some(v => !!getSlot(v.id).geo)
 
-  const ahmedColor = r => ({ attached:'#30d158', intermediate:'#ff9f0a', critical:'#ff453a', separated:'#ff453a' }[r] ?? 'var(--blue)')
-
-  // Arch toggle is only meaningful for side view with arch data
+  // Arch toggle only meaningful when side view has arch data
   const canShowArches = activeView === 'side' && !!geo?.arch_pts
 
-  // ── Render active view canvas ───────────────────────────────────────────────
+  const ahmedColor = r => ({ attached:'#30d158', intermediate:'#ff9f0a', critical:'#ff453a', separated:'#ff453a' }[r] ?? 'var(--blue)')
 
   const renderActiveView = (g, isDrawingFlag, drawDoneFlag) => {
+    if (!g) return null
     if (activeView === 'side') return (
       <SideViewSVG
         g={g}
@@ -587,9 +556,7 @@ export default function Views2DPage({ backend = '' }) {
 
       {showSimModal && geo && <SimulationModal geo={geo} onClose={() => setShowSimModal(false)}/>}
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          LEFT SIDEBAR
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ LEFT SIDEBAR ══════════════════════════════════════════════════════ */}
       <div style={{
         width: 260, flexShrink:0,
         display:'flex', flexDirection:'column',
@@ -598,7 +565,7 @@ export default function Views2DPage({ backend = '' }) {
       }}>
         <div style={{ flex:1, overflowY:'auto', padding:'12px 10px' }}>
 
-          {/* 01 — Saved outlines */}
+          {/* 01 Saved outlines */}
           <SL n="01" t="Saved Outlines"/>
           <div style={{ marginBottom:10 }}>
             {VIEWS.map(v => (
@@ -612,9 +579,8 @@ export default function Views2DPage({ backend = '' }) {
             ))}
           </div>
 
-          {/* 02 — Upload */}
+          {/* 02 Upload */}
           <SL n="02" t={`Upload — ${VIEWS.find(v=>v.id===activeView)?.label}`}/>
-
           <div style={{ marginBottom:8 }}>
             <DropZone
               viewId={activeView}
@@ -692,7 +658,7 @@ export default function Views2DPage({ backend = '' }) {
             }
           </button>
 
-          {/* CFD Simulation button */}
+          {/* CFD button */}
           {drawDone && (
             <button onClick={()=>setShowSimModal(true)} style={{
               width:'100%', padding:'6px', borderRadius:7, marginBottom:6,
@@ -714,7 +680,7 @@ export default function Views2DPage({ backend = '' }) {
             </div>
           )}
 
-          {/* 03 — Geometry */}
+          {/* 03 Geometry */}
           {geo && (
             <>
               <SL n="03" t="Geometry"/>
@@ -722,12 +688,12 @@ export default function Views2DPage({ backend = '' }) {
                 {(() => {
                   const isFront = geo._viewType === 'front' || geo._viewType === 'rear' || geo._viewType === 'front_or_rear'
                   const rows = isFront ? [
-                    ['Frontal Area', geo.frontalAreaNorm != null ? geo.frontalAreaNorm.toFixed(4) : '—'],
-                    ['Track width',  geo.trackWidthNorm  != null ? (geo.trackWidthNorm*100).toFixed(1)+'%' : '—'],
-                    ['Shoulder w.',  geo.shoulderWidthNorm != null ? (geo.shoulderWidthNorm*100).toFixed(1)+'%' : '—'],
-                    ['Roof width',   geo.roofWidthNorm   != null ? (geo.roofWidthNorm*100).toFixed(1)+'%' : '—'],
-                    ['Ground clr.',  geo.rideH           != null ? (geo.rideH*100).toFixed(1)+'%' : '—'],
-                    ['Symmetry',     geo.symmetryScore   != null ? geo.symmetryScore.toFixed(3) : '—'],
+                    ['Frontal Area', geo.frontalAreaNorm  != null ? geo.frontalAreaNorm.toFixed(4) : '—'],
+                    ['Track width',  geo.trackWidthNorm   != null ? (geo.trackWidthNorm*100).toFixed(1)+'%' : '—'],
+                    ['Shoulder w.',  geo.shoulderWidthNorm!= null ? (geo.shoulderWidthNorm*100).toFixed(1)+'%' : '—'],
+                    ['Roof width',   geo.roofWidthNorm    != null ? (geo.roofWidthNorm*100).toFixed(1)+'%' : '—'],
+                    ['Ground clr.',  geo.rideH            != null ? (geo.rideH*100).toFixed(1)+'%' : '—'],
+                    ['Symmetry',     geo.symmetryScore    != null ? geo.symmetryScore.toFixed(3) : '—'],
                     ['Aspect',       (geo.frontalAspect ?? geo.aspectRatio ?? 0).toFixed(3)],
                     ['Points',       (geo._contourPts?.length ?? 0)+' pt'],
                     ['Method',       geo._method ?? '—'],
@@ -739,11 +705,11 @@ export default function Views2DPage({ backend = '' }) {
                     ['Rear slant', (geo.rearSlantAngleDeg ?? 0).toFixed(0)+'°'],
                     ['Cd est.',    geo.Cd  != null ? geo.Cd.toFixed(3)  : '—'],
                     ['CdA',        geo.CdA != null ? geo.CdA.toFixed(4) : '—'],
-                    ['Hood',       geo.hoodRatio   != null ? (geo.hoodRatio*100).toFixed(0)+'%'   : '—'],
-                    ['Cabin',      geo.cabinRatio  != null ? (geo.cabinRatio*100).toFixed(0)+'%'  : '—'],
-                    ['Boot',       geo.bootRatio   != null ? (geo.bootRatio*100).toFixed(0)+'%'   : '—'],
-                    ['Ride h.',    geo.rideH       != null ? (geo.rideH*100).toFixed(1)+'%'       : '—'],
-                    ['Arch d.',    geo.archDepth   != null ? (geo.archDepth*100).toFixed(1)+'%'   : '—'],
+                    ['Hood',       geo.hoodRatio  != null ? (geo.hoodRatio*100).toFixed(0)+'%'  : '—'],
+                    ['Cabin',      geo.cabinRatio != null ? (geo.cabinRatio*100).toFixed(0)+'%' : '—'],
+                    ['Boot',       geo.bootRatio  != null ? (geo.bootRatio*100).toFixed(0)+'%'  : '—'],
+                    ['Ride h.',    geo.rideH      != null ? (geo.rideH*100).toFixed(1)+'%'      : '—'],
+                    ['Arch d.',    geo.archDepth  != null ? (geo.archDepth*100).toFixed(1)+'%'  : '—'],
                   ]
                   return rows.map(([k, v]) => (
                     <div key={k} style={{ display:'flex', justifyContent:'space-between', fontSize:9, padding:'1.5px 0', borderBottom:'0.5px solid rgba(255,255,255,0.04)' }}>
@@ -753,12 +719,9 @@ export default function Views2DPage({ backend = '' }) {
                   ))
                 })()}
 
-                {/* NEW — detected fine features count rows */}
+                {/* Fine feature counts */}
                 {geo.features?.length > 0 && (() => {
-                  const counts = geo.features.reduce((acc, f) => {
-                    acc[f.type] = (acc[f.type] ?? 0) + 1
-                    return acc
-                  }, {})
+                  const counts = geo.features.reduce((acc, f) => ({ ...acc, [f.type]: (acc[f.type]??0)+1 }), {})
                   return (
                     <>
                       <div style={{ height:0.5, background:'rgba(255,255,255,0.06)', margin:'5px 0 4px' }}/>
@@ -774,7 +737,7 @@ export default function Views2DPage({ backend = '' }) {
                   )
                 })()}
 
-                {/* NEW — wheel arch summary row */}
+                {/* Arch wheel count */}
                 {geo.arch_wheels?.length > 0 && (
                   <div style={{ display:'flex', justifyContent:'space-between', fontSize:9, padding:'1.5px 0', borderBottom:'0.5px solid rgba(255,255,255,0.04)' }}>
                     <span style={{ fontFamily:'var(--font-mono)', color:'var(--text-quaternary)' }}>arch detect</span>
@@ -785,7 +748,7 @@ export default function Views2DPage({ backend = '' }) {
                 )}
               </div>
 
-              {/* 04 — Quality */}
+              {/* 04 Quality */}
               <SL n="04" t="Quality"/>
               <div style={{ background:'var(--bg1)', borderRadius:7, border:'0.5px solid var(--sep)', padding:'7px 9px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
@@ -805,7 +768,7 @@ export default function Views2DPage({ backend = '' }) {
                 ))}
               </div>
 
-              {/* 05 — Ahmed body */}
+              {/* 05 Ahmed body */}
               {geo.ahmedRegime && (
                 <>
                   <SL n="05" t="Ahmed Body"/>
@@ -823,9 +786,7 @@ export default function Views2DPage({ backend = '' }) {
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          CENTRE — canvas
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ CENTRE ════════════════════════════════════════════════════════════ */}
       <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
 
         {/* Toolbar */}
@@ -834,7 +795,6 @@ export default function Views2DPage({ backend = '' }) {
           display:'flex', alignItems:'center', gap:3, padding:'0 10px',
           background:'rgba(0,0,0,0.45)', borderBottom:'0.5px solid var(--sep)',
         }}>
-          {/* View tabs */}
           {VIEWS.map(v => {
             const s = getSlot(v.id)
             return (
@@ -843,24 +803,18 @@ export default function Views2DPage({ backend = '' }) {
                 background: activeView===v.id ? 'rgba(10,132,255,0.18)' : 'transparent',
                 color: activeView===v.id ? 'var(--blue)' : s.geo ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.28)',
                 fontSize:10, fontWeight: activeView===v.id ? 700 : 400,
-                fontFamily:'var(--font-sans)', transition:'all 0.12s',
-                position:'relative',
+                fontFamily:'var(--font-sans)', transition:'all 0.12s', position:'relative',
               }}>
                 {v.shortLabel}
-                {s.geo && (
-                  <span style={{ position:'absolute', top:3, right:3, width:4, height:4, borderRadius:'50%', background:'var(--green)' }}/>
-                )}
-                {s.running && (
-                  <span style={{ position:'absolute', top:3, right:3, width:4, height:4, borderRadius:'50%', background:'var(--blue)',
-                    animation:'cfd-pressure 1s ease-in-out infinite' }}/>
-                )}
+                {s.geo && <span style={{ position:'absolute', top:3, right:3, width:4, height:4, borderRadius:'50%', background:'var(--green)' }}/>}
+                {s.running && <span style={{ position:'absolute', top:3, right:3, width:4, height:4, borderRadius:'50%', background:'var(--blue)', animation:'cfd-pressure 1s ease-in-out infinite' }}/>}
               </button>
             )
           })}
 
           <div style={{ width:0.5, height:14, background:'rgba(255,255,255,0.08)', margin:'0 3px', flexShrink:0 }}/>
 
-          {/* Sep toggle — existing */}
+          {/* Sep toggle */}
           <button onClick={()=>setShowSep(p=>!p)} style={{
             padding:'3px 8px', borderRadius:5, fontSize:9, cursor:'pointer',
             border:`0.5px solid ${showSep?'var(--blue)':'rgba(255,255,255,0.1)'}`,
@@ -869,10 +823,9 @@ export default function Views2DPage({ backend = '' }) {
             fontFamily:'var(--font-sans)',
           }}>Sep</button>
 
-          {/* NEW — Arches toggle (only active when arch data available for side view) */}
+          {/* Arches toggle — disabled when no arch data or non-side view */}
           <button
-            onClick={() => setShowArches(p => !p)}
-            disabled={!canShowArches}
+            onClick={() => canShowArches && setShowArches(p => !p)}
             style={{
               padding:'3px 8px', borderRadius:5, fontSize:9,
               cursor: canShowArches ? 'pointer' : 'default',
@@ -882,10 +835,8 @@ export default function Views2DPage({ backend = '' }) {
                    : canShowArches               ? 'rgba(255,255,255,0.35)'
                    :                               'rgba(255,255,255,0.12)',
               fontFamily:'var(--font-sans)',
-            }}
-          >Arches</button>
+            }}>Arches</button>
 
-          {/* Diagnostic label */}
           {geo && (
             <span style={{ fontSize:8, color:'rgba(255,255,255,0.2)', fontFamily:'var(--font-mono)', marginLeft:4, whiteSpace:'nowrap' }}>
               {VIEWS.find(v=>v.id===activeView)?.shortLabel.toUpperCase()}
@@ -908,9 +859,8 @@ export default function Views2DPage({ backend = '' }) {
             border:`0.5px solid ${copyDone?'rgba(48,209,88,0.6)':'rgba(255,255,255,0.1)'}`,
             background: copyDone?'rgba(48,209,88,0.08)':'transparent',
             color: copyDone?'var(--green)':'rgba(255,255,255,0.4)',
-            opacity: !drawDone?0.3:1,
-            fontFamily:'var(--font-sans)',
-          }} title="Copy outline as transparent PNG — stroke only, no fill">
+            opacity: !drawDone?0.3:1, fontFamily:'var(--font-sans)',
+          }} title="Copy outline as transparent PNG">
             {copyDone?'✓ Copied':'⎘ Copy Outline'}
           </button>
         </div>
@@ -926,7 +876,7 @@ export default function Views2DPage({ backend = '' }) {
             stages={STAGES}
           />
 
-          {/* Empty state */}
+          {/* Empty state — shown when no geo and not running */}
           {!geo && !isRunning && (
             <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column',
               alignItems:'center', justifyContent:'center', gap:12 }}>
@@ -948,7 +898,7 @@ export default function Views2DPage({ backend = '' }) {
             </div>
           )}
 
-          {/* Outline canvas */}
+          {/* Outline — only rendered when geo exists */}
           {geo && !isRunning && (
             <div style={{ width:'100%', height:'100%' }}>
               {renderActiveView(geo, isDrawing, drawDone)}
@@ -956,7 +906,7 @@ export default function Views2DPage({ backend = '' }) {
           )}
         </div>
 
-        {/* Thumbnail strip — all 4 views */}
+        {/* Thumbnail strip */}
         <div style={{
           height:90, flexShrink:0,
           display:'grid', gridTemplateColumns:'repeat(4,1fr)',
@@ -976,9 +926,9 @@ export default function Views2DPage({ backend = '' }) {
               }}>
                 <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center',
                   background:'#070d14', borderRadius:5, overflow:'hidden' }}>
+                  {/* Only render view SVGs when geo exists — prevents null-prop crash */}
                   {s.geo ? (
                     <div style={{ width:'100%', height:'100%', pointerEvents:'none' }}>
-                      {/* Thumbnails: showArches=false, no draw animation */}
                       {v.id==='side'  && <SideViewSVG  g={s.geo} showSep={false} showArches={false} isDrawing={false} drawDone={s.drawDone}/>}
                       {v.id==='front' && <FrontViewSVG g={s.geo}/>}
                       {v.id==='top'   && <TopViewSVG   g={s.geo}/>}
@@ -992,15 +942,8 @@ export default function Views2DPage({ backend = '' }) {
                   color: activeView===v.id?'var(--blue)':'rgba(255,255,255,0.2)' }}>
                   {v.shortLabel}
                 </div>
-                {s.geo && (
-                  <div style={{ position:'absolute', top:4, right:4, width:5, height:5,
-                    borderRadius:'50%', background:'var(--green)' }}/>
-                )}
-                {s.running && (
-                  <div style={{ position:'absolute', top:4, right:4, width:5, height:5,
-                    borderRadius:'50%', background:'var(--blue)',
-                    animation:'cfd-pressure 1s ease-in-out infinite' }}/>
-                )}
+                {s.geo && <div style={{ position:'absolute', top:4, right:4, width:5, height:5, borderRadius:'50%', background:'var(--green)' }}/>}
+                {s.running && <div style={{ position:'absolute', top:4, right:4, width:5, height:5, borderRadius:'50%', background:'var(--blue)', animation:'cfd-pressure 1s ease-in-out infinite' }}/>}
               </button>
             )
           })}
