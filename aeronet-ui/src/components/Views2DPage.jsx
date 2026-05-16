@@ -368,15 +368,20 @@ export default function Views2DPage({ backend = '' }) {
         poll=await res.json()
       } catch(e) { setSlot(viewId,{running:false,error:`Connection lost: ${e.message}`}); return }
 
-      if (poll.status==='error') { setSlot(viewId,{running:false,error:poll.error??'Analysis failed'}); return }
+      // Normalize: backend may use 'stage' (generator field) or 'status' (job wrapper field)
+      const pollStatus = poll.status ?? poll.stage
+      const pollMsg    = poll.error  ?? poll.msg ?? ''
 
-      if (poll.status==='running'||poll.status==='pending') {
+      if (pollStatus==='error') { setSlot(viewId,{running:false,error:pollMsg||'Analysis failed'}); return }
+
+      if (pollStatus==='running'||pollStatus==='pending') {
         const pct=Math.min(90,10+elapsed*1.2)
         const {msg,sub}=getMsgForPct(pct)
         setSlot(viewId,{progress:{pct:Math.round(pct),msg:`${msg} (${elapsed}s)`,sub}}); continue
       }
 
-      if (poll.status==='done') {
+      // Also match intermediate 'done' stage events that have no result yet
+      if (pollStatus==='done') {
         const result=poll.result
         if (!result?.geometry) { setSlot(viewId,{running:false,error:'No vehicle outline found. Use a clear photo.'}); return }
         const cg=result.geometry
