@@ -13,7 +13,7 @@ import FrontViewSVG    from './FrontViewSVG.jsx'
 import TopViewSVG      from './TopViewSVG.jsx'
 import PipelineOverlay from './PipelineOverlay.jsx'
 import SimulationModal from './SimulationModal.jsx'
-
+import CompareOverlay from './CompareOverlay.jsx'
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
