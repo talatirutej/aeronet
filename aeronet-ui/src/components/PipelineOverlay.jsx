@@ -1,4 +1,4 @@
-// PipelineOverlay.jsx — AeroNet Engine Animation
+// PipelineOverlay.jsx — AeroNet Thermal Engine Animation
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 
 import { useEffect, useRef } from 'react'
@@ -13,40 +13,53 @@ function getStagePct(stage, globalPct) {
   const [s0, s1] = stage.pct
   if (globalPct <= s0) return 0
   if (globalPct >= s1) return 100
-  return Math.round((globalPct - s0) / (s1 - s0) * 100)
+  return (globalPct - s0) / (s1 - s0)
 }
 
-const CAR_BODY = [[.04,.72],[.06,.58],[.10,.48],[.16,.38],[.24,.28],[.32,.20],[.42,.16],[.58,.16],[.68,.20],[.76,.28],[.82,.36],[.86,.44],[.88,.52],[.89,.60],[.89,.72],[.82,.72],[.76,.72],[.68,.72],[.58,.72],[.48,.72],[.38,.72],[.28,.72],[.18,.72],[.10,.72],[.04,.72]]
-const CAR_SILL = [[.10,.72],[.12,.66],[.16,.64],[.28,.62],[.38,.62],[.48,.62],[.58,.62],[.68,.64],[.76,.66],[.82,.72]]
-const CAR_WIN  = [[.24,.28],[.28,.22],[.36,.17],[.48,.16],[.60,.16],[.68,.20],[.72,.26],[.72,.44],[.60,.46],[.48,.46],[.36,.46],[.28,.46],[.24,.28]]
+// Thermal colour: 0=cold(deep blue) → 0.5=warm(orange) → 1=white-hot
+function thermalColor(heat, alpha = 1) {
+  const h = Math.max(0, Math.min(1, heat))
+  let r, g, b
+  if (h < 0.2) {
+    // deep blue → blue
+    r = 0; g = 0; b = Math.round(100 + h * 5 * 155)
+  } else if (h < 0.4) {
+    // blue → cyan
+    const t = (h - 0.2) / 0.2
+    r = 0; g = Math.round(t * 200); b = 255
+  } else if (h < 0.6) {
+    // cyan → green → yellow
+    const t = (h - 0.4) / 0.2
+    r = Math.round(t * 255); g = 255; b = Math.round(255 * (1 - t))
+  } else if (h < 0.8) {
+    // yellow → orange → red
+    const t = (h - 0.6) / 0.2
+    r = 255; g = Math.round(255 * (1 - t * .7)); b = 0
+  } else {
+    // red → white
+    const t = (h - 0.8) / 0.2
+    r = 255; g = Math.round(t * 255); b = Math.round(t * 255)
+  }
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+function thermalGlow(heat) {
+  const h = Math.max(0, Math.min(1, heat))
+  if (h < 0.3) return `rgba(0,80,255,${h * .4})`
+  if (h < 0.6) return `rgba(255,140,0,${(h - .3) * .6})`
+  return `rgba(255,${Math.round(255 * (h - .6) / .4)},0,${Math.min(.8, h * .7)})`
+}
 
 export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', stages = [] }) {
   const wrapRef   = useRef(null)
-  const engRef    = useRef(null)
-  const sketchRef = useRef(null)
+  const canvasRef = useRef(null)
   const rafRef    = useRef(null)
-  // Use a ref for pct so the loop always reads the latest value without restart
   const pctRef    = useRef(pct)
-  const stateRef  = useRef(null)
+  const tRef      = useRef(0)
+  // Per-cylinder heat state
+  const heatRef   = useRef({ block:0.05, cylinders:[0,0,0,0], head:0.05, exhaust:0.05, oil:0.05, turbo:0.05 })
 
-  // Keep pctRef current
   useEffect(() => { pctRef.current = pct }, [pct])
-
-  // Trigger sketch when pct hits 100
-  useEffect(() => {
-    if (pct >= 100 && stateRef.current && !stateRef.current.exploded) {
-      const S = stateRef.current
-      S.exploded = true
-      S.flashAlpha = 1
-      // spawn explosion particles
-      const cols = ['255,120,0','255,210,40','255,255,180','255,40,0','210,210,210']
-      for (let i = 0; i < 80; i++) {
-        const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 14
-        S.expParts.push({ x:0, y:0, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, col:cols[i%cols.length], alpha:1, r:1.5+Math.random()*3.5, trail:[], dead:false })
-      }
-      setTimeout(() => { if (stateRef.current) stateRef.current.sketching = true }, 1000)
-    }
-  }, [pct])
 
   useEffect(() => {
     if (!visible) {
@@ -54,379 +67,125 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
       return
     }
 
-    // init state
-    const S = {
-      t:0, pistonT:0, crankAngle:0,
-      shakeX:0, shakeY:0,
-      flashAlpha:0, rpmVal:800,
-      // fixed-size pools to avoid unbounded growth
-      debris: [], smoke: [], sparks: [], drops: [], expParts: [],
-      exploded: false, sketching: false, sketchProgress: 0,
-    }
-    stateRef.current = S
-
-    function rr(a, b) { return a + (b - a) * Math.random() }
-
     const start = () => {
-      const ecv = engRef.current
-      const scv = sketchRef.current
-      if (!ecv || !scv) return
-
+      const cv = canvasRef.current
+      if (!cv) return
       const W = wrapRef.current?.offsetWidth || 680
-      const H = wrapRef.current?.offsetHeight || 400
+      const H = wrapRef.current?.offsetHeight || 360
+      cv.width = W * 2; cv.height = H * 2
+      cv.style.width = W + 'px'; cv.style.height = H + 'px'
+      const ctx = cv.getContext('2d'); ctx.scale(2, 2)
 
-      // size both canvases
-      ;[ecv, scv].forEach(c => {
-        c.width = W * 2; c.height = H * 2
-        c.style.width = W + 'px'; c.style.height = H + 'px'
-      })
-      const ctx  = ecv.getContext('2d'); ctx.scale(2, 2)
-      const sctx = scv.getContext('2d'); sctx.scale(2, 2)
-      const EX = W / 2, EY = H / 2 - 20
+      const EX = W / 2, EY = H / 2 + 10
+      const pistonPhases = [0, Math.PI / 2, Math.PI, Math.PI * 1.5]
 
-      // ── SPAWN helpers ─────────────────────────────────────────────────────
-      function spawnDebris(type) {
-        if (S.debris.length > 60) return // hard cap
-        S.debris.push({
-          x: EX + rr(-30, 30), y: EY + rr(-30, 30),
-          vx: rr(-5, 5), vy: rr(-6, -1),
-          rot: Math.random() * Math.PI * 2, vrot: rr(-.25, .25),
-          type, dead: false,
-        })
-      }
-      function spawnSmoke(x, y) {
-        if (S.smoke.length > 30) return
-        S.smoke.push({ x: x+rr(-15,15), y, vx: rr(-.8,.8), vy: rr(-1,-.3), r: rr(4,10), alpha: .2, dead: false })
-      }
-      function spawnSpark(x, y) {
-        if (S.sparks.length > 40) return
-        const a = Math.random()*Math.PI*2, sp = rr(2,6)
-        S.sparks.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-1, life:1, dead:false })
-      }
-      function spawnDrop() {
-        if (S.drops.length > 25) return
-        S.drops.push({ x: EX+rr(-60,60), y: EY+58, vy: rr(1,2.5), r: rr(1,2.2), dead:false })
-      }
-
-      // ── DRAW ENGINE ────────────────────────────────────────────────────────
-      const pistonPhases = [0, Math.PI/2, Math.PI, Math.PI*1.5]
-
-      function drawEngine(phase) {
-        ctx.save(); ctx.translate(EX + S.shakeX, EY + S.shakeY)
-
-        // subtle glow at high phase
-        if (phase >= 3) {
-          const g = ctx.createRadialGradient(0,0,5,0,0,80)
-          g.addColorStop(0, `rgba(255,100,0,${Math.min(.12,phase*.03)})`); g.addColorStop(1,'transparent')
-          ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,80,0,Math.PI*2); ctx.fill()
-        }
-
-        // oil pan
-        ctx.fillStyle='#111c24'; ctx.strokeStyle='#1a3040'; ctx.lineWidth=1
-        ctx.beginPath(); ctx.roundRect(-65,58,130,20,3); ctx.fill(); ctx.stroke()
-
-        // block
-        ctx.fillStyle='#17242f'; ctx.strokeStyle='#255060'; ctx.lineWidth=1.5
-        ctx.beginPath(); ctx.roundRect(-65,-48,130,108,4); ctx.fill(); ctx.stroke()
-
-        // cylinder bores
-        for (let i=0; i<4; i++) {
-          const bx=-48+i*32
-          ctx.fillStyle='#0b1520'; ctx.fillRect(bx-9,-48,18,66)
-          ctx.strokeStyle='#1a3545'; ctx.lineWidth=.6; ctx.strokeRect(bx-9,-48,18,66)
-        }
-
-        // pistons + rods
-        pistonPhases.forEach((ph, i) => {
-          const bx=-48+i*32, py=Math.sin(S.pistonT+ph)*20
-          ctx.fillStyle='#3a5878'; ctx.strokeStyle='#4a78a8'; ctx.lineWidth=.7
-          ctx.fillRect(bx-8,py-12,16,22); ctx.strokeRect(bx-8,py-12,16,22)
-          ctx.strokeStyle='#4a6880'; ctx.lineWidth=1.6; ctx.lineCap='round'
-          ctx.beginPath(); ctx.moveTo(bx,py+10); ctx.lineTo(bx,py+36); ctx.stroke()
-        })
-
-        // crankshaft
-        ctx.strokeStyle='#6a8a9a'; ctx.lineWidth=3; ctx.lineCap='round'
-        ctx.beginPath(); ctx.moveTo(-62,48); ctx.lineTo(62,48); ctx.stroke()
-        pistonPhases.forEach((ph, i) => {
-          const bx=-48+i*32, cy=48+Math.sin(S.crankAngle+ph)*13
-          ctx.fillStyle='#4a6a7a'; ctx.beginPath(); ctx.arc(bx,cy,4.5,0,Math.PI*2); ctx.fill()
-          ctx.strokeStyle='#5a7a8a'; ctx.lineWidth=1.2
-          ctx.beginPath(); ctx.moveTo(bx,48); ctx.lineTo(bx,cy); ctx.stroke()
-        })
-
-        // head
-        ctx.fillStyle='#1c3040'; ctx.strokeStyle='#2a5060'; ctx.lineWidth=1.2
-        ctx.beginPath(); ctx.roundRect(-65,-60,130,14,3); ctx.fill(); ctx.stroke()
-
-        // valve cover (hidden phase 3+)
-        if (phase < 3) {
-          ctx.fillStyle='#22303e'; ctx.strokeStyle='#335060'; ctx.lineWidth=1.2
-          ctx.beginPath(); ctx.roundRect(-67,-78,134,20,4); ctx.fill(); ctx.stroke()
-          ;[-50,-17,17,50].forEach(bx => {
-            ctx.fillStyle = phase>=2 ? '#885544' : '#3a5a6a'
-            ctx.beginPath(); ctx.arc(bx,-68,3,0,Math.PI*2); ctx.fill()
-          })
-        }
-
-        // timing cover
-        ctx.fillStyle='#162028'; ctx.strokeStyle='#203040'; ctx.lineWidth=.8
-        ctx.beginPath(); ctx.roundRect(-76,-56,13,120,3); ctx.fill(); ctx.stroke()
-
-        // spark firing
-        if (phase >= 1) {
-          pistonPhases.forEach((ph, i) => {
-            if (Math.sin(S.pistonT*2+ph) > .9) {
-              const bx=-48+i*32
-              ctx.fillStyle=`rgba(255,220,100,${.6+Math.random()*.4})`
-              ctx.beginPath(); ctx.arc(bx,-60,2,0,Math.PI*2); ctx.fill()
-              spawnSpark(bx+EX+S.shakeX, -60+EY+S.shakeY)
-            }
-          })
-        }
-
-        // crack (phase 2+)
-        if (phase >= 2) {
-          ctx.strokeStyle=`rgba(255,80,30,${.45+Math.sin(S.t*8)*.2})`; ctx.lineWidth=1.4
-          ctx.beginPath(); ctx.moveTo(-25,-44); ctx.lineTo(-6,-15); ctx.lineTo(-16,12); ctx.lineTo(5,28); ctx.stroke()
-        }
-
-        // blowout hole (phase 3+)
-        if (phase >= 3) {
-          ctx.fillStyle='#040c12'
-          ctx.strokeStyle=`rgba(255,60,0,${.5+Math.sin(S.t*12)*.3})`; ctx.lineWidth=1
-          ctx.beginPath(); ctx.ellipse(42,18,16,11,-.28,0,Math.PI*2); ctx.fill(); ctx.stroke()
-        }
-
-        ctx.restore()
-      }
-
-      // ── DRAW SKETCH ────────────────────────────────────────────────────────
-      function drawSketch() {
-        sctx.clearRect(0,0,W,H)
-        const cw=W*.72, ch=H*.62, cxo=W*.14, cyo=H*.17
-        const lines=[
-          {pts:CAR_BODY,col:'#c8ffc8',w:2.2,lbl:'BODY OUTLINE'},
-          {pts:CAR_SILL,col:'#44aa44',w:1,  lbl:'SILL LINE'},
-          {pts:CAR_WIN, col:'#4488cc',w:1.2,lbl:'GREENHOUSE'},
-        ]
-        const total=lines.length, perLine=1/total
-
-        lines.forEach((line, li) => {
-          const ls=li*perLine, le=(li+1)*perLine
-          if (S.sketchProgress < ls) return
-          const lp=Math.min(1,(S.sketchProgress-ls)/perLine)
-          const pts=line.pts.map(([nx,ny])=>[cxo+nx*cw, cyo+ny*ch])
-          const totalD=pts.reduce((s,p,i)=>i?s+Math.hypot(p[0]-pts[i-1][0],p[1]-pts[i-1][1]):0,0)
-          let dist=0
-
-          sctx.beginPath(); sctx.strokeStyle=line.col; sctx.lineWidth=line.w
-          sctx.lineCap='round'; sctx.lineJoin='round'
-          let started=false, tipX=pts[0][0], tipY=pts[0][1]
-
-          for (let i=1; i<pts.length; i++) {
-            const seg=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1])
-            if (!started) { sctx.moveTo(pts[0][0]+(Math.random()-.5)*.8,pts[0][1]+(Math.random()-.5)*.8); started=true }
-            if (dist+seg > totalD*lp) {
-              const t2=(totalD*lp-dist)/seg
-              tipX=pts[i-1][0]+(pts[i][0]-pts[i-1][0])*t2
-              tipY=pts[i-1][1]+(pts[i][1]-pts[i-1][1])*t2
-              sctx.lineTo(tipX+(Math.random()-.5)*.8, tipY+(Math.random()-.5)*.8)
-              break
-            }
-            sctx.lineTo(pts[i][0]+(Math.random()-.5)*.6, pts[i][1]+(Math.random()-.5)*.6)
-            dist+=seg
-          }
-          sctx.stroke()
-
-          // pencil tip
-          if (lp < 1) {
-            sctx.beginPath(); sctx.arc(tipX,tipY,4,0,Math.PI*2)
-            sctx.fillStyle=`rgba(255,255,255,.08)`; sctx.fill()
-            sctx.beginPath(); sctx.arc(tipX,tipY,1.5,0,Math.PI*2)
-            sctx.fillStyle='rgba(255,255,255,.8)'; sctx.fill()
-          }
-
-          // glass hatch
-          if (li===2 && lp>.98) {
-            const gpts=CAR_WIN.map(([nx,ny])=>[cxo+nx*cw,cyo+ny*ch])
-            sctx.save(); sctx.beginPath()
-            gpts.forEach(([x,y],i)=>i?sctx.lineTo(x,y):sctx.moveTo(x,y))
-            sctx.closePath(); sctx.clip()
-            sctx.strokeStyle='rgba(68,136,220,.09)'; sctx.lineWidth=1
-            for(let x=-200;x<W+200;x+=7){sctx.beginPath();sctx.moveTo(x,0);sctx.lineTo(x-100,H);sctx.stroke()}
-            sctx.restore()
-          }
-
-          // label
-          if (S.sketchProgress > ls+perLine*.9) {
-            const mid=pts[Math.floor(pts.length/2)]
-            sctx.globalAlpha=Math.min(1,(S.sketchProgress-(ls+perLine*.9))*14)
-            sctx.fillStyle=line.col; sctx.font='bold 8px monospace'
-            sctx.textAlign='left'; sctx.fillText(line.lbl,mid[0]+8,mid[1]-8)
-            sctx.globalAlpha=1
-          }
-        })
-
-        // complete text
-        if (S.sketchProgress > .96) {
-          const f=Math.min(1,(S.sketchProgress-.96)/.04)
-          sctx.globalAlpha=f
-          sctx.fillStyle='#22cc55'; sctx.font='bold 18px monospace'
-          sctx.textAlign='center'; sctx.fillText('ANALYSIS COMPLETE',W/2,H*.88)
-          sctx.fillStyle='#1a6a1a'; sctx.font='8px monospace'
-          sctx.fillText('OUTLINE READY',W/2,H*.88+16)
-          sctx.globalAlpha=1
-        }
-      }
-
-      // ── RPM gauge ──────────────────────────────────────────────────────────
-      function drawRPM() {
-        const cx=W-56, cy=40, r=24
-        ctx.strokeStyle='#0f1f0f'; ctx.lineWidth=3.5
-        ctx.beginPath(); ctx.arc(cx,cy,r,Math.PI*.75,Math.PI*2.25); ctx.stroke()
-        const ratio=Math.min(S.rpmVal/9000,1)
-        const col=S.rpmVal>7000?'rgba(255,80,0,.9)':S.rpmVal>5000?'rgba(255,160,0,.9)':'rgba(34,180,60,.9)'
-        ctx.strokeStyle=col; ctx.lineWidth=2.2
-        ctx.beginPath(); ctx.arc(cx,cy,r,Math.PI*.75,Math.PI*.75+Math.PI*1.5*ratio); ctx.stroke()
-        const na=Math.PI*.75+Math.PI*1.5*ratio
-        ctx.strokeStyle=col; ctx.lineWidth=1.4; ctx.lineCap='round'
-        ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(na)*r*.7,cy+Math.sin(na)*r*.7); ctx.stroke()
-        ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(cx,cy,2.5,0,Math.PI*2); ctx.fill()
-        ctx.fillStyle=col; ctx.font='bold 5px monospace'; ctx.textAlign='center'
-        ctx.fillText('RPM',cx,cy+r+9)
-      }
-
-      // ── MAIN LOOP ──────────────────────────────────────────────────────────
       function loop() {
         rafRef.current = requestAnimationFrame(loop)
-        const currentPct = pctRef.current  // always fresh
-        const S2 = stateRef.current
-        if (!S2) return
+        tRef.current += 0.016
+        const t = tRef.current
+        const currentPct = pctRef.current
+        const H2 = heatRef.current
 
-        S2.t += 0.016
+        // Heat target based on pct
+        const heatTarget = Math.min(1, currentPct / 95)
+        const spd = currentPct >= 95 ? 0.025 : 0.008
+        H2.block    += (Math.min(heatTarget * .85, .9) - H2.block) * spd
+        H2.head     += (Math.min(heatTarget * .95, .98) - H2.head) * spd
+        H2.exhaust  += (Math.min(heatTarget * 1.0, 1.0) - H2.exhaust) * spd * 1.5
+        H2.oil      += (Math.min(heatTarget * .55, .55) - H2.oil) * spd * .7
+        H2.turbo    += (Math.min(heatTarget * .9, .95) - H2.turbo) * spd * 1.2
+        pistonPhases.forEach((ph, i) => {
+          const firing = Math.sin(t * (3 + currentPct * .04) + ph) > .88
+          const cylTarget = Math.min(heatTarget * .9 + (firing ? .15 : 0), 1)
+          H2.cylinders[i] += (cylTarget - H2.cylinders[i]) * (spd + (firing ? .08 : 0))
+        })
 
-        const phase = currentPct<8?0:currentPct<18?1:currentPct<46?2:currentPct<84?3:currentPct<100?4:5
-        const spd = .055 + phase * .025
-        if (phase < 5) { S2.pistonT += spd; S2.crankAngle += spd }
-
-        const targetRpm = [800,3500,6000,9000,9000,0][Math.min(phase,5)]
-        S2.rpmVal += (targetRpm - S2.rpmVal) * .04
-
-        // shake
-        const amp = [0,1.5,5,12,16,0][Math.min(phase,5)]
-        if (phase > 0 && phase < 5) {
-          S2.shakeX = Math.sin(S2.t*(3+phase*2)*Math.PI*2)*(amp+Math.sin(S2.t*7)*amp*.35)
-          S2.shakeY = Math.cos(S2.t*(4+phase)*Math.PI*2)*amp*.3
-        } else { S2.shakeX=0; S2.shakeY=0 }
-
-        // spawn — rate-limited
-        if (!S2.exploded && phase >= 1) {
-          if (Math.random() < .04+phase*.025) spawnDebris('bolt')
-          if (phase>=2 && Math.random()<.018) spawnDebris('valve')
-          if (phase>=3 && Math.random()<.02)  spawnDebris('gasket')
-          if (phase>=3 && Math.random()<.01)  spawnDebris('piston')
-          if (Math.random()<.012+phase*.008) spawnSmoke(EX,EY-70)
-          if (Math.random()<.04+phase*.02) spawnDrop()
-        }
+        const engineSpd = .04 + currentPct * .001
+        const pistonT = t * engineSpd * 60
 
         // ── clear
-        ctx.fillStyle='#080808'; ctx.fillRect(0,0,W,H)
+        ctx.fillStyle = '#080808'
+        ctx.fillRect(0, 0, W, H)
 
-        // grid
-        ctx.strokeStyle='rgba(20,45,20,.1)'; ctx.lineWidth=.4
-        for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
-        for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+        // ── dark vignette bg
+        const vg = ctx.createRadialGradient(EX, EY, 20, EX, EY, W * .65)
+        vg.addColorStop(0, 'rgba(10,10,10,0)')
+        vg.addColorStop(1, 'rgba(0,0,0,0.7)')
+        ctx.fillStyle = vg
+        ctx.fillRect(0, 0, W, H)
 
-        // drops — update+draw in one pass
-        for (let i=S2.drops.length-1;i>=0;i--) {
-          const d=S2.drops[i]; d.vy+=.1; d.y+=d.vy
-          if (d.y>H+10) { S2.drops.splice(i,1); continue }
-          ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,Math.PI*2);ctx.fillStyle='rgba(12,6,0,.6)';ctx.fill()
+        ctx.save()
+        ctx.translate(EX, EY)
+
+        // ─────────────────────────────────────────────────────────────────
+        // ENGINE COMPONENTS — drawn back to front
+        // ─────────────────────────────────────────────────────────────────
+
+        const BW = 160, BH = 130
+
+        // ── exhaust manifold (left side, glows hottest)
+        drawExhaust(ctx, H2.exhaust, t)
+
+        // ── intake manifold (right side, stays cooler)
+        drawIntake(ctx, H2.oil, t)
+
+        // ── turbocharger (top right)
+        drawTurbo(ctx, H2.turbo, t, currentPct)
+
+        // ── oil pan (bottom)
+        const opHeat = H2.oil
+        ctx.fillStyle = thermalColor(opHeat * .5, .9)
+        ctx.strokeStyle = thermalColor(opHeat * .6)
+        ctx.lineWidth = 1
+        ctx.beginPath(); ctx.roundRect(-BW*.55, BH*.42, BW*1.1, 28, 4)
+        ctx.fill(); ctx.stroke()
+        // oil level indicator
+        ctx.fillStyle = thermalColor(opHeat * .3, .6)
+        ctx.fillRect(-BW*.4, BH*.42 + 8, BW*.8 * (H2.oil / .55), 8)
+        ctx.fillStyle = 'rgba(255,255,255,0.15)'
+        ctx.font = '6px monospace'; ctx.textAlign = 'center'
+        ctx.fillText('OIL', 0, BH*.42 + 18)
+
+        // ── engine block (main body)
+        drawBlock(ctx, H2.block, BW, BH, t)
+
+        // ── cylinder bores + pistons (drawn inside block clip)
+        drawCylinders(ctx, H2, BW, BH, pistonT, pistonPhases, t, currentPct)
+
+        // ── crankshaft (below cylinders)
+        drawCrank(ctx, H2.block, BH, pistonT, pistonPhases, t)
+
+        // ── cylinder head
+        drawHead(ctx, H2.head, BW, BH, t, currentPct)
+
+        // ── valve cover (top)
+        drawValveCover(ctx, H2.head, BW, BH, t)
+
+        // ── heat shimmer overlay on hottest parts
+        if (H2.exhaust > .7) {
+          const shimmer = ctx.createLinearGradient(-BW*.75, -BH*.3, -BW*.75, -BH*.5)
+          shimmer.addColorStop(0, `rgba(255,120,0,${(H2.exhaust-.7)*.15})`)
+          shimmer.addColorStop(0.5, 'transparent')
+          shimmer.addColorStop(1, `rgba(255,200,0,${(H2.exhaust-.7)*.08})`)
+          ctx.fillStyle = shimmer
+          ctx.fillRect(-BW*.9, -BH*.6, BW*.35, BH*.8)
         }
 
-        // smoke
-        for (let i=S2.smoke.length-1;i>=0;i--) {
-          const s=S2.smoke[i]; s.x+=s.vx; s.y+=s.vy; s.r+=.3; s.alpha-=.004
-          if (s.alpha<=0) { S2.smoke.splice(i,1); continue }
-          ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fillStyle=`rgba(70,70,70,${s.alpha})`;ctx.fill()
-        }
+        // ── thermal legend (top right of engine)
+        drawThermalLegend(ctx, BW, BH)
 
-        // engine
-        if (!S2.exploded) drawEngine(phase)
+        // ── RPM / temp readouts
+        drawReadouts(ctx, H2, BW, BH, currentPct, t)
 
-        // sparks
-        for (let i=S2.sparks.length-1;i>=0;i--) {
-          const sp=S2.sparks[i]; sp.vy+=.2; sp.x+=sp.vx; sp.y+=sp.vy; sp.life-=.055
-          if (sp.life<=0) { S2.sparks.splice(i,1); continue }
-          ctx.beginPath();ctx.moveTo(sp.x,sp.y);ctx.lineTo(sp.x-sp.vx*2,sp.y-sp.vy*2)
-          ctx.strokeStyle=`rgba(255,180,0,${sp.life})`;ctx.lineWidth=1.4;ctx.lineCap='round';ctx.stroke()
-        }
+        ctx.restore()
 
-        // debris
-        for (let i=S2.debris.length-1;i>=0;i--) {
-          const d=S2.debris[i]; d.vy+=.2; d.x+=d.vx; d.y+=d.vy; d.rot+=d.vrot
-          if (d.y>H+50) { S2.debris.splice(i,1); continue }
-          ctx.save(); ctx.translate(d.x,d.y); ctx.rotate(d.rot); ctx.globalAlpha=.88
-          switch(d.type) {
-            case'bolt': ctx.fillStyle='#8a9aaa';ctx.fillRect(-3,-6,6,12);ctx.fillStyle='#6a8a9a';ctx.fillRect(-4,-8,8,4);break
-            case'valve':ctx.fillStyle='#7a8a9a';ctx.fillRect(-2,-10,4,20);ctx.beginPath();ctx.arc(0,10,4,0,Math.PI*2);ctx.fillStyle='#5a7a8a';ctx.fill();break
-            case'gasket':ctx.strokeStyle='#cc5522';ctx.lineWidth=1.8;ctx.strokeRect(-12,-4,24,8);break
-            case'piston':ctx.fillStyle='#445577';ctx.fillRect(-11,-10,22,20);break
-            case'frag':
-              ctx.fillStyle=`hsl(${20+Math.random()*20},35%,${25+Math.random()*15}%)`
-              ctx.beginPath();for(let j=0;j<4;j++){const a=j/4*Math.PI*2,r=3+Math.random()*8;j?ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r):ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r)}
-              ctx.closePath();ctx.fill();break
-          }
-          ctx.restore()
-        }
-
-        // explosion particles
-        for (let i=S2.expParts.length-1;i>=0;i--) {
-          const p=S2.expParts[i]
-          p.trail.push({x:p.x+EX,y:p.y+EY})
-          if(p.trail.length>8)p.trail.shift()
-          p.vy+=.16; p.x+=p.vx; p.y+=p.vy; p.vx*=.97; p.alpha-=.018
-          if(p.alpha<=0||p.y+EY>H+20){S2.expParts.splice(i,1);continue}
-          if(p.trail.length>1){
-            ctx.beginPath();ctx.moveTo(p.trail[0].x,p.trail[0].y)
-            p.trail.forEach(pt=>ctx.lineTo(pt.x,pt.y))
-            ctx.strokeStyle=`rgba(${p.col},${p.alpha*.4})`;ctx.lineWidth=p.r*.5;ctx.lineCap='round';ctx.stroke()
-          }
-          ctx.beginPath();ctx.arc(p.x+EX,p.y+EY,p.r,0,Math.PI*2)
-          ctx.fillStyle=`rgba(${p.col},${p.alpha})`;ctx.fill()
-        }
-
-        // flash
-        if(S2.flashAlpha>0){
-          ctx.fillStyle=`rgba(255,180,60,${S2.flashAlpha})`;ctx.fillRect(0,0,W,H)
-          S2.flashAlpha=Math.max(0,S2.flashAlpha-.04)
-        }
-
-        drawRPM()
-
-        // status text
-        if(phase>=2&&phase<5&&Math.sin(S2.t*10)>.2){
-          ctx.fillStyle='rgba(255,40,0,.7)';ctx.font='bold 9px monospace';ctx.textAlign='center'
-          ctx.fillText('⚠  CRITICAL LOAD',W/2,H-90)
-        }
-        if(S2.exploded&&S2.flashAlpha<.3&&!S2.sketching&&Math.sin(S2.t*6)>0){
-          ctx.fillStyle='rgba(34,200,80,.75)';ctx.font='bold 9px monospace';ctx.textAlign='center'
-          ctx.fillText('✓  ALL STAGES COMPLETE — RENDERING OUTLINE',W/2,H-90)
-        }
-
-        // sketch
-        if(S2.sketching){
-          S2.sketchProgress=Math.min(1,S2.sketchProgress+.004)
-          drawSketch()
-          scv.style.opacity='1'
-        }
+        // ── heat particles floating up from hot areas
+        drawHeatParticles(ctx, EX, EY, H2, t, W, H)
       }
 
       loop()
     }
 
-    // Wait for real dimensions
     const ro = new ResizeObserver(entries => {
       if (entries[0].contentRect.width > 0) { ro.disconnect(); start() }
     })
@@ -436,62 +195,445 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       ro.disconnect()
-      stateRef.current = null
     }
   }, [visible]) // eslint-disable-line
 
+  // ── Component draw functions ────────────────────────────────────────────────
+
+  function drawBlock(ctx, heat, BW, BH, t) {
+    // main cast shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'
+    ctx.beginPath(); ctx.roundRect(-BW*.51+3, -BH*.38+3, BW*1.02, BH*.82, 6)
+    ctx.fill()
+
+    // block glow
+    if (heat > .3) {
+      const g = ctx.createRadialGradient(0, 0, 20, 0, 0, BW * .7)
+      g.addColorStop(0, thermalGlow(heat))
+      g.addColorStop(1, 'transparent')
+      ctx.fillStyle = g
+      ctx.fillRect(-BW, -BH*.5, BW*2, BH)
+    }
+
+    // block body — layered for depth
+    const blockBase = thermalColor(heat * .7, 1)
+    const blockEdge = thermalColor(heat * .85, 1)
+
+    ctx.fillStyle = blockBase
+    ctx.strokeStyle = blockEdge
+    ctx.lineWidth = 1.5
+    ctx.beginPath(); ctx.roundRect(-BW*.5, -BH*.38, BW, BH*.8, 5)
+    ctx.fill(); ctx.stroke()
+
+    // ribbing / cooling fins (vertical lines on sides)
+    ctx.strokeStyle = thermalColor(heat * .9, .5)
+    ctx.lineWidth = .6
+    for (let i = -4; i <= 4; i++) {
+      const rx = i * (BW * .11)
+      ctx.beginPath()
+      ctx.moveTo(rx, -BH*.35)
+      ctx.lineTo(rx, BH*.38)
+      ctx.stroke()
+    }
+
+    // horizontal structural lines
+    ctx.strokeStyle = thermalColor(heat * .6, .3)
+    ctx.lineWidth = .5
+    ;[-0.1, 0.1, 0.25].forEach(fy => {
+      ctx.beginPath()
+      ctx.moveTo(-BW*.48, BH*fy)
+      ctx.lineTo(BW*.48, BH*fy)
+      ctx.stroke()
+    })
+
+    // block logo / badge
+    ctx.fillStyle = thermalColor(heat * .4, .4)
+    ctx.font = 'bold 8px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('AERONET', 0, BH * .32)
+    ctx.font = '6px monospace'
+    ctx.fillText('2.0T', 0, BH * .38)
+  }
+
+  function drawCylinders(ctx, H2, BW, BH, pistonT, pistonPhases, t, pct) {
+    const CW = 28, CH = 70, GAP = 6
+    const totalW = 4 * CW + 3 * GAP
+    const startX = -totalW / 2
+
+    pistonPhases.forEach((ph, i) => {
+      const cx = startX + i * (CW + GAP) + CW / 2
+      const heat = H2.cylinders[i]
+      const firing = Math.sin(pistonT * Math.PI * 2 * 2 + ph) > .88
+      const py = Math.sin(pistonT * Math.PI * 2 + ph) * 22
+
+      // bore background
+      ctx.fillStyle = thermalColor(heat * .4, .95)
+      ctx.beginPath(); ctx.rect(cx - CW/2 + 1, -BH*.36, CW - 2, CH)
+      ctx.fill()
+
+      // bore liner (inner wall)
+      ctx.strokeStyle = thermalColor(heat * .7, .6)
+      ctx.lineWidth = .5
+      ctx.strokeRect(cx - CW/2 + 1, -BH*.36, CW - 2, CH)
+
+      // combustion glow when firing
+      if (firing && pct > 5) {
+        const fg = ctx.createRadialGradient(cx, -BH*.36 + 8, 0, cx, -BH*.36 + 8, CW)
+        fg.addColorStop(0, `rgba(255,255,200,${.6 + Math.random()*.3})`)
+        fg.addColorStop(0.4, `rgba(255,150,0,${.4 + Math.random()*.2})`)
+        fg.addColorStop(1, 'transparent')
+        ctx.fillStyle = fg
+        ctx.beginPath(); ctx.rect(cx - CW/2 + 1, -BH*.36, CW - 2, CH*.35)
+        ctx.fill()
+      }
+
+      // piston body
+      const pTop = py - 12
+      const pistonHeat = heat * .8
+      ctx.fillStyle = thermalColor(pistonHeat, .95)
+      ctx.strokeStyle = thermalColor(pistonHeat * 1.1, .8)
+      ctx.lineWidth = .8
+      ctx.beginPath(); ctx.roundRect(cx - CW/2 + 3, pTop, CW - 6, 22, 2)
+      ctx.fill(); ctx.stroke()
+
+      // piston crown detail
+      ctx.fillStyle = thermalColor(pistonHeat * 1.2, .5)
+      ctx.fillRect(cx - CW/2 + 5, pTop + 2, CW - 10, 3)
+
+      // ring grooves
+      ctx.strokeStyle = thermalColor(pistonHeat * .5, .4)
+      ctx.lineWidth = .5
+      ;[6, 10, 14].forEach(ry => {
+        ctx.beginPath()
+        ctx.moveTo(cx - CW/2 + 3, pTop + ry)
+        ctx.lineTo(cx + CW/2 - 3, pTop + ry)
+        ctx.stroke()
+      })
+
+      // connecting rod
+      ctx.strokeStyle = thermalColor(heat * .6, .7)
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(cx, pTop + 22)
+      ctx.lineTo(cx, py + 36)
+      ctx.stroke()
+
+      // wrist pin
+      ctx.fillStyle = thermalColor(heat * .7, .8)
+      ctx.beginPath(); ctx.arc(cx, pTop + 11, 2.5, 0, Math.PI * 2); ctx.fill()
+    })
+  }
+
+  function drawCrank(ctx, heat, BH, pistonT, pistonPhases, t) {
+    // main journal
+    ctx.strokeStyle = thermalColor(heat * .65, .9)
+    ctx.lineWidth = 4; ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.moveTo(-80, BH*.32); ctx.lineTo(80, BH*.32); ctx.stroke()
+
+    pistonPhases.forEach((ph, i) => {
+      const bx = -48 + i * 33
+      const cy2 = BH*.32 + Math.sin(pistonT * Math.PI * 2 + ph) * 14
+      ctx.fillStyle = thermalColor(heat * .7, .9)
+      ctx.beginPath(); ctx.arc(bx, cy2, 5.5, 0, Math.PI * 2); ctx.fill()
+      ctx.strokeStyle = thermalColor(heat * .8, .7)
+      ctx.lineWidth = 1.5
+      ctx.beginPath(); ctx.moveTo(bx, BH*.32); ctx.lineTo(bx, cy2); ctx.stroke()
+      // counterweight
+      ctx.fillStyle = thermalColor(heat * .5, .6)
+      ctx.beginPath()
+      ctx.arc(bx, BH*.32 - Math.sin(pistonT * Math.PI * 2 + ph) * 10, 7, 0, Math.PI * 2)
+      ctx.fill()
+    })
+  }
+
+  function drawHead(ctx, heat, BW, BH, t, pct) {
+    // head gasket glow
+    if (heat > .5) {
+      ctx.fillStyle = thermalColor(heat * .9, (heat - .5) * .4)
+      ctx.fillRect(-BW*.5, -BH*.42, BW, 5)
+    }
+
+    ctx.fillStyle = thermalColor(heat * .8, .95)
+    ctx.strokeStyle = thermalColor(heat * .95, .8)
+    ctx.lineWidth = 1.2
+    ctx.beginPath(); ctx.roundRect(-BW*.5, -BH*.54, BW, BH*.17, 3)
+    ctx.fill(); ctx.stroke()
+
+    // spark plugs
+    ;[-48, -16, 16, 48].forEach((sx, i) => {
+      const firing = pct > 5 && Math.sin(t * (3 + pct * .04) + pistonPhases[i]) > .88
+      ctx.fillStyle = firing ? 'rgba(255,255,200,.9)' : thermalColor(heat * .6, .7)
+      ctx.beginPath(); ctx.arc(sx, -BH*.48, 2.5, 0, Math.PI * 2); ctx.fill()
+      // spark
+      if (firing) {
+        ctx.strokeStyle = `rgba(255,255,150,${.6 + Math.random() * .4})`
+        ctx.lineWidth = 1
+        for (let j = 0; j < 4; j++) {
+          const a = j / 4 * Math.PI * 2
+          ctx.beginPath()
+          ctx.moveTo(sx, -BH*.48)
+          ctx.lineTo(sx + Math.cos(a) * 5, -BH*.48 + Math.sin(a) * 5)
+          ctx.stroke()
+        }
+      }
+    })
+  }
+
+  function drawValveCover(ctx, heat, BW, BH, t) {
+    ctx.fillStyle = thermalColor(heat * .6, .92)
+    ctx.strokeStyle = thermalColor(heat * .75, .7)
+    ctx.lineWidth = 1.2
+    ctx.beginPath(); ctx.roundRect(-BW*.52, -BH*.72, BW*1.04, BH*.19, 4)
+    ctx.fill(); ctx.stroke()
+
+    // oil filler cap
+    ctx.fillStyle = thermalColor(heat * .5, .8)
+    ctx.strokeStyle = thermalColor(heat * .7, .6)
+    ctx.lineWidth = 1
+    ctx.beginPath(); ctx.arc(BW*.28, -BH*.64, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+    ctx.fillStyle = thermalColor(heat * .3, .5)
+    ctx.font = '5px monospace'; ctx.textAlign = 'center'
+    ctx.fillText('OIL', BW*.28, -BH*.62)
+
+    // breather tube
+    ctx.strokeStyle = thermalColor(heat * .4, .5)
+    ctx.lineWidth = 3; ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(BW*.15, -BH*.72)
+    ctx.quadraticCurveTo(BW*.2, -BH*.85, BW*.35, -BH*.85)
+    ctx.stroke()
+
+    // cover bolts
+    ctx.fillStyle = thermalColor(heat * .55, .7)
+    ;[-BW*.38, -BW*.18, 0, BW*.18, BW*.38].forEach(bx => {
+      ctx.beginPath(); ctx.arc(bx, -BH*.635, 3, 0, Math.PI * 2); ctx.fill()
+    })
+  }
+
+  function drawExhaust(ctx, heat, t) {
+    ctx.strokeStyle = thermalColor(heat, .85)
+    ctx.lineWidth = 8; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+    // manifold runners — 4 pipes merging into one
+    ;[-48, -16, 16, 48].forEach((sx, i) => {
+      const wave = Math.sin(t * 2 + i * .5) * 1.5
+      ctx.beginPath()
+      ctx.moveTo(sx, -20)
+      ctx.quadraticCurveTo(sx - 30 + wave, 10, -90, 20 + i * 8)
+      ctx.stroke()
+    })
+    // collector pipe
+    ctx.lineWidth = 12
+    ctx.beginPath()
+    ctx.moveTo(-90, 20)
+    ctx.lineTo(-90, 52)
+    ctx.quadraticCurveTo(-90, 70, -105, 70)
+    ctx.stroke()
+
+    // exhaust glow
+    if (heat > .5) {
+      const eg = ctx.createRadialGradient(-98, 60, 2, -98, 60, 20)
+      eg.addColorStop(0, thermalGlow(heat))
+      eg.addColorStop(1, 'transparent')
+      ctx.fillStyle = eg
+      ctx.fillRect(-120, 40, 40, 40)
+    }
+  }
+
+  function drawIntake(ctx, heat, t) {
+    ctx.strokeStyle = thermalColor(heat * .5, .7)
+    ctx.lineWidth = 7; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+    ;[-48, -16, 16, 48].forEach((sx, i) => {
+      ctx.beginPath()
+      ctx.moveTo(sx, -25)
+      ctx.quadraticCurveTo(sx + 30, 5, 90, 10 + i * 6)
+      ctx.stroke()
+    })
+    ctx.lineWidth = 10
+    ctx.beginPath()
+    ctx.moveTo(90, 10)
+    ctx.lineTo(90, 40)
+    ctx.quadraticCurveTo(90, 55, 108, 55)
+    ctx.stroke()
+  }
+
+  function drawTurbo(ctx, heat, t, pct) {
+    const tx = 85, ty = -55
+    const spin = t * (2 + pct * .04)
+
+    // turbo housing
+    ctx.fillStyle = thermalColor(heat * .8, .85)
+    ctx.strokeStyle = thermalColor(heat, .7)
+    ctx.lineWidth = 1
+    ctx.beginPath(); ctx.arc(tx, ty, 18, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+
+    // compressor wheel (spinning)
+    ctx.save(); ctx.translate(tx, ty); ctx.rotate(spin)
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2
+      ctx.fillStyle = thermalColor(heat * .9, .8)
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.arc(0, 0, 13, a, a + .35)
+      ctx.closePath()
+      ctx.fill()
+    }
+    ctx.restore()
+
+    // centre bearing
+    ctx.fillStyle = thermalColor(heat * 1.0, .9)
+    ctx.beginPath(); ctx.arc(tx, ty, 4, 0, Math.PI * 2); ctx.fill()
+
+    // inlet/outlet pipes
+    ctx.strokeStyle = thermalColor(heat * .6, .6)
+    ctx.lineWidth = 5; ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.moveTo(tx + 18, ty); ctx.lineTo(tx + 35, ty); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(tx, ty - 18); ctx.lineTo(tx, ty - 32); ctx.stroke()
+
+    // TURBO label
+    ctx.fillStyle = thermalColor(heat * .4, .5)
+    ctx.font = '5px monospace'; ctx.textAlign = 'center'
+    ctx.fillText('TURBO', tx, ty + 28)
+  }
+
+  function drawThermalLegend(ctx, BW, BH) {
+    const lx = BW*.55, ly = -BH*.7, lh = BH*.55, lw = 7
+    // gradient bar
+    const lg = ctx.createLinearGradient(lx, ly + lh, lx, ly)
+    ;[0, .2, .4, .6, .8, 1].forEach(stop => {
+      lg.addColorStop(stop, thermalColor(stop, .8))
+    })
+    ctx.fillStyle = lg
+    ctx.fillRect(lx, ly, lw, lh)
+    ctx.strokeStyle = 'rgba(255,255,255,.15)'
+    ctx.lineWidth = .5
+    ctx.strokeRect(lx, ly, lw, lh)
+
+    // labels
+    ctx.fillStyle = 'rgba(255,255,255,.4)'
+    ctx.font = '5px monospace'; ctx.textAlign = 'left'
+    ctx.fillText('HOT',  lx + lw + 3, ly + 4)
+    ctx.fillText('COLD', lx + lw + 3, ly + lh)
+  }
+
+  function drawReadouts(ctx, H2, BW, BH, pct, t) {
+    const temp = Math.round(20 + H2.block * 280)
+    const rpm  = Math.round(800 + pct * 82)
+    const oil  = Math.round(H2.oil * 80 + 10)
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.beginPath(); ctx.roundRect(-BW*.52, BH*.72, BW*1.04, 32, 4); ctx.fill()
+
+    const items = [
+      { label:'TEMP', value:`${temp}°C`, heat: H2.block },
+      { label:'RPM',  value:rpm.toLocaleString(), heat: Math.min(1, pct/100) },
+      { label:'OIL',  value:`${oil} PSI`, heat: H2.oil },
+      { label:'BOOST',value:`${(H2.turbo * 18).toFixed(1)} psi`, heat: H2.turbo },
+    ]
+
+    items.forEach((item, i) => {
+      const ix = -BW*.44 + i * BW*.29
+      ctx.fillStyle = thermalColor(item.heat, .6)
+      ctx.font = '5px monospace'; ctx.textAlign = 'center'
+      ctx.fillText(item.label, ix, BH*.77)
+      ctx.fillStyle = thermalColor(item.heat, .9)
+      ctx.font = 'bold 7px monospace'
+      ctx.fillText(item.value, ix, BH*.86)
+    })
+  }
+
+  const pistonPhases = [0, Math.PI / 2, Math.PI, Math.PI * 1.5]
+
+  function drawHeatParticles(ctx, EX, EY, H2, t, W, H) {
+    // Floating heat shimmer particles above exhaust
+    const count = Math.floor(H2.exhaust * 12)
+    for (let i = 0; i < count; i++) {
+      const seed = (t * .8 + i * 2.3) % (Math.PI * 2)
+      const px = EX - 95 + Math.sin(seed * 1.7 + i) * 12
+      const py = EY + 65 - ((t * 25 + i * 18) % 80)
+      const alpha = Math.sin(seed + i) * .3 + .15
+      if (alpha > 0) {
+        ctx.beginPath()
+        ctx.arc(px, py, 1.5 + Math.sin(seed) * .8, 0, Math.PI * 2)
+        ctx.fillStyle = thermalColor(H2.exhaust, Math.max(0, alpha))
+        ctx.fill()
+      }
+    }
+  }
+
   if (!visible) return null
 
-  const stagePcts = stages.map(s => ({ ...s, fill: getStagePct(s, pct) }))
-
   return (
-    <div ref={wrapRef} style={{ position:'absolute',inset:0,zIndex:20,background:'#080808',display:'flex',flexDirection:'column',width:'100%',height:'100%' }}>
+    <div style={{
+      position:'absolute', inset:0, zIndex:20,
+      background:'#060808',
+      display:'flex', flexDirection:'column',
+    }}>
 
-      {/* Engine + sketch canvas area */}
-      <div style={{ flex:1,position:'relative',overflow:'hidden',minHeight:0 }}>
-        <canvas ref={engRef}    style={{ position:'absolute',top:0,left:0,width:'100%',height:'100%',display:'block' }}/>
-        <canvas ref={sketchRef} style={{ position:'absolute',top:0,left:0,width:'100%',height:'100%',display:'block',opacity:0,transition:'opacity 0.8s' }}/>
-
-        {/* msg */}
-        <div style={{ position:'absolute',bottom:6,left:0,right:0,textAlign:'center',pointerEvents:'none' }}>
-          <div style={{ fontSize:11,fontFamily:'monospace',color:'#1a5a1a',letterSpacing:'.07em' }}>{msg}</div>
-          {sub && <div style={{ fontSize:9,color:'#0f3a0f',letterSpacing:'.04em',fontFamily:'sans-serif',marginTop:2 }}>{sub}</div>}
-        </div>
-      </div>
-
-      {/* Stage bars */}
-      <div style={{ background:'rgba(0,0,0,.97)',borderTop:'1px solid #0f1f0f',padding:'8px 14px 10px',flexShrink:0 }}>
-        {stagePcts.map(s => {
-          const col = STAGE_COL[s.id] ?? '#22cc55'
+      {/* M3 stage chips */}
+      <div style={{
+        display:'flex', gap:5, flexWrap:'wrap',
+        justifyContent:'center', padding:'9px 16px 5px',
+        flexShrink:0,
+      }}>
+        {stages.map(s => {
           const active = pct >= s.pct[0] && pct < s.pct[1]
           const done   = pct >= s.pct[1]
+          const col    = STAGE_COL[s.id] ?? '#22cc55'
           return (
-            <div key={s.id} style={{ display:'flex',alignItems:'center',gap:8,marginBottom:4 }}>
-              <span style={{ fontSize:8,fontFamily:'monospace',letterSpacing:'.1em',width:66,textAlign:'right',textTransform:'uppercase',color:done||active?col:'#1a2a1a',transition:'color .3s' }}>
-                {s.label}
-              </span>
-              <div style={{ flex:1,height:3,background:'#0f1a0f',borderRadius:2,position:'relative',overflow:'visible' }}>
-                <div style={{ height:'100%',width:`${s.fill}%`,background:col,borderRadius:2,boxShadow:active?`0 0 6px ${col}88`:'none',transition:'width .35s ease' }}>
-                  {active && <div style={{ position:'absolute',right:-3,top:-4,width:7,height:11,background:col,borderRadius:2,boxShadow:`0 0 5px ${col}` }}/>}
-                </div>
-              </div>
-              <span style={{ fontSize:9,fontFamily:'monospace',width:26,textAlign:'right',color:done||active?col:'#1a2a1a' }}>
-                {done?'✓':active?`${s.fill}%`:''}
-              </span>
+            <div key={s.id} style={{
+              display:'flex', alignItems:'center', gap:4,
+              padding:'3px 9px', borderRadius:99,
+              border:`0.5px solid ${done||active ? col+'88' : 'rgba(255,255,255,0.08)'}`,
+              background: active ? `${col}18` : done ? `${col}0a` : 'transparent',
+              transition:'all 0.3s',
+            }}>
+              <span style={{ fontSize:11, color: done||active ? col : 'rgba(255,255,255,0.2)' }}>{s.icon}</span>
+              <span style={{
+                fontSize:9, fontFamily:'monospace', letterSpacing:'.08em',
+                color: done||active ? col : 'rgba(255,255,255,0.2)',
+                fontWeight: active ? 'bold' : 'normal',
+              }}>{s.label}</span>
+              {done && <span style={{ fontSize:9, color:col }}>✓</span>}
+              {active && (
+                <span style={{
+                  width:5, height:5, borderRadius:'50%',
+                  background:col, display:'inline-block',
+                  animation:'aero-pulse 0.8s ease infinite',
+                }}/>
+              )}
             </div>
           )
         })}
+      </div>
 
-        {/* global bar */}
-        <div style={{ display:'flex',alignItems:'center',gap:8,marginTop:6,paddingTop:6,borderTop:'1px solid #0f1a0f' }}>
-          <div style={{ flex:1,height:2,background:'#0f1a0f',borderRadius:1,overflow:'hidden' }}>
-            <div style={{ height:'100%',width:`${pct}%`,background:'#22cc55',borderRadius:1,transition:'width .4s ease' }}/>
+      {/* Canvas */}
+      <div ref={wrapRef} style={{ flex:1, position:'relative', overflow:'hidden', minHeight:0 }}>
+        <canvas ref={canvasRef} style={{ position:'absolute', top:0, left:0, width:'100%', height:'100%', display:'block' }}/>
+
+        {/* msg */}
+        <div style={{ position:'absolute', bottom:6, left:0, right:0, textAlign:'center', pointerEvents:'none' }}>
+          <div style={{ fontSize:10, fontFamily:'monospace', color:'rgba(255,200,100,0.6)', letterSpacing:'.07em' }}>{msg}</div>
+          {sub && <div style={{ fontSize:9, color:'rgba(200,150,80,0.4)', letterSpacing:'.04em', marginTop:1 }}>{sub}</div>}
+        </div>
+      </div>
+
+      {/* Global progress */}
+      <div style={{ flexShrink:0, padding:'5px 14px 8px', background:'rgba(0,0,0,0.7)' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <div style={{ flex:1, height:2, background:'rgba(255,255,255,0.06)', borderRadius:1, overflow:'hidden' }}>
+            <div style={{
+              height:'100%', width:`${pct}%`,
+              background:`linear-gradient(90deg,#22cc55,${pct>80?'#ff9f0a':'#22cc55'})`,
+              borderRadius:1, transition:'width .4s ease',
+            }}/>
           </div>
-          <span style={{ fontSize:14,fontFamily:'monospace',fontWeight:'bold',color:'#22cc55',letterSpacing:'.05em',minWidth:40,textAlign:'right' }}>
-            {Math.round(pct)}<span style={{ fontSize:10,color:'#1a5a1a' }}>%</span>
+          <span style={{ fontSize:11, fontFamily:'monospace', fontWeight:'bold', color:'#22cc55', minWidth:36, textAlign:'right' }}>
+            {Math.round(pct)}<span style={{ fontSize:9, color:'rgba(100,200,100,0.5)' }}>%</span>
           </span>
         </div>
       </div>
+
+      <style>{`@keyframes aero-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.5)}}`}</style>
     </div>
   )
 }
