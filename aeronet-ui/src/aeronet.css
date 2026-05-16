@@ -1,12 +1,30 @@
-/* aeronet.css — AeroNet design tokens
+/* aeronet.css — Material 3 Black/White Theme
  * Copyright (c) 2026 Rutej Talati / statinsite.com
  *
- * Import this in main.jsx:
- *   import './aeronet.css'
+ * Seed colour: neutral (true black/white M3 scheme)
+ * Dark theme only — tonal elevation via white overlay on black surfaces.
  *
- * All CSS custom properties used throughout Views2DPage, SideViewSVG,
- * FrontViewSVG, TopViewSVG, PipelineOverlay, SimulationModal.
+ * M3 Tonal Palette (neutral, dark scheme):
+ *   surface:                #141414  (N-6)
+ *   surface-container-low:  #1C1C1C  (N-10)
+ *   surface-container:      #202020  (N-12)
+ *   surface-container-high: #2A2A2A  (N-17)
+ *   surface-container-highest:#333  (N-22)
+ *   outline:                rgba(255,255,255,0.12)
+ *   outline-variant:        rgba(255,255,255,0.08)
+ *   primary (dark):         #E0E0E0  (N-87)
+ *   on-primary:             #1A1A1A
+ *   primary-container:      #2E2E2E
+ *   on-primary-container:   #E8E8E8
+ *   secondary-container:    #272727
+ *   on-secondary-container: #CACACA
+ *   error:                  #F2B8B8
+ *   on-error-container:     #F9DEDC
+ *
+ * Import in main.jsx: import './aeronet.css'
  */
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,100..900&family=Roboto+Mono:wght@400;500;700&display=swap');
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -21,80 +39,574 @@ html, body, #root {
 }
 
 body {
-  background: #070d14;
-  color: rgba(255, 255, 255, 0.85);
-  font-family: 'Roboto Flex', 'Inter', system-ui, sans-serif;
+  background: #141414;
+  color: rgba(255,255,255,0.87);
+  font-family: 'Roboto Flex', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── Colour tokens ─────────────────────────────────────────────── */
+/* ── M3 Colour tokens ──────────────────────────────────────────────────────── */
 :root {
-  /* Backgrounds */
-  --bg0:  #070d14;          /* deepest — page background            */
-  --bg1:  #0c1520;          /* surface — cards, sidebar panels      */
-  --bg2:  #111e2b;          /* raised — inputs, code blocks         */
-  --bg3:  #162333;          /* highest — hover states               */
+  /* Surface tones — tonal elevation via lightness steps */
+  --md-surface:                   #141414;
+  --md-surface-container-low:     #1C1C1C;
+  --md-surface-container:         #202020;
+  --md-surface-container-high:    #2A2A2A;
+  --md-surface-container-highest: #333333;
 
-  /* Brand */
-  --blue:   #0a84ff;        /* primary accent                       */
-  --blue-dim: rgba(10,132,255,0.15);
+  /* Primary */
+  --md-primary:              #E0E0E0;
+  --md-on-primary:           #1A1A1A;
+  --md-primary-container:    #2E2E2E;
+  --md-on-primary-container: #E8E8E8;
 
-  /* Semantic */
-  --green:  #30d158;        /* success / good quality               */
-  --amber:  #ff9f0a;        /* warning / medium quality             */
-  --red:    #ff453a;        /* error / separated flow               */
-  --purple: #bf5af2;        /* wiper feature                        */
+  /* Secondary */
+  --md-secondary:              #C4C4C4;
+  --md-secondary-container:    #272727;
+  --md-on-secondary-container: #CACACA;
 
-  /* Text */
-  --text-primary:    rgba(255, 255, 255, 0.92);
-  --text-secondary:  rgba(255, 255, 255, 0.65);
-  --text-tertiary:   rgba(255, 255, 255, 0.40);
-  --text-quaternary: rgba(255, 255, 255, 0.24);
+  /* Tertiary (accent for CFD values) */
+  --md-tertiary:              #B0BEC5;
+  --md-tertiary-container:    #263238;
+  --md-on-tertiary-container: #CFD8DC;
 
-  /* Borders / separators */
-  --sep:    rgba(255, 255, 255, 0.07);
-  --border: rgba(255, 255, 255, 0.10);
+  /* Error */
+  --md-error:              #F2B8B8;
+  --md-error-container:    #8C1D18;
+  --md-on-error-container: #F9DEDC;
+
+  /* Outline */
+  --md-outline:         rgba(255,255,255,0.12);
+  --md-outline-variant: rgba(255,255,255,0.07);
+
+  /* On-surface text roles */
+  --md-on-surface:           rgba(255,255,255,0.87);
+  --md-on-surface-variant:   rgba(255,255,255,0.60);
+  --md-on-surface-disabled:  rgba(255,255,255,0.38);
+
+  /* Semantic — keep for CFD output colouring */
+  --md-success:  #81C784;
+  --md-warning:  #FFB74D;
+  --md-info:     #90CAF9;
+
+  /* Legacy aliases — used in existing components */
+  --bg0:             var(--md-surface);
+  --bg1:             var(--md-surface-container-low);
+  --bg2:             var(--md-surface-container);
+  --bg3:             var(--md-surface-container-high);
+  --blue:            var(--md-primary);
+  --blue-dim:        var(--md-primary-container);
+  --green:           var(--md-success);
+  --amber:           var(--md-warning);
+  --red:             var(--md-error);
+  --purple:          #CE93D8;
+  --sep:             var(--md-outline-variant);
+  --border:          var(--md-outline);
+  --text-primary:    var(--md-on-surface);
+  --text-secondary:  var(--md-on-surface-variant);
+  --text-tertiary:   rgba(255,255,255,0.45);
+  --text-quaternary: rgba(255,255,255,0.28);
 
   /* Typography */
-  --font-sans: 'Roboto Flex', 'Inter', system-ui, sans-serif;
-  --font-mono: 'Roboto Mono', 'JetBrains Mono', 'Fira Code', monospace;
+  --font-sans: 'Roboto Flex', system-ui, sans-serif;
+  --font-mono: 'Roboto Mono', 'JetBrains Mono', monospace;
+
+  /* M3 Shape tokens */
+  --md-shape-extra-small: 4px;
+  --md-shape-small:       8px;
+  --md-shape-medium:      12px;
+  --md-shape-large:       16px;
+  --md-shape-extra-large: 28px;
+  --md-shape-full:        9999px;
+
+  /* M3 Elevation overlays (white on dark = tonal elevation) */
+  --md-elevation-1: rgba(255,255,255,0.05);
+  --md-elevation-2: rgba(255,255,255,0.08);
+  --md-elevation-3: rgba(255,255,255,0.11);
+  --md-elevation-4: rgba(255,255,255,0.12);
+  --md-elevation-5: rgba(255,255,255,0.14);
 }
 
-/* ── Global resets for buttons ────────────────────────────────── */
-button {
-  font-family: var(--font-sans);
-  background: transparent;
-  border: none;
+/* ── M3 Type scale ─────────────────────────────────────────────────────────── */
+.md-display-small  { font-size:36px; font-weight:400; line-height:44px; letter-spacing:0; }
+.md-headline-large { font-size:32px; font-weight:400; line-height:40px; letter-spacing:0; }
+.md-headline-medium{ font-size:28px; font-weight:400; line-height:36px; }
+.md-headline-small { font-size:24px; font-weight:400; line-height:32px; }
+.md-title-large    { font-size:22px; font-weight:400; line-height:28px; }
+.md-title-medium   { font-size:16px; font-weight:500; line-height:24px; letter-spacing:.15px; }
+.md-title-small    { font-size:14px; font-weight:500; line-height:20px; letter-spacing:.1px; }
+.md-label-large    { font-size:14px; font-weight:500; line-height:20px; letter-spacing:.1px; }
+.md-label-medium   { font-size:12px; font-weight:500; line-height:16px; letter-spacing:.5px; }
+.md-label-small    { font-size:11px; font-weight:500; line-height:16px; letter-spacing:.5px; }
+.md-body-large     { font-size:16px; font-weight:400; line-height:24px; letter-spacing:.5px; }
+.md-body-medium    { font-size:14px; font-weight:400; line-height:20px; letter-spacing:.25px; }
+.md-body-small     { font-size:12px; font-weight:400; line-height:16px; letter-spacing:.4px; }
+
+/* ── M3 Navigation Rail ────────────────────────────────────────────────────── */
+.md-nav-rail {
+  width: 80px;
+  height: 100%;
+  background: var(--md-surface-container-low);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 4px;
+  border-right: 1px solid var(--md-outline-variant);
+  flex-shrink: 0;
+}
+
+.md-nav-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 0;
   cursor: pointer;
-  color: inherit;
+  border: none;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  transition: color 0.2s;
+  position: relative;
 }
 
-button:disabled {
+.md-nav-rail-item .md-nav-indicator {
+  width: 56px;
+  height: 32px;
+  border-radius: var(--md-shape-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  font-size: 18px;
+}
+
+.md-nav-rail-item[data-active="true"] .md-nav-indicator {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+
+.md-nav-rail-item[data-active="true"] {
+  color: var(--md-on-surface);
+}
+
+.md-nav-rail-item .md-nav-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  font-family: var(--font-sans);
+}
+
+/* ── M3 Cards ──────────────────────────────────────────────────────────────── */
+.md-card-filled {
+  background: var(--md-surface-container-highest);
+  border-radius: var(--md-shape-medium);
+  overflow: hidden;
+}
+
+.md-card-outlined {
+  background: var(--md-surface);
+  border: 1px solid var(--md-outline);
+  border-radius: var(--md-shape-medium);
+  overflow: hidden;
+}
+
+.md-card-elevated {
+  background: var(--md-surface-container-low);
+  border-radius: var(--md-shape-medium);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
+  overflow: hidden;
+}
+
+/* ── M3 Buttons ────────────────────────────────────────────────────────────── */
+
+/* Extended FAB */
+.md-fab-extended {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 20px;
+  border-radius: var(--md-shape-large);
+  border: none;
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  cursor: pointer;
+  width: 100%;
+  justify-content: center;
+  transition: background 0.2s, box-shadow 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.md-fab-extended:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--md-primary-container) 92%, white 8%);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 2px 6px 2px rgba(0,0,0,0.15);
+}
+
+.md-fab-extended:disabled {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.28);
   cursor: default;
 }
 
-input, textarea {
-  font-family: var(--font-mono);
-  color: var(--text-primary);
+/* Filled Tonal Button */
+.md-btn-tonal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--md-shape-full);
+  border: none;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-/* ── Scrollbar ─────────────────────────────────────────────────── */
+.md-btn-tonal:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--md-secondary-container) 92%, white 8%);
+}
+
+.md-btn-tonal:disabled {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.28);
+  cursor: default;
+}
+
+/* Outlined Button */
+.md-btn-outlined {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--md-shape-full);
+  border: 1px solid var(--md-outline);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.md-btn-outlined:hover:not(:disabled) {
+  background: rgba(255,255,255,0.05);
+  color: var(--md-on-surface);
+}
+
+.md-btn-outlined:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+/* Icon Button — Filled Tonal (toggle) */
+.md-icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--md-shape-full);
+  border: none;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.md-icon-btn:hover { background: rgba(255,255,255,0.08); }
+
+.md-icon-btn[data-active="true"] {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+
+.md-icon-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+/* ── M3 Chips ──────────────────────────────────────────────────────────────── */
+.md-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--md-shape-full);
+  border: 1px solid var(--md-outline);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  white-space: nowrap;
+}
+
+.md-chip:hover { background: rgba(255,255,255,0.05); }
+
+.md-chip[data-selected="true"] {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  border-color: transparent;
+}
+
+.md-chip[data-selected="true"]:hover {
+  background: color-mix(in srgb, var(--md-secondary-container) 92%, white 8%);
+}
+
+.md-chip:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+/* Assist chip (non-interactive, stage pills) */
+.md-chip-assist {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--md-shape-full);
+  border: 1px solid var(--md-outline-variant);
+  background: transparent;
+  color: var(--md-on-surface-disabled);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  transition: all 0.3s;
+}
+
+.md-chip-assist[data-active="true"] {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  border-color: transparent;
+}
+
+.md-chip-assist[data-done="true"] {
+  background: rgba(129,199,132,0.12);
+  color: var(--md-success);
+  border-color: transparent;
+}
+
+/* ── M3 List ───────────────────────────────────────────────────────────────── */
+.md-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+
+.md-list-item:last-child { border-bottom: none; }
+
+.md-list-item-label {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--md-on-surface-variant);
+}
+
+.md-list-item-value {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--md-on-surface);
+}
+
+/* ── M3 Linear Progress ────────────────────────────────────────────────────── */
+.md-linear-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--md-surface-container-highest);
+  overflow: hidden;
+  width: 100%;
+}
+
+.md-linear-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--md-primary);
+  transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ── M3 Divider ────────────────────────────────────────────────────────────── */
+.md-divider {
+  height: 1px;
+  background: var(--md-outline-variant);
+  width: 100%;
+  margin: 8px 0;
+}
+
+/* ── M3 Text Field ─────────────────────────────────────────────────────────── */
+.md-text-field {
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--md-shape-extra-small);
+  border: 1px solid var(--md-outline);
+  background: transparent;
+  color: var(--md-on-surface);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.2s;
+}
+
+.md-text-field:focus {
+  border-color: var(--md-primary);
+  border-width: 2px;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--md-outline); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
 
-/* ── Animations ───────────────────────────────────────────────── */
-@keyframes anim-spin {
+/* ── Drop zone dashed border ───────────────────────────────────────────────── */
+.md-dropzone {
+  border: 1.5px dashed var(--md-outline);
+  border-radius: var(--md-shape-medium);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px 8px;
+  position: relative;
+}
+
+.md-dropzone:hover,
+.md-dropzone[data-drag="true"] {
+  border-color: var(--md-primary);
+  background: var(--md-primary-container);
+}
+
+.md-dropzone[data-has-file="true"] {
+  border-color: var(--md-success);
+  background: rgba(129,199,132,0.05);
+}
+
+/* ── Section header ────────────────────────────────────────────────────────── */
+.md-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  margin-bottom: 6px;
+}
+
+.md-section-number {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--md-primary);
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+}
+
+.md-section-divider {
+  flex: 1;
+  height: 1px;
+  background: var(--md-outline-variant);
+}
+
+.md-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--md-on-surface-disabled);
+  font-family: var(--font-sans);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* ── Animations ────────────────────────────────────────────────────────────── */
+@keyframes md-spin {
   to { transform: rotate(360deg); }
 }
 
-@keyframes cfd-pressure {
-  0%,100% { opacity: 0.4; transform: scale(1);    }
-  50%     { opacity: 1.0; transform: scale(1.35); }
+@keyframes md-pulse {
+  0%,100% { opacity:0.4; transform:scale(1); }
+  50%     { opacity:1.0; transform:scale(1.3); }
 }
 
-.anim-spin {
-  animation: anim-spin 0.75s linear infinite;
+@keyframes md-ripple {
+  from { transform: scale(0); opacity: 0.3; }
+  to   { transform: scale(4); opacity: 0; }
 }
+
+@keyframes md-slide-in {
+  from { opacity:0; transform:translateY(8px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+
+.md-spin    { animation: md-spin 0.75s linear infinite; }
+.md-pulse   { animation: md-pulse 1.2s ease-in-out infinite; }
+.md-slide-in{ animation: md-slide-in 0.24s cubic-bezier(0.2,0,0,1) both; }
+
+/* Legacy compat */
+.anim-spin { animation: md-spin 0.75s linear infinite; }
+@keyframes cfd-pressure {
+  0%,100% { opacity:0.4; transform:scale(1); }
+  50%     { opacity:1.0; transform:scale(1.35); }
+}
+
+/* ── Thumbnail strip chips ─────────────────────────────────────────────────── */
+.md-view-thumb {
+  border-radius: var(--md-shape-medium);
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-low);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+  position: relative;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.md-view-thumb[data-active="true"] {
+  border-color: var(--md-primary);
+  background: var(--md-primary-container);
+}
+
+/* ── State layer (hover/press overlay) ─────────────────────────────────────── */
+.md-state-layer {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  transition: background 0.15s;
+}
+
+button:hover  > .md-state-layer { background: rgba(255,255,255,0.08); }
+button:active > .md-state-layer { background: rgba(255,255,255,0.12); }
