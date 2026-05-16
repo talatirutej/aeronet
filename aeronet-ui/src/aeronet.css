@@ -1,0 +1,100 @@
+/* aeronet.css — AeroNet design tokens
+ * Copyright (c) 2026 Rutej Talati / statinsite.com
+ *
+ * Import this in main.jsx:
+ *   import './aeronet.css'
+ *
+ * All CSS custom properties used throughout Views2DPage, SideViewSVG,
+ * FrontViewSVG, TopViewSVG, PipelineOverlay, SimulationModal.
+ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #070d14;
+  color: rgba(255, 255, 255, 0.85);
+  font-family: 'Roboto Flex', 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Colour tokens ─────────────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg0:  #070d14;          /* deepest — page background            */
+  --bg1:  #0c1520;          /* surface — cards, sidebar panels      */
+  --bg2:  #111e2b;          /* raised — inputs, code blocks         */
+  --bg3:  #162333;          /* highest — hover states               */
+
+  /* Brand */
+  --blue:   #0a84ff;        /* primary accent                       */
+  --blue-dim: rgba(10,132,255,0.15);
+
+  /* Semantic */
+  --green:  #30d158;        /* success / good quality               */
+  --amber:  #ff9f0a;        /* warning / medium quality             */
+  --red:    #ff453a;        /* error / separated flow               */
+  --purple: #bf5af2;        /* wiper feature                        */
+
+  /* Text */
+  --text-primary:    rgba(255, 255, 255, 0.92);
+  --text-secondary:  rgba(255, 255, 255, 0.65);
+  --text-tertiary:   rgba(255, 255, 255, 0.40);
+  --text-quaternary: rgba(255, 255, 255, 0.24);
+
+  /* Borders / separators */
+  --sep:    rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.10);
+
+  /* Typography */
+  --font-sans: 'Roboto Flex', 'Inter', system-ui, sans-serif;
+  --font-mono: 'Roboto Mono', 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* ── Global resets for buttons ────────────────────────────────── */
+button {
+  font-family: var(--font-sans);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+input, textarea {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+
+/* ── Animations ───────────────────────────────────────────────── */
+@keyframes anim-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cfd-pressure {
+  0%,100% { opacity: 0.4; transform: scale(1);    }
+  50%     { opacity: 1.0; transform: scale(1.35); }
+}
+
+.anim-spin {
+  animation: anim-spin 0.75s linear infinite;
+}
