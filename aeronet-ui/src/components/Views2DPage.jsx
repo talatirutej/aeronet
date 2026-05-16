@@ -52,8 +52,8 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
   const sketchRef  = useRef(null)
   const rafRef     = useRef(null)
   const timerRef   = useRef([])
-  const pctRef     = useRef(pct)      // Fix: keep pct current inside RAF loop closure
-  const visibleRef = useRef(visible)  // Fix: stabilise visible — only react to true transitions
+  const pctRef     = useRef(pct)   // Fix: keep pct current inside RAF loop closure
+  const prevVisRef = useRef(null)  // Fix: null so first mount always triggers the loop
   const stRef     = useRef({
     t:0, pistonT:0, crankAngle:0, shakeX:0, shakeY:0,
     flashAlpha:0, rpmVal:800,
@@ -62,11 +62,12 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
     prevPct:-1,
   })
 
-  // Run ONLY on true visible transitions (false→true / true→false)
-  // Using visibleRef prevents the effect re-firing on every parent setSlot re-render
+  // Run ONLY on true visible transitions (false→true / true→false).
+  // prevVisRef starts as null so the very first mount always passes through.
+  // This prevents the effect re-firing on every parent setSlot re-render.
   useEffect(() => {
-    const prev = visibleRef.current
-    visibleRef.current = visible
+    const prev = prevVisRef.current
+    prevVisRef.current = visible
     if (visible === prev) return   // same value — do nothing (prevents loop restart storms)
 
     if (!visible) { stopLoop(); return }
@@ -97,7 +98,7 @@ export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', 
 
   // React to pct changes — trigger sketch at 100
   useEffect(() => {
-    if (!visibleRef.current) return
+    if (!visible) return
     const S = stRef.current
     if (pct >= 100 && S.debris && !S.sketching && !S.exploded) {
       triggerExplosion()
