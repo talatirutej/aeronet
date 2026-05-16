@@ -447,19 +447,16 @@ export default function Views2DPage({ backend = '' }) {
   }
 
   /**
-   * _buildOutlineSVG — creates a clean SVG string of the outline only.
-   * - Transparent background (no rect fill)
-   * - fill="none" on the path — hollow outline
-   * - Stroke colour: black for Word/print use
-   * - Aspect ratio preserved from bbox
+   * Build a clean outline SVG path string.
+   * bg = true  → white background rectangle (for PNG export / Word paste)
+   * bg = false → no background (for SVG file download, transparent)
    */
-  const _buildOutlineSVG = (geo, strokeColor = '#000000', strokeWidth = 3) => {
+  const _buildOutlineSVG = (geo, { strokeColor='#111111', strokeWidth=3, bg=true } = {}) => {
     const pts = geo._smoothPts ?? geo._contourPts
     if (!pts?.length) return null
 
     const bboxAspect = geo._bboxAspect ?? 2.4
-    // Canvas: 1600×700 for high-res Word insertion
-    const CW = 1600, CH = 700, PAD = 40
+    const CW = 1600, CH = 700, PAD = 48
     const dw = (CW - PAD*2) * 0.95
     const dh = Math.min(dw / bboxAspect, CH - PAD*2)
     const ox  = PAD + ((CW - PAD*2) - dw) / 2
@@ -469,86 +466,98 @@ export default function Views2DPage({ backend = '' }) {
       `${i===0?'M':'L'}${(ox+nx*dw).toFixed(2)},${(oy+ny*dh).toFixed(2)}`
     ).join(' ') + ' Z'
 
-    // transparent background — no <rect> — so Word shows outline on white page
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
-      `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" ` +
-      `stroke-linejoin="round" stroke-linecap="round"/>` +
+    const bg_rect = bg
+      ? `<rect width="${CW}" height="${CH}" fill="white"/>`
+      : ''
+
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" ` +
+      `width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
+      bg_rect +
+      `<path d="${d}" fill="none" stroke="${strokeColor}" ` +
+      `stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round"/>` +
       `</svg>`
+    )
   }
 
   /**
-   * Export a black outline PNG at 2× resolution with transparent background.
-   * This is the Word-ready version — paste directly into Word/Slides/Docs.
-   * Falls back to file download if clipboard API unavailable.
+   * copyOutline — always downloads a PNG file.
+   * Clipboard API is unreliable across browsers/HTTPS/permissions.
+   * Downloads aeronet_outline_side.png with white background,
+   * black stroke, hollow fill — paste into Word with Ctrl+V or Insert.
    */
   const copyOutline = async () => {
     const geo = getSlot(activeView).geo
     if (!geo?._contourPts && !geo?._smoothPts) return
 
-    const svgStr = _buildOutlineSVG(geo, '#000000', 3)
+    const svgStr = _buildOutlineSVG(geo, { strokeColor:'#111111', strokeWidth:3, bg:true })
     if (!svgStr) return
 
-    // Render SVG → Canvas at 2× for crisp paste into Word
     const CW = 1600, CH = 700
-    const blob   = new Blob([svgStr], { type:'image/svg+xml' })
-    const url    = URL.createObjectURL(blob)
-    const img    = new window.Image()
 
-    img.onload = async () => {
-      URL.revokeObjectURL(url)
-      // 2× pixel density for retina / high-DPI Word
-      const SCALE  = 2
-      const canvas = document.createElement('canvas')
-      canvas.width  = CW * SCALE
-      canvas.height = CH * SCALE
-      const ctx = canvas.getContext('2d')
-      // DO NOT fill background — leave transparent
-      ctx.scale(SCALE, SCALE)
-      ctx.drawImage(img, 0, 0, CW, CH)
+    // Use canvas to rasterise SVG → PNG at 2× for crisp Word insertion
+    const renderPNG = () => new Promise((resolve, reject) => {
+      const blob = new Blob([svgStr], { type:'image/svg+xml;charset=utf-8' })
+      const url  = URL.createObjectURL(blob)
+      const img  = new window.Image()
+      img.onload = () => {
+        URL.revokeObjectURL(url)
+        const canvas = document.createElement('canvas')
+        canvas.width  = CW * 2    // 2× for retina
+        canvas.height = CH * 2
+        const ctx = canvas.getContext('2d')
+        ctx.fillStyle = '#ffffff'  // white background
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        canvas.toBlob(resolve, 'image/png')
+      }
+      img.onerror = reject
+      // Force CORS-safe load
+      img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)))
+    })
 
-      canvas.toBlob(async png => {
-        // Try clipboard first
-        try {
-          await navigator.clipboard.write([
-            new ClipboardItem({ 'image/png': png })
-          ])
-          setCopyDone(true)
-          setTimeout(() => setCopyDone(false), 3000)
-        } catch {
-          // Clipboard blocked (HTTP or browser restriction) — download instead
-          const a = document.createElement('a')
-          a.href     = URL.createObjectURL(png)
-          a.download = `aeronet_outline_${activeView}.png`
-          a.click()
-          setCopyDone(true)
-          setTimeout(() => setCopyDone(false), 3000)
-        }
-      }, 'image/png')
-    }
+    try {
+      const png = await renderPNG()
 
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      // Final fallback: download the SVG itself (works in all Word versions)
+      // Try clipboard first (works on HTTPS Chrome/Edge)
+      let clipboardOk = false
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+        clipboardOk = true
+      } catch { /* fall through to download */ }
+
+      // Always also trigger download so user definitely gets the file
+      const a = document.createElement('a')
+      a.href     = URL.createObjectURL(png)
+      a.download = `aeronet_outline_${activeView}.png`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+
+      setCopyDone(true)
+      setTimeout(() => setCopyDone(false), 3000)
+    } catch (err) {
+      console.error('[copyOutline] PNG render failed, falling back to SVG download', err)
       exportOutlineSVG()
     }
-
-    img.src = url
   }
 
   /**
-   * Download a clean black outline SVG file.
-   * Insert into Word via Insert → Pictures → This Device.
-   * SVG scales perfectly to any size without pixelation.
+   * exportOutlineSVG — downloads a clean black outline SVG.
+   * Insert into Word: Insert → Pictures → This Device → select the .svg file.
+   * Scales perfectly to any size, no pixelation.
    */
   const exportOutlineSVG = () => {
     const geo = getSlot(activeView).geo
     if (!geo?._contourPts && !geo?._smoothPts) return
-    const svgStr = _buildOutlineSVG(geo, '#000000', 2.5)
+    const svgStr = _buildOutlineSVG(geo, { strokeColor:'#111111', strokeWidth:2.5, bg:false })
     if (!svgStr) return
     const a = document.createElement('a')
     a.href     = URL.createObjectURL(new Blob([svgStr], { type:'image/svg+xml' }))
     a.download = `aeronet_outline_${activeView}.svg`
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
