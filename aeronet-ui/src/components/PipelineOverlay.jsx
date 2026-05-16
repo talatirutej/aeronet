@@ -1,6 +1,5 @@
-// PipelineOverlay.jsx
+// PipelineOverlay.jsx — Material 3 Black/White Theme
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
-// AeroNet — pipeline progress overlay for the 2D analysis view.
 
 export default function PipelineOverlay({ visible, pct, msg, sub, stages = [] }) {
   if (!visible) return null
@@ -8,81 +7,176 @@ export default function PipelineOverlay({ visible, pct, msg, sub, stages = [] })
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 20,
-      background: 'rgba(7,13,20,0.92)',
+      background: 'rgba(20,20,20,0.94)',
+      backdropFilter: 'blur(8px)',
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      gap: 24,
-      backdropFilter: 'blur(4px)',
+      gap: 28,
+      animation: 'md-slide-in 0.2s ease both',
     }}>
 
-      {/* Stage pills */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 540 }}>
+      {/* M3 Assist chips — pipeline stages */}
+      <div style={{
+        display: 'flex', gap: 6, flexWrap: 'wrap',
+        justifyContent: 'center', maxWidth: 560, padding: '0 24px',
+      }}>
         {stages.map(s => {
           const active = pct >= s.pct[0] && pct < s.pct[1]
           const done   = pct >= s.pct[1]
           return (
-            <div key={s.id} style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '3px 10px', borderRadius: 20,
-              fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
-              fontWeight: 600, letterSpacing: '0.06em',
-              border: `0.5px solid ${active ? 'rgba(10,132,255,0.7)' : done ? 'rgba(48,209,88,0.4)' : 'rgba(255,255,255,0.08)'}`,
-              background: active ? 'rgba(10,132,255,0.15)' : done ? 'rgba(48,209,88,0.08)' : 'transparent',
-              color: active ? 'rgba(10,132,255,0.95)' : done ? 'rgba(48,209,88,0.85)' : 'rgba(255,255,255,0.20)',
-              transition: 'all 0.3s',
-            }}>
-              <span>{s.icon}</span>
+            <div
+              key={s.id}
+              className="md-chip-assist"
+              data-active={active}
+              data-done={done}
+            >
+              <span style={{ fontSize: 12 }}>{s.icon}</span>
               <span>{s.label}</span>
-              {done && <span style={{ color: 'rgba(48,209,88,0.7)' }}>✓</span>}
+              {done && <span style={{ fontSize: 10 }}>✓</span>}
             </div>
           )
         })}
       </div>
 
-      {/* Progress bar */}
-      <div style={{ width: 380, maxWidth: '80vw' }}>
-        <div style={{
-          height: 2, borderRadius: 2,
-          background: 'rgba(255,255,255,0.06)',
-          overflow: 'hidden', marginBottom: 14,
-        }}>
-          <div style={{
-            height: '100%', borderRadius: 2,
-            width: `${pct}%`,
-            background: 'linear-gradient(90deg, rgba(10,132,255,0.8), rgba(10,132,255,1))',
-            transition: 'width 0.6s cubic-bezier(0.4,0,0.2,1)',
-          }}/>
+      {/* M3 Card — progress + message */}
+      <div className="md-card-elevated" style={{
+        width: 400, maxWidth: '88vw',
+        padding: '20px 24px',
+        display: 'flex', flexDirection: 'column', gap: 14,
+      }}>
+        {/* M3 Linear progress */}
+        <div className="md-linear-progress">
+          <div className="md-linear-progress-bar" style={{ width: `${pct}%` }}/>
         </div>
 
         {/* Message */}
         <div style={{
-          fontSize: 11, color: 'rgba(255,255,255,0.75)',
-          fontFamily: "'IBM Plex Mono', monospace",
-          lineHeight: 1.5, textAlign: 'center',
-          minHeight: 32,
+          fontSize: 13,
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--md-on-surface)',
+          lineHeight: 1.55,
+          textAlign: 'center',
+          minHeight: 20,
         }}>
           {msg}
         </div>
+
         {sub && (
           <div style={{
-            fontSize: 9, color: 'rgba(255,255,255,0.30)',
-            fontFamily: "'IBM Plex Mono', monospace",
-            textAlign: 'center', marginTop: 4,
-            letterSpacing: '0.06em',
+            fontSize: 11,
+            fontFamily: 'var(--font-sans)',
+            color: 'var(--md-on-surface-variant)',
+            textAlign: 'center',
+            letterSpacing: '0.4px',
           }}>
             {sub}
           </div>
         )}
+
+        {/* Pct */}
+        <div style={{
+          textAlign: 'center',
+          fontSize: 28,
+          fontWeight: 300,
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--md-primary)',
+          letterSpacing: '-1px',
+          lineHeight: 1,
+        }}>
+          {Math.round(pct)}
+          <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 2, color: 'var(--md-on-surface-variant)' }}>%</span>
+        </div>
+      </div>
+    </div>
+  )
+}// PipelineOverlay.jsx — Material 3 Black/White Theme
+// Copyright (c) 2026 Rutej Talati. All rights reserved.
+
+export default function PipelineOverlay({ visible, pct, msg, sub, stages = [] }) {
+  if (!visible) return null
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 20,
+      background: 'rgba(20,20,20,0.94)',
+      backdropFilter: 'blur(8px)',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      gap: 28,
+      animation: 'md-slide-in 0.2s ease both',
+    }}>
+
+      {/* M3 Assist chips — pipeline stages */}
+      <div style={{
+        display: 'flex', gap: 6, flexWrap: 'wrap',
+        justifyContent: 'center', maxWidth: 560, padding: '0 24px',
+      }}>
+        {stages.map(s => {
+          const active = pct >= s.pct[0] && pct < s.pct[1]
+          const done   = pct >= s.pct[1]
+          return (
+            <div
+              key={s.id}
+              className="md-chip-assist"
+              data-active={active}
+              data-done={done}
+            >
+              <span style={{ fontSize: 12 }}>{s.icon}</span>
+              <span>{s.label}</span>
+              {done && <span style={{ fontSize: 10 }}>✓</span>}
+            </div>
+          )
+        })}
       </div>
 
-      {/* Pct counter */}
-      <div style={{
-        fontSize: 10, fontWeight: 700,
-        color: 'rgba(10,132,255,0.60)',
-        fontFamily: "'IBM Plex Mono', monospace",
-        letterSpacing: '0.10em',
+      {/* M3 Card — progress + message */}
+      <div className="md-card-elevated" style={{
+        width: 400, maxWidth: '88vw',
+        padding: '20px 24px',
+        display: 'flex', flexDirection: 'column', gap: 14,
       }}>
-        {Math.round(pct)}%
+        {/* M3 Linear progress */}
+        <div className="md-linear-progress">
+          <div className="md-linear-progress-bar" style={{ width: `${pct}%` }}/>
+        </div>
+
+        {/* Message */}
+        <div style={{
+          fontSize: 13,
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--md-on-surface)',
+          lineHeight: 1.55,
+          textAlign: 'center',
+          minHeight: 20,
+        }}>
+          {msg}
+        </div>
+
+        {sub && (
+          <div style={{
+            fontSize: 11,
+            fontFamily: 'var(--font-sans)',
+            color: 'var(--md-on-surface-variant)',
+            textAlign: 'center',
+            letterSpacing: '0.4px',
+          }}>
+            {sub}
+          </div>
+        )}
+
+        {/* Pct */}
+        <div style={{
+          textAlign: 'center',
+          fontSize: 28,
+          fontWeight: 300,
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--md-primary)',
+          letterSpacing: '-1px',
+          lineHeight: 1,
+        }}>
+          {Math.round(pct)}
+          <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 2, color: 'var(--md-on-surface-variant)' }}>%</span>
+        </div>
       </div>
     </div>
   )
