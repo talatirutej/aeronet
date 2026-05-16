@@ -30,20 +30,22 @@ function normPtsToPath(pts, bboxAspect, cW=W, cH=H, pad=PAD, normW=null, normH=n
   if (normW && normH && normW > 0 && normH > 0) {
     const drawW = cW - pad * 2.5
     const drawH = cH - pad * 2.5
-    // Fit the car's true aspect ratio inside the draw area (letterbox/pillarbox)
-    const carAspect = normW / normH
+    const trueAspect = normW / normH
+    const displayAspect = Math.max(trueAspect, 2.2)  // clamp min visual aspect
     const canvasAspect = drawW / drawH
+    // scaleX maps normW → draw width; scaleY maps normH → draw height
+    // but we adjust scaleY so the outline renders at displayAspect visually
     let scaleX, scaleY, ox, oy
-    if (carAspect > canvasAspect) {
-      // Car is wider than canvas ratio — constrain by width
+    if (displayAspect > canvasAspect) {
       scaleX = drawW / normW
-      scaleY = scaleX          // uniform scale preserves proportions
+      scaleY = scaleX * (trueAspect / displayAspect)
       ox = pad * 1.25
       oy = (cH - normH * scaleY) / 2
     } else {
-      // Car is taller than canvas ratio — constrain by height
-      scaleY = drawH / normH
-      scaleX = scaleY
+      const drawHadj = drawH * (trueAspect / displayAspect)
+      scaleY = drawHadj / normH
+      scaleX = drawW / normW * (displayAspect / trueAspect) * (trueAspect / displayAspect)
+      scaleX = scaleY * displayAspect / trueAspect
       oy = pad * 1.25
       ox = (cW - normW * scaleX) / 2
     }
@@ -81,13 +83,15 @@ function buildSepLines(g, bboxAspect, cW=W, cH=H, pad=PAD) {
 
 // ── Inner component — only rendered when pts are valid ────────────────────────
 
-function SideViewSVGInner({ g, showSep, showArches, drawDone }) {
+function SideViewSVGInner({ g, showSep, showArches, drawDone, outlineMode='smooth' }) {
   // Resolve points — try every possible key
-  const mainPts = (
-    g._smoothPts?.length  ? g._smoothPts  :
-    g._contourPts?.length ? g._contourPts :
-    null
-  )
+  // Prefer the higher-resolution point set for rendering
+    // Resolve points based on outlineMode:
+  // 'smooth'    → _smoothPts (600pt display, max smoothed) for slides/presentations
+  // 'technical' → _contourPts (2000pt, geometry-preserving) for overlays/benchmarking
+  const mainPts = outlineMode === 'technical'
+    ? (g._contourPts?.length ? g._contourPts : g._smoothPts?.length ? g._smoothPts : null)
+    : (g._smoothPts?.length  ? g._smoothPts  : g._contourPts?.length ? g._contourPts : null)
 
   const bboxAspect = g._bboxAspect ?? g.trueAspect ?? g.aspectRatio ?? 2.4
   const imageW     = g._imageW ?? 1536
@@ -114,21 +118,23 @@ function SideViewSVGInner({ g, showSep, showArches, drawDone }) {
   // Match normPtsToPath layout: fit true car proportions into canvas
   const normW = g.normWidth  ?? g.norm_w  ?? null
   const normH = g.normHeight ?? g.norm_h  ?? null
-  // DEBUG — remove after confirming values
-  console.log('[SideViewSVG] normW=', normW, 'normH=', normH, 'bboxAspect=', bboxAspect, 'trueAspect=', g.trueAspect)
   let dw, dh, ox, oy
   if (normW && normH && normW > 0 && normH > 0) {
     const drawW = W - PAD * 2.5
     const drawH = H - PAD * 2.5
-    const carAspect = normW / normH
+    const trueAspect = normW / normH
+    // Clamp display aspect to min 2.4 — tight-crop photos give normH~0.5 (aspect~2)
+    // which fills the canvas and looks like a van. True proportions preserved in data.
+    const displayAspect = Math.max(trueAspect, 2.4)
+    const normHDisplay = normW / displayAspect
     const canvasAspect = drawW / drawH
-    if (carAspect > canvasAspect) {
+    if (displayAspect > canvasAspect) {
       const scale = drawW / normW
-      dw = normW * scale; dh = normH * scale
+      dw = normW * scale; dh = normHDisplay * scale
       ox = PAD * 1.25;    oy = (H - dh) / 2
     } else {
-      const scale = drawH / normH
-      dw = normW * scale; dh = normH * scale
+      const scale = drawH / normHDisplay
+      dw = normW * scale; dh = normHDisplay * scale
       oy = PAD * 1.25;    ox = (W - dw) / 2
     }
   } else {
@@ -256,10 +262,11 @@ function SideViewSVGInner({ g, showSep, showArches, drawDone }) {
 
 export default function SideViewSVG({
   g,
-  showSep    = true,
-  showArches = false,
-  isDrawing  = false,   // kept for API compat, no longer used
-  drawDone   = false,
+  showSep     = true,
+  showArches  = false,
+  isDrawing   = false,
+  drawDone    = false,
+  outlineMode = 'smooth',  // 'smooth' | 'technical'
 }) {
   // Guard: only render if we actually have points
   const hasPoints = (g?._smoothPts?.length ?? 0) > 0 || (g?._contourPts?.length ?? 0) > 0
@@ -278,6 +285,7 @@ export default function SideViewSVG({
       showSep={showSep}
       showArches={showArches}
       drawDone={drawDone}
+      outlineMode={outlineMode}
     />
   )
 }
