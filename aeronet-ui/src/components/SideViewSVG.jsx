@@ -83,15 +83,25 @@ function buildSepLines(g, bboxAspect, cW=W, cH=H, pad=PAD) {
 
 // ── Inner component — only rendered when pts are valid ────────────────────────
 
-function SideViewSVGInner({ g, showSep, showArches, drawDone, outlineMode='smooth' }) {
-  // Resolve points — try every possible key
-  // Prefer the higher-resolution point set for rendering
-    // Resolve points based on outlineMode:
-  // 'smooth'    → _smoothPts (600pt display, max smoothed) for slides/presentations
-  // 'technical' → _contourPts (2000pt, geometry-preserving) for overlays/benchmarking
-  const mainPts = outlineMode === 'technical'
-    ? (g._contourPts?.length ? g._contourPts : g._smoothPts?.length ? g._smoothPts : null)
-    : (g._smoothPts?.length  ? g._smoothPts  : g._contourPts?.length ? g._contourPts : null)
+function SideViewSVGInner({ g, showSep, showArches, drawDone, smoothingLevel=100 }) {
+  // smoothingLevel: 100=fully smooth (_smoothPts), 0=fully technical (_contourPts)
+  // In between: linearly interpolate between both point sets per point
+  const smoothPts    = g._smoothPts?.length  ? g._smoothPts    : null
+  const technicalPts = g._contourPts?.length ? g._contourPts   : null
+
+  const mainPts = (() => {
+    if (!smoothPts && !technicalPts) return null
+    if (!smoothPts)    return technicalPts
+    if (!technicalPts) return smoothPts
+    const t     = smoothingLevel / 100
+    const n     = technicalPts.length
+    const ratio = smoothPts.length / n
+    return technicalPts.map((tp, i) => {
+      const si = Math.min(Math.floor(i * ratio), smoothPts.length - 1)
+      const sp = smoothPts[si]
+      return [sp[0]*t + tp[0]*(1-t), sp[1]*t + tp[1]*(1-t)]
+    })
+  })()
 
   const bboxAspect = g._bboxAspect ?? g.trueAspect ?? g.aspectRatio ?? 2.4
   const imageW     = g._imageW ?? 1536
@@ -262,11 +272,11 @@ function SideViewSVGInner({ g, showSep, showArches, drawDone, outlineMode='smoot
 
 export default function SideViewSVG({
   g,
-  showSep     = true,
-  showArches  = false,
-  isDrawing   = false,
-  drawDone    = false,
-  outlineMode = 'smooth',  // 'smooth' | 'technical'
+  showSep        = true,
+  showArches     = false,
+  isDrawing      = false,
+  drawDone       = false,
+  smoothingLevel = 100,   // 0=technical, 100=smooth, in between=interpolated
 }) {
   // Guard: only render if we actually have points
   const hasPoints = (g?._smoothPts?.length ?? 0) > 0 || (g?._contourPts?.length ?? 0) > 0
@@ -285,7 +295,7 @@ export default function SideViewSVG({
       showSep={showSep}
       showArches={showArches}
       drawDone={drawDone}
-      outlineMode={outlineMode}
+      smoothingLevel={smoothingLevel}
     />
   )
 }
