@@ -280,7 +280,7 @@ export default function Views2DPage({ backend = '' }) {
   const [outlineMode,  setOutlineMode]  = useState('smooth') // 'smooth' | 'technical'
   const [showArches,   setShowArches]   = useState(false)
   const [compareMode,  setCompareMode]  = useState(false)
-  const [compareB,     setCompareB]     = useState('front')  // which slot is Car B
+  const [compareB,     setCompareB]     = useState(null)
   const [copyDone,     setCopyDone]     = useState(false)
   const [showSimModal, setShowSimModal] = useState(false)
   const [urlMode,      setUrlMode]      = useState(false)
@@ -588,16 +588,16 @@ export default function Views2DPage({ backend = '' }) {
   const traceProgress = activeSlot.progress
   const error         = activeSlot.error
   const hasFile       = !!activeSlot.file
-  const anyOutline    = VIEWS.some(v=>!!getSlot(v.id).geo)
+  const anyOutline    = !!activeSlot.geo
   const canShowArches = activeView==='side' && !!geo?.arch_pts
-  const analysedViews = VIEWS.filter(v=>!!getSlot(v.id).geo)
-  const canCompare    = analysedViews.length >= 2
+  const analysedViews = activeSlot.geo ? [VIEWS[0]] : []
+  const canCompare    = false
 
   // Compare: Car A = activeView slot, Car B = compareB slot
-  const geoA = getSlot(activeView).geo
-  const geoB = getSlot(compareB).geo
-  const labelA = getSlot(activeView).file?.name?.replace(/\.[^.]+$/,'') ?? VIEWS.find(v=>v.id===activeView)?.fullLabel ?? 'Car A'
-  const labelB = getSlot(compareB).file?.name?.replace(/\.[^.]+$/,'') ?? VIEWS.find(v=>v.id===compareB)?.fullLabel ?? 'Car B'
+  const geoA = getSlot(activeView)?.geo ?? null
+  const geoB = compareB ? getSlot(compareB)?.geo ?? null : null
+  const labelA = getSlot(activeView)?.file?.name?.replace(/\.[^.]+$/,'') ?? 'Side View'
+  const labelB = null
 
   const ahmedColor = r=>({attached:'var(--md-success)',intermediate:'var(--md-warning)',critical:'var(--md-error)',separated:'var(--md-error)'}[r]??'var(--md-primary)')
 
@@ -876,8 +876,8 @@ export default function Views2DPage({ backend = '' }) {
       {/* ══ CENTRE ════════════════════════════════════════════════════════════ */}
       <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
-        {/* Toolbar — hidden in compare mode (CompareOverlay has its own) */}
-        {!compareMode && (
+        {/* Toolbar */}
+        {(
           <div style={{
             height:48,flexShrink:0,display:'flex',alignItems:'center',gap:4,padding:'0 12px',
             background:'var(--md-surface-container)',borderBottom:'1px solid var(--md-outline-variant)',
@@ -933,24 +933,10 @@ export default function Views2DPage({ backend = '' }) {
         {/* Canvas */}
         <div style={{flex:1,position:'relative',overflow:'hidden',background:'var(--md-surface)'}} ref={svgRef}>
 
-          {/* Compare mode */}
-          {compareMode && canCompare && geoA && geoB && (
-            <CompareOverlay geoA={geoA} geoB={geoB} labelA={labelA} labelB={labelB}/>
-          )}
 
-          {/* Compare mode but not enough data */}
-          {compareMode && (!canCompare || !geoA || !geoB) && (
-            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}>
-              <div style={{fontSize:32,color:'var(--md-outline-variant)'}}>⇔</div>
-              <div style={{fontSize:16,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)'}}>Analyse two views to compare</div>
-              <div style={{fontSize:13,color:'var(--md-on-surface-disabled)',textAlign:'center',lineHeight:1.8,fontFamily:'var(--font-sans)'}}>
-                Upload and analyse at least two car photos<br/>then click Compare in the navigation rail
-              </div>
-            </div>
-          )}
 
-          {/* Normal view */}
-          {!compareMode && (
+          {/* Canvas */}
+          {(
             <>
               <PipelineOverlay visible={isRunning} pct={traceProgress.pct} msg={traceProgress.msg} sub={traceProgress.sub} stages={STAGES}/>
 
@@ -963,7 +949,7 @@ export default function Views2DPage({ backend = '' }) {
                   </div>
                   {anyOutline && !hasFile && (
                     <div style={{fontSize:12,color:'var(--md-primary)',fontFamily:'var(--font-mono)',opacity:0.6}}>
-                      {analysedViews.length} view{analysedViews.length!==1?'s':''} analysed — see sidebar
+                      Outline ready — see above
                     </div>
                   )}
                 </div>
