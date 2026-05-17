@@ -277,7 +277,7 @@ export default function Views2DPage({ backend = '' }) {
   const [activeView,   setActiveView]   = useState('side')
   const [analysisMode, setAnalysisMode] = useState('A')
   const [showSep,      setShowSep]      = useState(true)
-  const [outlineMode,  setOutlineMode]  = useState('smooth') // 'smooth' | 'technical'
+  const [smoothingLevel, setSmoothingLevel] = useState(100) // 100=max smooth, 0=max technical
   const [showArches,   setShowArches]   = useState(false)
   const [compareMode,  setCompareMode]  = useState(false)
   const [compareB,     setCompareB]     = useState(null)
@@ -508,7 +508,7 @@ export default function Views2DPage({ backend = '' }) {
     const geo = getSlot(activeView).geo
     const _hasPoints = geo?._smoothPts?.length || geo?._contourPts?.length
     if (!_hasPoints) return
-    const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true,mode:outlineMode})
+    const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true,mode:smoothingLevel<50?"technical":"smooth"})
     if (!svgStr) return
     // Extract actual dimensions from the generated SVG (aspect-correct, not hardcoded)
     const wMatch = svgStr.match(/width="(\d+)"/)
@@ -542,7 +542,7 @@ export default function Views2DPage({ backend = '' }) {
   const exportOutlineSVG = () => {
     const geo=getSlot(activeView).geo
     if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
-    const svgStr=_buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:2.5,bg:false,mode:outlineMode})
+    const svgStr=_buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:2.5,bg:false,mode:smoothingLevel<50?"technical":"smooth"})
     if (!svgStr) return
     const a=document.createElement('a')
     a.href=URL.createObjectURL(new Blob([svgStr],{type:'image/svg+xml'}))
@@ -554,7 +554,7 @@ export default function Views2DPage({ backend = '' }) {
     const geo = getSlot(activeView).geo
     if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
     // bg:false = transparent background SVG
-    const svgStr = _buildOutlineSVG(geo, {strokeColor:'#000000', strokeWidth:4, bg:false, mode:outlineMode})
+    const svgStr = _buildOutlineSVG(geo, {strokeColor:'#000000', strokeWidth:4, bg:false, mode:smoothingLevel<50?"technical":"smooth"})
     if (!svgStr) return
     const wMatch = svgStr.match(/width="(\d+)"/)
     const hMatch = svgStr.match(/height="(\d+)"/)
@@ -603,7 +603,7 @@ export default function Views2DPage({ backend = '' }) {
 
   const renderCanvas = (g,isDrawingFlag,drawDoneFlag) => {
     if (!g) return null
-    return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag} outlineMode={outlineMode}/>
+    return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag} smoothingLevel={smoothingLevel}/>
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -690,39 +690,30 @@ export default function Views2DPage({ backend = '' }) {
             </div>
           </div>
 
-          {/* Outline mode toggle — Smooth / Technical */}
+          {/* Smoothing slider */}
           <div style={{marginBottom:10}}>
-            <div style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px',marginBottom:6,textTransform:'uppercase'}}>
-              Outline Mode
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <span style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px',textTransform:'uppercase'}}>
+                Outline Detail
+              </span>
+              <span style={{fontSize:10,fontFamily:'var(--font-mono)',color:'var(--md-primary)',fontWeight:600}}>
+                {smoothingLevel===100?'Max Smooth':smoothingLevel===0?'Technical':smoothingLevel<30?'Sharp':smoothingLevel<70?'Balanced':'Smooth'}
+              </span>
             </div>
-            <div style={{display:'flex',background:'var(--md-surface-container-highest)',borderRadius:10,padding:3,gap:2}}>
-              <button
-                onClick={()=>setOutlineMode('smooth')}
+            <div style={{position:'relative',padding:'4px 0'}}>
+              <input
+                type="range" min="0" max="100" value={smoothingLevel}
+                onChange={e=>setSmoothingLevel(Number(e.target.value))}
                 style={{
-                  flex:1,padding:'6px 0',borderRadius:8,fontSize:11,border:'none',cursor:'pointer',
-                  fontFamily:'var(--font-sans)',fontWeight:600,
-                  background:outlineMode==='smooth'?'var(--md-primary-container)':'transparent',
-                  color:outlineMode==='smooth'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
-                  transition:'all 0.2s',
+                  width:'100%', height:4, appearance:'none', outline:'none',
+                  background:`linear-gradient(to right, var(--md-primary) ${smoothingLevel}%, var(--md-surface-container-highest) ${smoothingLevel}%)`,
+                  borderRadius:2, cursor:'pointer',
                 }}
-              >
-                Smooth
-              </button>
-              <button
-                onClick={()=>setOutlineMode('technical')}
-                style={{
-                  flex:1,padding:'6px 0',borderRadius:8,fontSize:11,border:'none',cursor:'pointer',
-                  fontFamily:'var(--font-sans)',fontWeight:600,
-                  background:outlineMode==='technical'?'var(--md-primary-container)':'transparent',
-                  color:outlineMode==='technical'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
-                  transition:'all 0.2s',
-                }}
-              >
-                Technical
-              </button>
+              />
             </div>
-            <div style={{fontSize:10,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-sans)',marginTop:5,lineHeight:1.4}}>
-              {outlineMode==='smooth'?'Max smoothing — for presentations':'Geometry-preserving — for overlays'}
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:3}}>
+              <span style={{fontSize:9,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-sans)'}}>Technical</span>
+              <span style={{fontSize:9,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-sans)'}}>Smooth</span>
             </div>
           </div>
 
