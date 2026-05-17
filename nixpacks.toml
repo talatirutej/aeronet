@@ -1,8 +1,8 @@
 [phases.setup]
-nixPkgs = ["python312"]
+nixPkgs = ["python311", "libGL", "libglib"]
 
 [phases.install]
-cmds = ["pip install --upgrade pip", "pip install -r aeronet/server/requirements.txt"]
+cmds = ["pip install -r aeronet/server/requirements.txt"]
 
 [start]
-cmd = "cd aeronet/server && python app.py"
+cmd = "cd aeronet/server && uvicorn app:app --host 0.0.0.0 --port $PORT"
