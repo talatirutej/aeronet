@@ -12,8 +12,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import SideViewSVG     from './SideViewSVG.jsx'
-import FrontViewSVG    from './FrontViewSVG.jsx'
-import TopViewSVG      from './TopViewSVG.jsx'
 import PipelineOverlay from './PipelineOverlay.jsx'
 import SimulationModal from './SimulationModal.jsx'
 import CompareOverlay  from './CompareOverlay.jsx'
@@ -23,10 +21,7 @@ import CompareOverlay  from './CompareOverlay.jsx'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const VIEWS = [
-  { id:'side',  label:'Side',  icon:'▭', fullLabel:'Side View'  },
-  { id:'front', label:'Front', icon:'◈', fullLabel:'Front View' },
-  { id:'top',   label:'Top',   icon:'⊟', fullLabel:'Top View'   },
-  { id:'rear',  label:'Rear',  icon:'◧', fullLabel:'Rear View'  },
+  { id:'side', label:'Side', icon:'▭', fullLabel:'Side View' },
 ]
 
 const STAGES = [
@@ -276,10 +271,7 @@ const EMPTY_SLOT = {file:null,geo:null,running:false,progress:{pct:0,msg:'',sub:
 
 export default function Views2DPage({ backend = '' }) {
   const [slots, setSlots] = useState({
-    side:  {...EMPTY_SLOT},
-    front: {...EMPTY_SLOT},
-    top:   {...EMPTY_SLOT},
-    rear:  {...EMPTY_SLOT},
+    side: {...EMPTY_SLOT},
   })
 
   const [activeView,   setActiveView]   = useState('side')
@@ -477,7 +469,9 @@ export default function Views2DPage({ backend = '' }) {
 
     let CW, CH, d
     if (normW && normH && normW > 0 && normH > 0) {
-      const trueAspect = normW / normH
+      // Size the output canvas to the car's true aspect ratio — no dead space.
+      // Fix long edge to 1600px, derive other edge from true proportions.
+      const trueAspect = normW / normH   // e.g. 3.2 for a saloon
       if (trueAspect >= 1) {
         CW = 1600
         CH = Math.round(CW / trueAspect) + PAD * 2
@@ -485,12 +479,14 @@ export default function Views2DPage({ backend = '' }) {
         CH = 1600
         CW = Math.round(CH * trueAspect) + PAD * 2
       }
+      // Map [0,normW]→[PAD, CW-PAD],  [0,normH]→[PAD, CH-PAD]
       const scaleX = (CW - PAD * 2) / normW
       const scaleY = (CH - PAD * 2) / normH
       d = pts.map(([nx,ny],i) =>
         `${i===0?'M':'L'}${(PAD + nx*scaleX).toFixed(2)},${(PAD + ny*scaleY).toFixed(2)}`
       ).join(' ') + ' Z'
     } else {
+      // Fallback: old behaviour for missing norm metadata
       const bboxAspect = geo._bboxAspect ?? geo.trueAspect ?? 2.4
       CW = 1600; CH = 700
       const dw = (CW-PAD*2)*0.95, dh = Math.min(dw/bboxAspect, CH-PAD*2)
@@ -514,6 +510,7 @@ export default function Views2DPage({ backend = '' }) {
     if (!_hasPoints) return
     const svgStr = _buildOutlineSVG(geo,{strokeColor:'#111111',strokeWidth:3,bg:true,mode:outlineMode})
     if (!svgStr) return
+    // Extract actual dimensions from the generated SVG (aspect-correct, not hardcoded)
     const wMatch = svgStr.match(/width="(\d+)"/)
     const hMatch = svgStr.match(/height="(\d+)"/)
     const CW = wMatch ? parseInt(wMatch[1]) : 1600
@@ -556,6 +553,7 @@ export default function Views2DPage({ backend = '' }) {
   const exportTransparentPNG = async () => {
     const geo = getSlot(activeView).geo
     if (!geo?._smoothPts?.length && !geo?._contourPts?.length) return
+    // bg:false = transparent background SVG
     const svgStr = _buildOutlineSVG(geo, {strokeColor:'#000000', strokeWidth:4, bg:false, mode:outlineMode})
     if (!svgStr) return
     const wMatch = svgStr.match(/width="(\d+)"/)
@@ -568,6 +566,7 @@ export default function Views2DPage({ backend = '' }) {
       canvas.width  = CW * 2
       canvas.height = CH * 2
       const ctx = canvas.getContext('2d')
+      // Do NOT fill background — leaves canvas transparent
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
       canvas.toBlob(blob => {
         const a = document.createElement('a')
@@ -594,6 +593,7 @@ export default function Views2DPage({ backend = '' }) {
   const analysedViews = VIEWS.filter(v=>!!getSlot(v.id).geo)
   const canCompare    = analysedViews.length >= 2
 
+  // Compare: Car A = activeView slot, Car B = compareB slot
   const geoA = getSlot(activeView).geo
   const geoB = getSlot(compareB).geo
   const labelA = getSlot(activeView).file?.name?.replace(/\.[^.]+$/,'') ?? VIEWS.find(v=>v.id===activeView)?.fullLabel ?? 'Car A'
@@ -603,11 +603,7 @@ export default function Views2DPage({ backend = '' }) {
 
   const renderCanvas = (g,isDrawingFlag,drawDoneFlag) => {
     if (!g) return null
-    if (activeView==='side')  return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag} outlineMode={outlineMode}/>
-    if (activeView==='front') return <FrontViewSVG g={g}/>
-    if (activeView==='top')   return <TopViewSVG g={g}/>
-    if (activeView==='rear')  return <RearViewSVG g={g}/>
-    return null
+    return <SideViewSVG g={g} showSep={showSep} showArches={showArches} isDrawing={isDrawingFlag} drawDone={drawDoneFlag} outlineMode={outlineMode}/>
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -619,32 +615,17 @@ export default function Views2DPage({ backend = '' }) {
 
       {showSimModal && geo && <SimulationModal geo={geo} onClose={()=>setShowSimModal(false)}/>}
 
-      {/* ══ M3 Navigation Rail ═══════════════════════════════════════════════ */}
+      {/* ══ M3 Navigation Rail — Side only ═══════════════════════════════════ */}
       <nav className="md-nav-rail">
         <div style={{fontSize:18,color:'var(--md-primary)',marginBottom:8,fontWeight:700,fontFamily:'var(--font-mono)'}}>A</div>
         <div style={{width:32,height:1,background:'var(--md-outline-variant)',marginBottom:8}}/>
-        {VIEWS.map(v=>{
-          const s=getSlot(v.id)
-          return (
-            <button key={v.id} className="md-nav-rail-item" data-active={activeView===v.id && !compareMode}
-              onClick={()=>{setActiveView(v.id);setCompareMode(false)}}>
-              <div className="md-nav-indicator" style={{position:'relative'}}>
-                {v.icon}
-                {s.geo&&!s.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-success)'}}/>}
-                {s.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-primary)',animation:'md-pulse 1s ease infinite'}}/>}
-              </div>
-              <span className="md-nav-label">{v.label}</span>
-            </button>
-          )
-        })}
-
-        {/* Compare button in rail */}
-        <div style={{width:32,height:1,background:'var(--md-outline-variant)',margin:'8px 0'}}/>
-        <button className="md-nav-rail-item" data-active={compareMode}
-          onClick={()=>canCompare&&setCompareMode(p=>!p)}
-          style={{opacity:canCompare?1:0.35,cursor:canCompare?'pointer':'default'}}>
-          <div className="md-nav-indicator" style={{fontSize:16}}>⇔</div>
-          <span className="md-nav-label">Compare</span>
+        <button className="md-nav-rail-item" data-active={true}>
+          <div className="md-nav-indicator" style={{position:'relative'}}>
+            ▭
+            {activeSlot.geo&&!activeSlot.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-success)'}}/>}
+            {activeSlot.running&&<div style={{position:'absolute',top:4,right:8,width:6,height:6,borderRadius:'50%',background:'var(--md-primary)',animation:'md-pulse 1s ease infinite'}}/>}
+          </div>
+          <span className="md-nav-label">Side</span>
         </button>
       </nav>
 
@@ -656,23 +637,19 @@ export default function Views2DPage({ backend = '' }) {
       }}>
         <div style={{flex:1,overflowY:'auto',padding:'16px 12px'}}>
 
-          {/* 01 — Saved outlines */}
-          <SL n="01" t="Saved Outlines"/>
+          {/* 01 — Saved outline */}
+          <SL n="01" t="Saved Outline"/>
           <div style={{marginBottom:12}}>
-            {VIEWS.map(v=>(
-              <OutlineThumbnail key={v.id}
-                geo={getSlot(v.id).geo} label={v.fullLabel} icon={v.icon}
-                isActive={activeView===v.id&&!compareMode}
-                onClick={()=>{setActiveView(v.id);setCompareMode(false)}}
-              />
-            ))}
+            <OutlineThumbnail
+              geo={activeSlot.geo} label="Side View" icon="▭"
+              isActive={true} onClick={()=>{}}
+            />
           </div>
 
           {/* 02 — Upload */}
-          <SL n="02" t={`Upload — ${VIEWS.find(v=>v.id===activeView)?.fullLabel}`}/>
+          <SL n="02" t="Upload — Side View"/>
           <div style={{marginBottom:10}}>
-            <DropZone viewId={activeView} label={VIEWS.find(v=>v.id===activeView)?.fullLabel}
-              icon={VIEWS.find(v=>v.id===activeView)?.icon} file={activeSlot.file} onFile={setViewFile}/>
+            <DropZone viewId="side" label="Side View" icon="▭" file={activeSlot.file} onFile={setViewFile}/>
           </div>
 
           {/* URL input */}
@@ -713,12 +690,48 @@ export default function Views2DPage({ backend = '' }) {
             </div>
           </div>
 
+          {/* Outline mode toggle — Smooth / Technical */}
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:11,color:'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.5px',marginBottom:6,textTransform:'uppercase'}}>
+              Outline Mode
+            </div>
+            <div style={{display:'flex',background:'var(--md-surface-container-highest)',borderRadius:10,padding:3,gap:2}}>
+              <button
+                onClick={()=>setOutlineMode('smooth')}
+                style={{
+                  flex:1,padding:'6px 0',borderRadius:8,fontSize:11,border:'none',cursor:'pointer',
+                  fontFamily:'var(--font-sans)',fontWeight:600,
+                  background:outlineMode==='smooth'?'var(--md-primary-container)':'transparent',
+                  color:outlineMode==='smooth'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
+                  transition:'all 0.2s',
+                }}
+              >
+                Smooth
+              </button>
+              <button
+                onClick={()=>setOutlineMode('technical')}
+                style={{
+                  flex:1,padding:'6px 0',borderRadius:8,fontSize:11,border:'none',cursor:'pointer',
+                  fontFamily:'var(--font-sans)',fontWeight:600,
+                  background:outlineMode==='technical'?'var(--md-primary-container)':'transparent',
+                  color:outlineMode==='technical'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
+                  transition:'all 0.2s',
+                }}
+              >
+                Technical
+              </button>
+            </div>
+            <div style={{fontSize:10,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-sans)',marginTop:5,lineHeight:1.4}}>
+              {outlineMode==='smooth'?'Max smoothing — for presentations':'Geometry-preserving — for overlays'}
+            </div>
+          </div>
+
           {/* Analyse FAB */}
-          <button className="md-fab-extended" onClick={()=>runView(activeView)}
+          <button className="md-fab-extended" onClick={()=>runView('side')}
             disabled={!hasFile||isRunning} style={{marginBottom:8}}>
             {isRunning
               ? <><div className="md-spin" style={{width:16,height:16,border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'var(--md-on-primary-container)',borderRadius:'50%'}}/> Analysing…</>
-              : <>▶ Analyse {VIEWS.find(v=>v.id===activeView)?.label}</>
+              : <>▶ Analyse</>
             }
           </button>
 
@@ -735,30 +748,7 @@ export default function Views2DPage({ backend = '' }) {
             </div>
           )}
 
-          {/* Compare mode selector */}
-          {compareMode && canCompare && (
-            <>
-              <SL n="03" t="Compare Setup"/>
-              <div className="md-card-outlined" style={{padding:'10px 12px',marginBottom:10}}>
-                <div style={{fontSize:11,color:'var(--md-on-surface-variant)',marginBottom:8,fontFamily:'var(--font-sans)'}}>
-                  Car A: <strong style={{color:'#E0E0E0'}}>{labelA}</strong>
-                </div>
-                <div style={{fontSize:11,color:'var(--md-on-surface-variant)',marginBottom:8,fontFamily:'var(--font-sans)'}}>Car B:</div>
-                <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                  {analysedViews.filter(v=>v.id!==activeView).map(v=>(
-                    <button key={v.id} className="md-chip" data-selected={compareB===v.id}
-                      onClick={()=>setCompareB(v.id)} style={{justifyContent:'flex-start',gap:8}}>
-                      <div style={{width:8,height:8,borderRadius:'50%',background:'#FFB74D',flexShrink:0}}/>
-                      {v.fullLabel}
-                      <span style={{fontSize:10,opacity:0.6,fontFamily:'var(--font-mono)',marginLeft:'auto'}}>
-                        {getSlot(v.id).file?.name?.replace(/\.[^.]+$/,'').slice(0,10)??''}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
+
 
           {/* 03 — Geometry / Benchmarking */}
           {geo && !compareMode && (
@@ -779,6 +769,7 @@ export default function Views2DPage({ backend = '' }) {
 
                 <div style={{height:1,background:'var(--md-outline-variant)',marginBottom:8}}/>
 
+                {/* True proportions */}
                 {geo.trueAspect!=null && (
                   <PropBar label="Length:Height" valA={geo.trueAspect} decimals={2}/>
                 )}
@@ -860,7 +851,7 @@ export default function Views2DPage({ backend = '' }) {
                 <div className="md-linear-progress" style={{marginBottom:10}}>
                   <div className="md-linear-progress-bar" style={{width:`${geo._quality?.score??0}%`,background:(geo._quality?.score??0)>=75?'var(--md-success)':'var(--md-warning)'}}/>
                 </div>
-                {Array.isArray(geo._quality?.warnings) && geo._quality.warnings.slice(0,3).map((w,i)=>(
+                {geo._quality?.warnings?.slice(0,3).map((w,i)=>(
                   <div key={i} style={{fontSize:11,color:'var(--md-warning)',marginTop:4,lineHeight:1.4,fontFamily:'var(--font-sans)'}}>{w}</div>
                 ))}
               </div>
@@ -885,7 +876,7 @@ export default function Views2DPage({ backend = '' }) {
       {/* ══ CENTRE ════════════════════════════════════════════════════════════ */}
       <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
-        {/* Toolbar — hidden in compare mode */}
+        {/* Toolbar — hidden in compare mode (CompareOverlay has its own) */}
         {!compareMode && (
           <div style={{
             height:48,flexShrink:0,display:'flex',alignItems:'center',gap:4,padding:'0 12px',
@@ -896,42 +887,18 @@ export default function Views2DPage({ backend = '' }) {
             </span>
             <div style={{width:1,height:20,background:'var(--md-outline-variant)',margin:'0 4px'}}/>
 
+            {/* Sep */}
             <button className="md-icon-btn" data-active={showSep} onClick={()=>setShowSep(p=>!p)} title="Separation lines" style={{fontSize:12}}>⌁</button>
 
-            {geo?._hasBothModes && (
-              <div style={{display:'flex',alignItems:'center',gap:0,background:'var(--md-surface-container-highest)',borderRadius:8,padding:2}}>
-                <button
-                  onClick={()=>setOutlineMode('smooth')}
-                  style={{
-                    padding:'3px 10px',borderRadius:6,fontSize:10,border:'none',cursor:'pointer',
-                    fontFamily:'var(--font-mono)',fontWeight:600,letterSpacing:'0.04em',
-                    background:outlineMode==='smooth'?'var(--md-primary-container)':'transparent',
-                    color:outlineMode==='smooth'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
-                    transition:'all 0.15s',
-                  }}
-                  title="Maximum smoothing — for presentations and slides">
-                  Smooth
-                </button>
-                <button
-                  onClick={()=>setOutlineMode('technical')}
-                  style={{
-                    padding:'3px 10px',borderRadius:6,fontSize:10,border:'none',cursor:'pointer',
-                    fontFamily:'var(--font-mono)',fontWeight:600,letterSpacing:'0.04em',
-                    background:outlineMode==='technical'?'var(--md-primary-container)':'transparent',
-                    color:outlineMode==='technical'?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',
-                    transition:'all 0.15s',
-                  }}
-                  title="Preserves geometry — for overlays and benchmarking">
-                  Technical
-                </button>
-              </div>
-            )}
 
+
+            {/* Arches */}
             <button className="md-icon-btn" data-active={showArches&&canShowArches}
               onClick={()=>canShowArches&&setShowArches(p=>!p)}
               style={{opacity:canShowArches?1:0.35,cursor:canShowArches?'pointer':'default',fontSize:12}}
               title="Wheel arches">⊙</button>
 
+            {/* Diagnostic */}
             {geo && (
               <span style={{fontSize:11,color:'var(--md-on-surface-disabled)',fontFamily:'var(--font-mono)',marginLeft:4}}>
                 {geo._contourPts?.length??0}pts
@@ -947,7 +914,7 @@ export default function Views2DPage({ backend = '' }) {
             <button className="md-btn-outlined"
               style={{height:36,fontSize:12,padding:'0 14px',opacity:geo?1:0.35}}
               onClick={exportOutlineSVG} disabled={!geo}
-              title="Download black outline SVG">↓ Outline</button>
+              title="Download black outline SVG — insert into Word via Insert → Pictures">↓ Outline</button>
             <button className="md-btn-outlined"
               style={{height:36,fontSize:12,padding:'0 14px',borderColor:copyDone?'var(--md-success)':'var(--md-outline)',color:copyDone?'var(--md-success)':'var(--md-on-surface-variant)'}}
               onClick={copyOutline} disabled={!geo}
@@ -957,7 +924,7 @@ export default function Views2DPage({ backend = '' }) {
             <button className="md-btn-outlined"
               style={{height:36,fontSize:12,padding:'0 14px'}}
               onClick={exportTransparentPNG} disabled={!geo}
-              title="Download transparent PNG">
+              title="Download transparent PNG — layer over anything in PowerPoint or Keynote">
               ⎘ PNG (transparent)
             </button>
           </div>
@@ -971,6 +938,7 @@ export default function Views2DPage({ backend = '' }) {
             <CompareOverlay geoA={geoA} geoB={geoB} labelA={labelA} labelB={labelB}/>
           )}
 
+          {/* Compare mode but not enough data */}
           {compareMode && (!canCompare || !geoA || !geoB) && (
             <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}>
               <div style={{fontSize:32,color:'var(--md-outline-variant)'}}>⇔</div>
@@ -984,19 +952,7 @@ export default function Views2DPage({ backend = '' }) {
           {/* Normal view */}
           {!compareMode && (
             <>
-              {/* KEY FIX: conditionally mount PipelineOverlay only when running.
-                  This guarantees it always mounts with visible=true, so the
-                  useEffect([visible]) fires correctly on first render every time.
-                  No more black screen from stale ref transitions. */}
-              {isRunning && (
-                <PipelineOverlay
-                  visible={true}
-                  pct={traceProgress.pct ?? 0}
-                  msg={traceProgress.msg ?? ''}
-                  sub={traceProgress.sub ?? ''}
-                  stages={STAGES}
-                />
-              )}
+              <PipelineOverlay visible={isRunning} pct={traceProgress.pct} msg={traceProgress.msg} sub={traceProgress.sub} stages={STAGES}/>
 
               {!geo && !isRunning && (
                 <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16}}>
@@ -1020,51 +976,7 @@ export default function Views2DPage({ backend = '' }) {
           )}
         </div>
 
-        {/* Thumbnail strip */}
-        {!compareMode && (
-          <div style={{
-            height:88,flexShrink:0,
-            display:'grid',gridTemplateColumns:'repeat(4,1fr)',
-            gap:6,padding:6,
-            borderTop:'1px solid var(--md-outline-variant)',
-            background:'var(--md-surface-container)',
-          }}>
-            {VIEWS.map(v=>{
-              const s=getSlot(v.id)
-              const pts=s.geo?._smoothPts??s.geo?._contourPts??[]
-              const aspect=s.geo?._bboxAspect??s.geo?.trueAspect??2.2
-              const TW=100,TH=52,TP=4
-              let pathD=''
-              if (pts.length>10) {
-                const dw=(TW-TP*2)*0.93,dh=Math.min(dw/aspect,TH-TP*2)
-                const ox=TP+((TW-TP*2)-dw)/2,oy=TP+((TH-TP*2)-dh)/2
-                pathD=pts.map(([nx,ny],i)=>`${i===0?'M':'L'}${(ox+nx*dw).toFixed(1)},${(oy+ny*dh).toFixed(1)}`).join(' ')+' Z'
-              }
-              return (
-                <button key={v.id} className="md-view-thumb" data-active={activeView===v.id}
-                  onClick={()=>{setActiveView(v.id);setCompareMode(false)}}>
-                  <div style={{flex:1,background:'var(--md-surface)',borderRadius:8,overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                    {s.geo?(
-                      <div style={{width:'100%',height:'100%',pointerEvents:'none'}}>
-                        {v.id==='side'  && <SideViewSVG  g={s.geo} showSep={false} showArches={false} isDrawing={false} drawDone={s.drawDone}/>}
-                        {v.id==='front' && <FrontViewSVG g={s.geo}/>}
-                        {v.id==='top'   && <TopViewSVG   g={s.geo}/>}
-                        {v.id==='rear'  && <RearViewSVG  g={s.geo}/>}
-                      </div>
-                    ):(
-                      <span style={{fontSize:16,color:'var(--md-outline-variant)'}}>{v.icon}</span>
-                    )}
-                  </div>
-                  <div style={{fontSize:11,fontWeight:500,textAlign:'center',color:activeView===v.id?'var(--md-on-primary-container)':'var(--md-on-surface-variant)',fontFamily:'var(--font-sans)',letterSpacing:'0.3px'}}>
-                    {v.label}
-                  </div>
-                  {s.geo&&<div style={{position:'absolute',top:5,right:5,width:6,height:6,borderRadius:'50%',background:'var(--md-success)'}}/>}
-                  {s.running&&<div style={{position:'absolute',top:5,right:5,width:6,height:6,borderRadius:'50%',background:'var(--md-primary)',animation:'md-pulse 1s ease infinite'}}/>}
-                </button>
-              )
-            })}
-          </div>
-        )}
+        {/* No thumbnail strip — side view only */}
       </div>
     </div>
   )
