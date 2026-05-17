@@ -23,4 +23,4 @@ torchvision==0.18.1+cpu
 sam2
 shapely==2.0.6
 huggingface_hub>=0.24.0
-rdp==0.8
+rdp==0.8# cache bust Sun May 17 17:32:31 UTC 2026
