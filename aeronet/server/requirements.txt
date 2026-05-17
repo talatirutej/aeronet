@@ -17,8 +17,8 @@ rembg==2.0.57
 onnxruntime==1.17.3
 kornia==0.7.3
 ultralytics==8.3.145
-torch==2.3.1+cpu
-torchvision==0.18.1+cpu
+torch==2.3.1
+torchvision==0.18.1
 sam2
 shapely==2.0.6
 huggingface_hub>=0.24.0
