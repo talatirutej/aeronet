@@ -1,4 +1,4 @@
-// SideViewSVG.jsx — AeroNet Vehicle Side-View Outline Renderer
+// SideViewSVG.jsx — StatContour Vehicle Side-View Outline Renderer
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 //
 // Fixes:

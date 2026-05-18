@@ -1,6 +1,6 @@
 // SimulationModal.jsx
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
-// AeroNet — CFD surrogate simulation modal, triggered from Views2DPage.
+// StatContour — CFD surrogate simulation modal, triggered from Views2DPage.
 
 import { useState, useEffect } from 'react'
 

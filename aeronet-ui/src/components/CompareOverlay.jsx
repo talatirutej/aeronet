@@ -1,4 +1,4 @@
-// CompareOverlay.jsx — AeroNet Benchmarking Overlay
+// CompareOverlay.jsx — StatContour Benchmarking Overlay
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 //
 // Renders two car outlines superimposed in the same SVG canvas,

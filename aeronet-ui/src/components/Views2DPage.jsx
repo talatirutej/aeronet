@@ -1,4 +1,4 @@
-// Views2DPage.jsx — AeroNet Vehicle Outline Analysis + Benchmarking
+// Views2DPage.jsx — StatContour Vehicle Outline Analysis + Benchmarking
 // Copyright (c) 2026 Rutej Talati / statinsite.com
 //
 // Updated:
@@ -456,7 +456,7 @@ export default function Views2DPage({ backend = '' }) {
     if (!svg) return
     const a=document.createElement('a')
     a.href=URL.createObjectURL(new Blob([svg.outerHTML],{type:'image/svg+xml'}))
-    a.download=`aeronet_${activeView}.svg`; a.click()
+    a.download=`statcontour_${activeView}.svg`; a.click()
   }
 
   const _buildOutlineSVG = (geo, {strokeColor='#111111',strokeWidth=3,bg=true,mode=null}={}) => {
@@ -533,7 +533,7 @@ export default function Views2DPage({ backend = '' }) {
       try { await navigator.clipboard.write([new ClipboardItem({'image/png':png})]) } catch {}
       const a=document.createElement('a')
       a.href=URL.createObjectURL(png)
-      a.download=`aeronet_outline_${activeView}.png`
+      a.download=`statcontour_outline_${activeView}.png`
       document.body.appendChild(a); a.click(); document.body.removeChild(a)
       setCopyDone(true); setTimeout(()=>setCopyDone(false),3000)
     } catch(err) { exportOutlineSVG() }
@@ -546,7 +546,7 @@ export default function Views2DPage({ backend = '' }) {
     if (!svgStr) return
     const a=document.createElement('a')
     a.href=URL.createObjectURL(new Blob([svgStr],{type:'image/svg+xml'}))
-    a.download=`aeronet_outline_${activeView}.svg`
+    a.download=`statcontour_outline_${activeView}.svg`
     document.body.appendChild(a); a.click(); document.body.removeChild(a)
   }
 
@@ -571,7 +571,7 @@ export default function Views2DPage({ backend = '' }) {
       canvas.toBlob(blob => {
         const a = document.createElement('a')
         a.href = URL.createObjectURL(blob)
-        a.download = `aeronet_outline_${activeView}_transparent.png`
+        a.download = `statcontour_outline_${activeView}_transparent.png`
         document.body.appendChild(a); a.click(); document.body.removeChild(a)
       }, 'image/png')
     }

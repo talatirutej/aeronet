@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
-// AeroNet — neural surrogate model for vehicle aerodynamics.
+// StatContour — neural surrogate model for vehicle aerodynamics.
 
 /**
  * Mock prediction backend.
@@ -11,7 +11,7 @@
  *
  * To swap in a real backend (Tuesday onwards, after the model is trained):
  *   replace `predict()` with a fetch() call to your FastAPI / Flask endpoint
- *   that runs AeroNet inference. Everything else stays the same.
+ *   that runs StatContour inference. Everything else stays the same.
  */
 
 // 32-bit FNV-1a hash — good enough deterministic seed from a string

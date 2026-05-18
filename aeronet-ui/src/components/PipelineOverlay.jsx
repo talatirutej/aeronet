@@ -1,4 +1,4 @@
-// PipelineOverlay.jsx — AeroNet Loading Animation
+// PipelineOverlay.jsx — StatContour Loading Animation
 // Copyright (c) 2026 Rutej Talati. All rights reserved.
 
 export default function PipelineOverlay({ visible, pct = 0, msg = '', sub = '', stages = [] }) {
