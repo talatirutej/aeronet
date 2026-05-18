@@ -1,51 +1,73 @@
+/* globals.css — Signal Amber theme for AeroNet
+ * Copyright (c) 2026 Rutej Talati / statinsite.com
+ */
+
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; overflow: hidden; }
 
-/* ── Universal font lock ── */
-* { font-family: 'IBM Plex Sans', sans-serif !important; color: #ffffff; }
+* { font-family: 'IBM Plex Sans', sans-serif !important; }
 code, pre, .mono, [class*="mono"] { font-family: 'IBM Plex Mono', monospace !important; }
 
 /* ════════════════════════════════════════════════════════════
-   DESIGN TOKENS  — single source of truth for every color
-   All components reference only these variables, never raw hex
+   DESIGN TOKENS — Signal Amber
    ════════════════════════════════════════════════════════════ */
 :root {
-  /* ── Surfaces ── */
-  --bg0:    #000000;
-  --bg1:    #1C1C1E;
-  --bg2:    #2C2C2E;
-  --bg3:    #3A3A3C;
-  --bg4:    #48484A;
-  --sep:    rgba(84,84,88,0.55);
+  /* ── Surfaces — amber-tinted near-black ── */
+  --bg0:    #0c0a04;
+  --bg1:    #1a1505;
+  --bg2:    #211a06;
+  --bg3:    #2d2108;
+  --bg4:    #3d2e0b;
+  --sep:    rgba(245,158,11,0.12);
 
-  /* ── Text — all white, graded by opacity ──
-     Use these instead of any raw rgba(255,255,255,X)
-     --text-primary   : main readable text
-     --text-secondary : supporting labels
-     --text-tertiary  : dim labels / units / captions
-     --text-quaternary: very dim / placeholder / disabled
-  */
-  --text-primary:    rgba(255,255,255,1.00);   /* #ffffff   — headings, values */
-  --text-secondary:  rgba(255,255,255,0.75);   /* 75% white — body text        */
-  --text-tertiary:   rgba(255,255,255,0.45);   /* 45% white — labels, captions */
-  --text-quaternary: rgba(255,255,255,0.28);   /* 28% white — dim/disabled     */
+  /* ── Text ── */
+  --text-primary:    rgba(255,245,220,1.00);
+  --text-secondary:  rgba(255,235,180,0.75);
+  --text-tertiary:   rgba(255,225,150,0.45);
+  --text-quaternary: rgba(255,215,120,0.28);
 
-  /* Legacy aliases used by AppBar / ResultsPanel (kept for compat) */
   --label:  var(--text-primary);
   --label2: var(--text-secondary);
   --label3: var(--text-tertiary);
   --label4: var(--text-quaternary);
 
-  /* ── Accent / semantic colors ── */
-  --blue:   #0A84FF;
-  --green:  #30D158;
-  --orange: #FF9F0A;
-  --red:    #FF453A;
-  --indigo: #5E5CE6;
-  --teal:   #40CBE0;
-  --yellow: #FFD60A;
+  /* ── Accent / semantic ── */
+  --amber:  #F59E0B;
+  --amber-bright: #fbbf24;
+  --amber-dim:    rgba(245,158,11,0.15);
+  --blue:   #93c5fd;
+  --green:  #6ee7b7;
+  --orange: #fb923c;
+  --red:    #fca5a5;
+  --indigo: #a5b4fc;
+  --teal:   #5eead4;
+  --yellow: #fde68a;
+
+  /* M3 bridge tokens */
+  --md-primary:              #F59E0B;
+  --md-on-primary:           #1a0f00;
+  --md-primary-container:    #451a03;
+  --md-on-primary-container: #fde68a;
+  --md-surface:              #0c0a04;
+  --md-surface-container-low:   #1a1505;
+  --md-surface-container:       #211a06;
+  --md-surface-container-high:  #2d2108;
+  --md-surface-container-highest: #3d2e0b;
+  --md-outline:              rgba(245,158,11,0.18);
+  --md-outline-variant:      rgba(245,158,11,0.09);
+  --md-on-surface:           rgba(255,245,220,0.87);
+  --md-on-surface-variant:   rgba(255,235,180,0.60);
+  --md-on-surface-disabled:  rgba(255,225,150,0.38);
+  --md-success:  #6ee7b7;
+  --md-warning:  #fcd34d;
+  --md-error:    #fca5a5;
+  --md-info:     #93c5fd;
+  --md-secondary-container:    #2d1f04;
+  --md-on-secondary-container: #fde68a;
+  --font-sans: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
 }
 
 body {
@@ -76,39 +98,62 @@ body {
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 9999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--bg4); }
-::selection { background: rgba(10,132,255,0.28); color: #fff; }
+::-webkit-scrollbar-thumb { background: rgba(245,158,11,0.20); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(245,158,11,0.35); }
+::selection { background: rgba(245,158,11,0.28); color: #fff; }
 
-/* ── iOS card ── */
+/* ── Card ── */
 .ios-card {
   background: var(--bg1);
   border-radius: 16px;
-  border: 0.5px solid rgba(255,255,255,0.07);
+  border: 0.5px solid rgba(245,158,11,0.09);
   position: relative;
   overflow: hidden;
-  transition: border-color 0.18s, background 0.18s;
+  transition: border-color 0.18s, background 0.18s, transform 0.15s;
 }
 .ios-card::before {
   content: '';
   position: absolute; top: 0; left: 0; right: 0; height: 0.5px;
-  background: rgba(255,255,255,0.09);
+  background: rgba(245,158,11,0.10);
   pointer-events: none;
 }
-.ios-card:hover { border-color: rgba(255,255,255,0.12); background: #222; }
+.ios-card:hover {
+  border-color: rgba(245,158,11,0.20);
+  background: #1f1904;
+  transform: translateY(-1px);
+}
 
 /* ── Button ── */
 .ios-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 0 22px; height: 40px; border-radius: 10px;
-  background: var(--blue); color: var(--text-primary);
-  font-size: 14px; font-weight: 600; letter-spacing: -0.2px;
+  background: var(--amber); color: #1a0f00;
+  font-size: 14px; font-weight: 700; letter-spacing: -0.1px;
   border: none; cursor: pointer;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: background 0.18s, transform 0.1s, box-shadow 0.18s;
 }
-.ios-btn:hover  { opacity: 0.88; }
-.ios-btn:active { transform: scale(0.97); opacity: 0.8; }
+.ios-btn:hover  {
+  background: var(--amber-bright);
+  box-shadow: 0 2px 12px rgba(245,158,11,0.35);
+  transform: translateY(-1px);
+}
+.ios-btn:active { transform: scale(0.97); box-shadow: none; }
 .ios-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+/* Outlined variant */
+.ios-btn-outlined {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 20px; height: 40px; border-radius: 10px;
+  background: transparent; color: var(--amber);
+  font-size: 14px; font-weight: 500;
+  border: 1px solid rgba(245,158,11,0.30); cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, transform 0.1s;
+}
+.ios-btn-outlined:hover {
+  background: rgba(245,158,11,0.08);
+  border-color: rgba(245,158,11,0.50);
+}
+.ios-btn-outlined:active { transform: scale(0.97); }
 
 /* ── Chip ── */
 .ios-chip {
@@ -119,23 +164,34 @@ body {
   color: var(--text-tertiary);
   font-size: 13px; font-weight: 500; letter-spacing: -0.2px;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
 }
-.ios-chip:hover { background: var(--bg2); color: var(--text-secondary); }
+.ios-chip:hover {
+  background: rgba(245,158,11,0.07);
+  color: var(--amber);
+  border-color: rgba(245,158,11,0.25);
+}
+.ios-chip:active { transform: scale(0.96); }
 .ios-chip-active {
-  background: rgba(10,132,255,0.14);
-  border-color: rgba(10,132,255,0.45);
-  color: var(--blue);
+  background: rgba(245,158,11,0.14);
+  border-color: rgba(245,158,11,0.40);
+  color: var(--amber);
 }
 
 /* ── Input ── */
 .ios-input {
-  background: var(--bg2); border: 0.5px solid var(--sep); border-radius: 9px;
-  padding: 9px 13px; color: var(--text-primary);
+  background: var(--bg2);
+  border: 0.5px solid var(--sep);
+  border-radius: 9px;
+  padding: 9px 13px;
+  color: var(--text-primary);
   font-size: 14px; outline: none; width: 100%;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.ios-input:focus { border-color: var(--blue); }
+.ios-input:focus {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px rgba(245,158,11,0.12);
+}
 .ios-input::placeholder { color: var(--text-quaternary); }
 
 /* ── Section label ── */
@@ -149,20 +205,28 @@ body {
 .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 
 /* ── Progress ── */
-.ios-progress-track  { height: 3px; background: var(--bg3); border-radius: 9999px; overflow: hidden; }
-.ios-progress-fill   { height: 100%; border-radius: 9999px; transition: width 0.4s cubic-bezier(0.34,1.56,0.64,1); }
+.ios-progress-track {
+  height: 3px; background: var(--bg3);
+  border-radius: 9999px; overflow: hidden;
+}
+.ios-progress-fill {
+  height: 100%; border-radius: 9999px;
+  background: var(--amber);
+  box-shadow: 0 0 8px rgba(245,158,11,0.50);
+  transition: width 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}
 
 /* ── CFD grid ── */
 .cfd-grid {
   background-image:
-    linear-gradient(rgba(10,132,255,0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(10,132,255,0.04) 1px, transparent 1px);
+    linear-gradient(rgba(245,158,11,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(245,158,11,0.04) 1px, transparent 1px);
   background-size: 28px 28px;
 }
 
 /* ── Hover row ── */
 .hover-row { transition: background 0.12s; }
-.hover-row:hover { background: rgba(255,255,255,0.03); }
+.hover-row:hover { background: rgba(245,158,11,0.04); }
 
 /* ── Animations ── */
 @keyframes fadeIn      { from { opacity: 0 }               to { opacity: 1 } }
@@ -173,6 +237,7 @@ body {
 @keyframes pulse       { 0%,100% { opacity: 1 }  50% { opacity: 0.38 } }
 @keyframes spin        { to { transform: rotate(360deg) } }
 @keyframes shimmer     { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
+@keyframes amberPulse  { 0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,0) } 50% { box-shadow: 0 0 20px 4px rgba(245,158,11,0.25) } }
 
 .anim-in    { animation: fadeIn   0.22s ease both; }
 .anim-up    { animation: fadeUp   0.32s cubic-bezier(0.22,1,0.36,1) both; }
@@ -180,6 +245,7 @@ body {
 .anim-scan  { animation: scan     2.4s ease-in-out infinite; }
 .anim-pulse { animation: pulse    2.5s ease-in-out infinite; }
 .anim-spin  { animation: spin     0.85s linear infinite; }
+.anim-glow  { animation: amberPulse 2s ease-in-out infinite; }
 
 .stagger > *:nth-child(1) { animation-delay: 0.04s }
 .stagger > *:nth-child(2) { animation-delay: 0.08s }
